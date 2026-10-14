@@ -24,6 +24,8 @@ mod compose;
 mod document;
 mod error;
 mod layer;
+#[cfg(test)]
+mod properties;
 
 pub use compose::{ComposeScratch, Overlay};
 pub use document::{Document, Placement};

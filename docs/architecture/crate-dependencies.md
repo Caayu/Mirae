@@ -73,7 +73,7 @@ depends only on `glam`.
 | `tela-app` | all workspace crates except corpus, `winit`, `glam`, `pollster`, `log`, `env_logger` | Composition layer. |
 
 Dev-dependencies are unrestricted but should stay minimal: `proptest`
-(brush, canvas), `pollster` (renderer GPU tests), `tela-brush`+`glam`
+(brush, canvas, document), `pollster` (renderer GPU tests), `tela-brush`+`glam`
 (document tests), `tela-document` (corpus benchmark).
 
 ## Forbidden dependencies (and why)
@@ -105,7 +105,7 @@ Dev-dependencies are unrestricted but should stay minimal: `proptest`
 | `pollster` | app (+ renderer tests) | Blocks on wgpu's async setup once at startup. |
 | `log`, `env_logger` | renderer, tablet, app | Diagnostics (`RUST_LOG`). |
 | `png` | corpus | Golden image I/O. |
-| `proptest` | brush, canvas (dev) | Property tests. |
+| `proptest` | brush, canvas, document (dev) | Property tests. |
 
 Rule: do not add a dependency for convenience. A new dependency needs a
 row here, a reason, and the boundary test updated in the same commit.
