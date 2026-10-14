@@ -59,9 +59,7 @@ impl Image {
         let pixels = buf[..info.buffer_size()]
             .as_chunks::<4>()
             .0
-            .iter()
-            .copied()
-            .collect();
+            .to_vec();
         Ok(Self {
             width: info.width,
             height: info.height,
