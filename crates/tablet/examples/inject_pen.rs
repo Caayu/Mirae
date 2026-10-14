@@ -94,9 +94,9 @@ mod inject {
             };
             // SAFETY: one valid frame for a live synthetic device.
             if unsafe { InjectSyntheticPointerInput(self.device, &input, 1) } == 0 {
-                eprintln!("InjectSyntheticPointerInput failed: {}", unsafe {
-                    GetLastError()
-                });
+                // SAFETY: reads the calling thread's last-error value; no arguments.
+                let error = unsafe { GetLastError() };
+                eprintln!("InjectSyntheticPointerInput failed: {error}");
             }
             sleep(self.frame);
         }
@@ -199,9 +199,9 @@ mod inject {
         // SAFETY: plain constructor call.
         let device = unsafe { CreateSyntheticPointerDevice(PT_PEN, 1, POINTER_FEEDBACK_INDIRECT) };
         if device.is_null() {
-            eprintln!("CreateSyntheticPointerDevice failed: {}", unsafe {
-                GetLastError()
-            });
+            // SAFETY: reads the calling thread's last-error value; no arguments.
+            let error = unsafe { GetLastError() };
+            eprintln!("CreateSyntheticPointerDevice failed: {error}");
             std::process::exit(1);
         }
         let inj = Injector {

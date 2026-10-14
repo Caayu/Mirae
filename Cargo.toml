@@ -5,9 +5,14 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+# Effective minimum: egui 0.36 requires 1.95. Verified toolchain: see
+# docs/AI_HANDOFF.md.
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 publish = false
 
+# Every external dependency and the reason it exists is listed in
+# docs/architecture/crate-dependencies.md. Do not add one for convenience.
 [workspace.dependencies]
 tela-color = { path = "crates/color" }
 tela-canvas = { path = "crates/canvas" }
@@ -31,12 +36,20 @@ png = "0.18"
 egui = "0.36"
 egui-wgpu = "0.36"
 egui-winit = "0.36"
+windows-sys = "0.61"
 
 [workspace.lints.rust]
+# unsafe is allowed only where a module opts in explicitly (FFI in
+# tela-tablet, the counting allocator in a benchmark); see
+# docs/architecture/unsafe.md.
 unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
+dbg_macro = "warn"
+todo = "warn"
 
 [profile.dev]
 # Pixel loops are unusably slow at opt-level 0; keep debug info but optimize.

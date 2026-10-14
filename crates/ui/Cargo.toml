@@ -3,6 +3,7 @@ name = "tela-ui"
 description = "Minimal brush-editing UI (egui), kept out of the engine crates"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 

@@ -3,6 +3,7 @@ name = "tela-corpus"
 description = "Standard brush trajectories, rendering to images, golden comparison"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
@@ -10,9 +11,12 @@ publish.workspace = true
 tela-color.workspace = true
 tela-canvas.workspace = true
 tela-brush.workspace = true
-tela-document.workspace = true
 glam.workspace = true
 png.workspace = true
+
+[dev-dependencies]
+# Only the stamping benchmark composes a document.
+tela-document.workspace = true
 
 [[bin]]
 name = "tela-corpus"
