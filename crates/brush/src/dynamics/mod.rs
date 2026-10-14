@@ -92,6 +92,22 @@ pub enum DynamicsSource {
     Unknown,
 }
 
+impl CombineMode {
+    /// Merges an effector value `v` into the running value `acc`. For
+    /// scalar properties `Follow` (meaningful only for angles) acts like
+    /// `Replace`; angle evaluation handles `Follow` before calling this.
+    pub fn apply(self, acc: f32, v: f32) -> f32 {
+        match self {
+            Self::Multiply => acc * v,
+            Self::Add => acc + v,
+            Self::Replace | Self::Follow => v,
+            Self::Min => acc.min(v),
+            Self::Max => acc.max(v),
+            Self::Unknown => acc,
+        }
+    }
+}
+
 impl DynamicsSource {
     /// Sources whose natural value is an angle; they can drive
     /// [`CombineMode::Follow`].
@@ -310,6 +326,11 @@ pub struct BrushProperty {
 }
 
 impl BrushProperty {
+    /// Effectors evaluated per property. Each effector owns one random
+    /// stream inside its property's block of this size, so more would share
+    /// streams with the next property. Validation truncates longer lists.
+    pub const MAX_EFFECTORS: usize = 64;
+
     pub fn constant(base: f32) -> Self {
         Self {
             base,
@@ -323,25 +344,26 @@ impl BrushProperty {
     }
 
     fn stream(slot: u32, i: usize) -> u32 {
-        stream::EFFECTORS + slot * 64 + i as u32
+        stream::EFFECTORS + slot * Self::MAX_EFFECTORS as u32 + i as u32
+    }
+
+    /// Enabled effectors with their index, at most [`Self::MAX_EFFECTORS`].
+    fn active(&self) -> impl Iterator<Item = (usize, &Effector)> {
+        self.effectors
+            .iter()
+            .take(Self::MAX_EFFECTORS)
+            .enumerate()
+            .filter(|(_, e)| e.enabled)
     }
 
     /// Evaluates a scalar property. `slot` identifies the property so each
     /// random effector gets an independent stream.
     pub fn eval(&self, input: &DynamicsInput, slot: u32) -> f32 {
         let mut acc = self.base;
-        for (i, e) in self.effectors.iter().enumerate().filter(|(_, e)| e.enabled) {
-            let Some(v) = e.output(input, Self::stream(slot, i)) else {
-                continue;
-            };
-            acc = match e.mode {
-                CombineMode::Multiply => acc * v,
-                CombineMode::Add => acc + v,
-                CombineMode::Replace | CombineMode::Follow => v,
-                CombineMode::Min => acc.min(v),
-                CombineMode::Max => acc.max(v),
-                CombineMode::Unknown => acc,
-            };
+        for (i, e) in self.active() {
+            if let Some(v) = e.output(input, Self::stream(slot, i)) {
+                acc = e.mode.apply(acc, v);
+            }
         }
         if acc.is_finite() { acc } else { self.base }
     }
@@ -350,25 +372,14 @@ impl BrushProperty {
     /// rotational symmetry (360 for asymmetric tips, 180 for ellipses).
     pub fn eval_angle(&self, input: &DynamicsInput, slot: u32, period: f32) -> f32 {
         let mut acc = self.base;
-        for (i, e) in self.effectors.iter().enumerate().filter(|(_, e)| e.enabled) {
+        for (i, e) in self.active() {
             if e.mode == CombineMode::Follow {
-                let Some(target) = input.angle(e.source) else {
-                    continue;
-                };
-                acc = follow(acc, target.to_degrees(), e.max.clamp(0.0, 1.0), period);
-                continue;
+                if let Some(target) = input.angle(e.source) {
+                    acc = follow(acc, target.to_degrees(), e.max.clamp(0.0, 1.0), period);
+                }
+            } else if let Some(v) = e.output(input, Self::stream(slot, i)) {
+                acc = e.mode.apply(acc, v);
             }
-            let Some(v) = e.output(input, Self::stream(slot, i)) else {
-                continue;
-            };
-            acc = match e.mode {
-                CombineMode::Multiply => acc * v,
-                CombineMode::Add => acc + v,
-                CombineMode::Replace => v,
-                CombineMode::Min => acc.min(v),
-                CombineMode::Max => acc.max(v),
-                CombineMode::Follow | CombineMode::Unknown => acc,
-            };
         }
         if acc.is_finite() {
             acc.rem_euclid(360.0)

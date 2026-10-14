@@ -30,6 +30,31 @@ pub struct StrokeStats {
 /// coincide with those of movement dabs.
 const AIRBRUSH_INDEX_BASE: u64 = 1 << 40;
 
+/// Longest chord of the flattened path, screen pixels.
+const FLATTEN_SCREEN_PX: f32 = 1.5;
+/// Bounds of the flattening chord, canvas pixels: never coarser than one
+/// canvas pixel (zoomed-out strokes must stay smooth when zoomed in), never
+/// finer than a tenth (cost at extreme zoom).
+const FLATTEN_CANVAS_PX: (f32, f32) = (0.1, 1.0);
+/// Smallest input movement, screen pixels, that counts as the pen moving
+/// for airbrush rest detection (the jitter threshold if larger).
+const MIN_REST_THRESHOLD_PX: f32 = 0.5;
+/// Largest believable input delivery latency, seconds; older timestamps are
+/// treated as clock trouble, not lag.
+const MAX_DELIVERY_LAG: f64 = 1.0;
+/// Per-sample decay of the measured delivery lag: a burst of late input
+/// raises it at once, recovery takes ~50 samples (~0.25 s at 200 Hz).
+const DELIVERY_LAG_DECAY: f64 = 0.98;
+
+/// Last real movement of the input (beyond the rest threshold).
+#[derive(Clone, Copy, Debug)]
+struct Motion {
+    /// Input time of the movement, seconds.
+    time: f64,
+    /// Canvas position it moved to; `None` before the first sample.
+    anchor: Option<Vec2>,
+}
+
 /// Per-stroke parameters that are not part of the brush.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StrokeParams {
@@ -88,7 +113,7 @@ pub struct StrokeProcessor {
     last_filtered_input: Option<StrokePoint>,
     /// Input time and position of the last real movement (beyond the jitter
     /// threshold), for airbrush rest detection.
-    last_motion: (f64, Option<glam::Vec2>),
+    last_motion: Motion,
     /// Screen pixels of input movement still counted as resting.
     rest_threshold: f32,
     /// Observed input delivery latency (host time minus sample time),
@@ -129,8 +154,11 @@ impl StrokeProcessor {
             head_distance: 0.0,
             last_path_point: None,
             last_filtered_input: None,
-            last_motion: (f64::NEG_INFINITY, None),
-            rest_threshold: 0.5,
+            last_motion: Motion {
+                time: f64::NEG_INFINITY,
+                anchor: None,
+            },
+            rest_threshold: MIN_REST_THRESHOLD_PX,
             delivery_lag: 0.0,
             stats: StrokeStats::default(),
             active: false,
@@ -163,7 +191,7 @@ impl StrokeProcessor {
     /// never coarser than one canvas pixel (strokes made zoomed out must
     /// still be smooth when inspected zoomed in).
     fn flatten_step(&self) -> f32 {
-        (1.5 / self.scale).clamp(0.1, 1.0)
+        (FLATTEN_SCREEN_PX / self.scale).clamp(FLATTEN_CANVAS_PX.0, FLATTEN_CANVAS_PX.1)
     }
 
     /// Starts a stroke with the preset's own stroke settings over the
@@ -204,9 +232,12 @@ impl StrokeProcessor {
         self.head_distance = 0.0;
         self.last_path_point = None;
         self.last_filtered_input = None;
-        self.last_motion = (first.timestamp, None);
+        self.last_motion = Motion {
+            time: first.timestamp,
+            anchor: None,
+        };
         self.delivery_lag = 0.0;
-        self.rest_threshold = params.stroke.jitter_threshold.max(0.5);
+        self.rest_threshold = params.stroke.jitter_threshold.max(MIN_REST_THRESHOLD_PX);
         self.stats = StrokeStats::default();
         self.active = true;
         self.push(first, sink);
@@ -216,8 +247,8 @@ impl StrokeProcessor {
     /// sample at `now` (same clock as timestamps). Only affects when an
     /// airbrush treats the pen as resting.
     pub fn push_at(&mut self, input: BrushInput, now: f64, sink: &mut impl DabSink) {
-        let lag = (now - input.timestamp).clamp(0.0, 1.0);
-        self.delivery_lag = lag.max(self.delivery_lag * 0.98);
+        let lag = (now - input.timestamp).clamp(0.0, MAX_DELIVERY_LAG);
+        self.delivery_lag = lag.max(self.delivery_lag * DELIVERY_LAG_DECAY);
         self.push(input, sink);
     }
 
@@ -226,11 +257,14 @@ impl StrokeProcessor {
             return;
         }
         self.stats.samples += 1;
-        let moved = self.last_motion.1.is_none_or(|anchor| {
+        let moved = self.last_motion.anchor.is_none_or(|anchor| {
             (input.position - anchor).length() * self.scale > self.rest_threshold
         });
         if moved {
-            self.last_motion = (input.timestamp, Some(input.position));
+            self.last_motion = Motion {
+                time: input.timestamp,
+                anchor: Some(input.position),
+            };
         }
         let mut p = StrokePoint::from(input);
         if p.caps.pressure {
@@ -260,7 +294,7 @@ impl StrokeProcessor {
         if self.active {
             let horizon = self
                 .airbrush
-                .horizon_at(now - self.delivery_lag, self.last_motion.0);
+                .horizon_at(now - self.delivery_lag, self.last_motion.time);
             self.emit_airbrush(horizon, sink);
         }
     }

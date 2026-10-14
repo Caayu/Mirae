@@ -55,10 +55,12 @@ pub fn from_json(text: &str) -> Result<Loaded, PresetError> {
         return Err(PresetError::NotAnObject);
     };
     let mut warnings = Vec::new();
+    // Missing means the unversioned draft (0); a number too large for u32
+    // is treated as "newer than anything", never wrapped around to 0.
     let version = obj
         .get("format_version")
         .and_then(Value::as_u64)
-        .unwrap_or(0) as u32;
+        .map_or(0, |v| u32::try_from(v).unwrap_or(u32::MAX));
     if version > FORMAT_VERSION {
         warnings.push(format!(
             "preset format {version} is newer than {FORMAT_VERSION}; unknown settings are ignored"
@@ -226,5 +228,32 @@ mod tests {
         assert_eq!(loaded.preset.properties.size.base, 0.5);
         assert_eq!(loaded.preset.scatter.count, 16);
         assert_eq!(loaded.warnings.len(), 3, "{:?}", loaded.warnings);
+    }
+
+    #[test]
+    fn huge_versions_are_newer_not_version_zero() {
+        // 2^32 must not wrap to 0 and run the v0 migration.
+        let loaded = from_json(r#"{"format_version":4294967296,"id":"x","size":30}"#).unwrap();
+        assert!(loaded.warnings.iter().any(|w| w.contains("newer")));
+        assert!(!loaded.warnings.iter().any(|w| w.contains("format 0")));
+        assert_eq!(
+            loaded.preset.properties.size,
+            BrushPreset::default().properties.size
+        );
+    }
+
+    #[test]
+    fn effector_lists_are_capped() {
+        let one = r#"{"source":{"kind":"random"},"mode":"add","min":0,"max":0.01}"#;
+        let many = vec![one; 70].join(",");
+        let json = format!(
+            r#"{{"format_version":1,"id":"x","properties":{{"size":{{"base":10,"effectors":[{many}]}}}}}}"#
+        );
+        let loaded = from_json(&json).unwrap();
+        assert_eq!(
+            loaded.preset.properties.size.effectors.len(),
+            crate::dynamics::BrushProperty::MAX_EFFECTORS
+        );
+        assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
     }
 }

@@ -430,6 +430,15 @@ impl BrushPreset {
                 notes.push(format!("{} base {} -> {}", param.name(), prop.base, fixed));
                 prop.base = fixed;
             }
+            if prop.effectors.len() > BrushProperty::MAX_EFFECTORS {
+                notes.push(format!(
+                    "{} has {} effectors; keeping the first {}",
+                    param.name(),
+                    prop.effectors.len(),
+                    BrushProperty::MAX_EFFECTORS
+                ));
+                prop.effectors.truncate(BrushProperty::MAX_EFFECTORS);
+            }
             for e in &mut prop.effectors {
                 if !e.min.is_finite() || !e.max.is_finite() {
                     notes.push(format!("{} effector range was not finite", param.name()));
