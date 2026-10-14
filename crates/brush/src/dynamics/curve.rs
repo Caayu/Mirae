@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 /// Editable response curve on `[0, 1] -> [0, 1]`, defined by control points.
 ///
 /// Evaluation uses monotone cubic Hermite interpolation (Fritsch–Carlson):
@@ -5,12 +7,29 @@
 /// never overshoots between neighbouring points. Overshoot would be a real bug
 /// for pressure response: raising one point must never make the output dip
 /// somewhere else.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Serialized as a list of `[x, y]` points; loading always goes through
+/// [`Curve::new`], so malformed data cannot produce NaN or an invalid curve.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "Vec<[f32; 2]>", into = "Vec<[f32; 2]>")]
 pub struct Curve {
     xs: Vec<f32>,
     ys: Vec<f32>,
     /// Tangent at each control point.
     ms: Vec<f32>,
+}
+
+impl From<Vec<[f32; 2]>> for Curve {
+    fn from(points: Vec<[f32; 2]>) -> Self {
+        let pts: Vec<(f32, f32)> = points.into_iter().map(|[x, y]| (x, y)).collect();
+        Self::new(&pts)
+    }
+}
+
+impl From<Curve> for Vec<[f32; 2]> {
+    fn from(c: Curve) -> Self {
+        c.points().map(|(x, y)| [x, y]).collect()
+    }
 }
 
 impl Default for Curve {
@@ -57,6 +76,80 @@ impl Curve {
 
     pub fn points(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
         self.xs.iter().copied().zip(self.ys.iter().copied())
+    }
+
+    pub fn len(&self) -> usize {
+        self.xs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.xs.is_empty()
+    }
+
+    /// Same points with every y raised to at least the previous one, for
+    /// parameters that must respond monotonically (e.g. pressure).
+    pub fn monotone(&self) -> Self {
+        let mut floor = 0.0f32;
+        let pts: Vec<(f32, f32)> = self
+            .points()
+            .map(|(x, y)| {
+                floor = floor.max(y);
+                (x, floor)
+            })
+            .collect();
+        Self::new(&pts)
+    }
+
+    pub fn is_monotone(&self) -> bool {
+        self.ys.windows(2).all(|w| w[1] >= w[0])
+    }
+
+    /// Editing: inserts a point on the curve at `x`. Returns its index.
+    pub fn insert_point(&mut self, x: f32) -> usize {
+        let x = if x.is_finite() {
+            x.clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        let y = self.eval(x);
+        let mut pts: Vec<(f32, f32)> = self.points().collect();
+        pts.push((x, y));
+        *self = Self::new(&pts);
+        self.xs
+            .iter()
+            .position(|&px| (px - x).abs() < 1e-6)
+            .unwrap_or(0)
+    }
+
+    /// Editing: moves point `i`. Endpoints keep their x (0 and 1) so the
+    /// whole input range stays defined; interior points stay strictly
+    /// between their neighbours so the order never changes.
+    pub fn move_point(&mut self, i: usize, x: f32, y: f32) {
+        let n = self.xs.len();
+        if i >= n || !x.is_finite() || !y.is_finite() {
+            return;
+        }
+        let mut pts: Vec<(f32, f32)> = self.points().collect();
+        let x = if i == 0 || i == n - 1 {
+            pts[i].0
+        } else {
+            const GAP: f32 = 1e-3;
+            x.clamp(pts[i - 1].0 + GAP, pts[i + 1].0 - GAP)
+        };
+        pts[i] = (x, y.clamp(0.0, 1.0));
+        *self = Self::new(&pts);
+    }
+
+    /// Editing: removes an interior point (endpoints cannot be removed).
+    pub fn remove_point(&mut self, i: usize) -> bool {
+        let n = self.xs.len();
+        if i == 0 || i + 1 >= n {
+            return false;
+        }
+        let mut pts: Vec<(f32, f32)> = self.points().collect();
+        pts.remove(i);
+        *self = Self::new(&pts);
+        true
     }
 
     pub fn eval(&self, x: f32) -> f32 {
@@ -183,6 +276,54 @@ mod tests {
         assert_eq!(c.eval(-5.0), 0.25);
         assert_eq!(c.eval(f32::NAN), 0.25);
         assert_eq!(c.eval(9.0), 1.0);
+    }
+
+    #[test]
+    fn serde_round_trip_and_sanitizing() {
+        let c = Curve::new(&[(0.0, 0.1), (0.4, 0.3), (1.0, 0.9)]);
+        let json = serde_json::to_string(&c).unwrap();
+        assert_eq!(json, "[[0.0,0.1],[0.4,0.3],[1.0,0.9]]");
+        assert_eq!(serde_json::from_str::<Curve>(&json).unwrap(), c);
+        let messy: Curve = serde_json::from_str("[[2,5],[-1,0.5],[0.5,-3]]").unwrap();
+        assert_eq!(
+            messy.points().collect::<Vec<_>>(),
+            vec![(0.0, 0.5), (0.5, 0.0), (1.0, 1.0)]
+        );
+        assert!((0..=100).all(|i| messy.eval(i as f32 / 100.0).is_finite()));
+    }
+
+    #[test]
+    fn editing_keeps_endpoints_and_order() {
+        let mut c = Curve::linear();
+        let i = c.insert_point(0.5);
+        assert_eq!((c.len(), i), (3, 1));
+        assert!(
+            (c.eval(0.5) - 0.5).abs() < 1e-6,
+            "insertion keeps the shape"
+        );
+        c.move_point(1, 2.0, 0.9);
+        let pts: Vec<_> = c.points().collect();
+        assert!(pts[1].0 < 1.0 && pts[1].1 == 0.9);
+        c.move_point(0, 0.7, 0.2);
+        assert_eq!(
+            c.points().next().unwrap(),
+            (0.0, 0.2),
+            "endpoint x is fixed"
+        );
+        c.move_point(1, f32::NAN, 0.5);
+        assert_eq!(c.len(), 3, "NaN edits are ignored");
+        assert!(!c.remove_point(0) && !c.remove_point(2));
+        assert!(c.remove_point(1));
+        assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn monotone_projection() {
+        let c = Curve::new(&[(0.0, 0.5), (0.5, 0.2), (1.0, 0.8)]);
+        assert!(!c.is_monotone());
+        let m = c.monotone();
+        assert!(m.is_monotone());
+        assert_eq!(m.points().nth(1).unwrap().1, 0.5);
     }
 
     #[test]

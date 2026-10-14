@@ -17,6 +17,7 @@ mod engine;
 mod input;
 pub mod interpolate;
 pub mod pipeline;
+pub mod rng;
 mod settings;
 mod spacing;
 pub mod stabilizer;

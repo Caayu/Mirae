@@ -1,6 +1,6 @@
 use tela_color::Rgba;
 
-use crate::dynamics::{BrushProperty, Curve, DynamicsInput, DynamicsSource, Effector};
+use crate::dynamics::{BrushProperty, Curve, DynamicsInput, DynamicsSource, Effector, slot};
 use crate::interpolate::InterpolationKind;
 use crate::stabilizer::StabilizerKind;
 
@@ -114,7 +114,7 @@ impl BrushSettings {
 
     pub fn radius(&self, input: &DynamicsInput, taper: f32) -> f32 {
         let t = if self.taper.affects_size { taper } else { 1.0 };
-        (self.size.eval(input) * 0.5 * t).max(Self::MIN_RADIUS)
+        (self.size.eval(input, slot::SIZE) * 0.5 * t).max(Self::MIN_RADIUS)
     }
 
     pub fn opacity(&self, input: &DynamicsInput, taper: f32) -> f32 {
@@ -123,7 +123,7 @@ impl BrushSettings {
         } else {
             1.0
         };
-        (self.opacity.eval(input) * t).clamp(0.0, 1.0)
+        (self.opacity.eval(input, slot::OPACITY) * t).clamp(0.0, 1.0)
     }
 }
 

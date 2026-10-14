@@ -308,7 +308,8 @@ fn place(
         rotation: p.rotation,
         direction: p.velocity.y.atan2(p.velocity.x),
         distance: site.distance,
-        random: hash01(seed, site.index),
+        dab_index: site.index as u64,
+        rng: crate::rng::StrokeRng::new(seed),
     };
     let to_end = if settings.taper.end > 0.0 {
         (head - site.distance).max(0.0)
@@ -320,8 +321,14 @@ fn place(
         center: p.pos,
         radius: settings.radius(&input, taper),
         opacity: settings.opacity(&input, taper),
-        flow: settings.flow.eval(&input).clamp(0.0, 1.0),
-        hardness: settings.hardness.eval(&input).clamp(0.0, 1.0),
+        flow: settings
+            .flow
+            .eval(&input, crate::dynamics::slot::FLOW)
+            .clamp(0.0, 1.0),
+        hardness: settings
+            .hardness
+            .eval(&input, crate::dynamics::slot::HARDNESS)
+            .clamp(0.0, 1.0),
     };
     out.push(dab);
     2.0 * dab.radius * settings.spacing
