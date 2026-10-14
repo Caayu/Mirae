@@ -1,2 +1,30 @@
+# Build output
 /target
+
+# Documents saved while testing the app (format not stable yet)
 *.tela
+
+# Golden-test mismatch output is written to the system temp dir; anything
+# rendered for inspection inside the repo should not be committed.
+/crates/corpus/golden/*.actual.png
+/scratch/
+
+# Profiler and crash output
+*.etl
+*.pdb
+*.dmp
+*.profraw
+*.profdata
+perf.data*
+flamegraph*.svg
+/trace-*.json
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Intentional evidence lives under docs/phase*/ and is committed explicitly.
