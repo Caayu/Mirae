@@ -50,14 +50,29 @@ impl Document {
     /// Composites every visible layer (and the overlay) for one tile, over
     /// transparency. Returns `None` when nothing is there, so callers can
     /// skip or free the tile. Pixels outside the document are cleared.
+    ///
+    /// Allocates; interactive callers should use [`Document::compose_tile_into`].
     pub fn compose_tile(
         &self,
         coord: TileCoord,
         overlay: Option<&Overlay>,
     ) -> Option<Vec<[u8; 4]>> {
+        let mut scratch = ComposeScratch::new();
+        self.compose_tile_into(coord, overlay, &mut scratch)
+            .then(|| scratch.out.clone())
+    }
+
+    /// Like [`Document::compose_tile`], but writes into reusable buffers
+    /// (`scratch.out`) and returns whether the tile has content.
+    pub fn compose_tile_into(
+        &self,
+        coord: TileCoord,
+        overlay: Option<&Overlay>,
+        scratch: &mut ComposeScratch,
+    ) -> bool {
         let in_doc = coord.rect().intersect(&self.bounds());
         if in_doc.is_empty() {
-            return None;
+            return false;
         }
         let overlay = overlay.filter(|o| (o.covers)(coord));
         let any_layer = self
@@ -65,38 +80,38 @@ impl Document {
             .iter()
             .any(|l| l.visible && l.pixels.tile(coord).is_some());
         if !any_layer && overlay.is_none() {
-            return None;
+            return false;
         }
 
-        let mut acc = vec![PremulRgba::TRANSPARENT; (TILE_SIZE * TILE_SIZE) as usize];
-        let mut layer_buf = vec![PremulRgba::TRANSPARENT; acc.len()];
-        for (i, layer) in self.layers.iter().enumerate() {
-            let tile = layer.pixels.tile(coord).filter(|_| layer.visible);
+        let ComposeScratch { acc, layer, out } = scratch;
+        acc.fill(PremulRgba::TRANSPARENT);
+        for (i, l) in self.layers.iter().enumerate() {
+            let tile = l.pixels.tile(coord).filter(|_| l.visible);
             let draws_overlay = overlay.is_some_and(|o| o.above_layer == i);
             if tile.is_none() && !draws_overlay {
                 continue;
             }
             match tile {
                 Some(t) => {
-                    for (d, s) in layer_buf.iter_mut().zip(t.pixels()) {
+                    for (d, s) in layer.iter_mut().zip(t.pixels()) {
                         *d = PremulRgba::from_rgba8(*s);
                     }
                 }
-                None => layer_buf.fill(PremulRgba::TRANSPARENT),
+                None => layer.fill(PremulRgba::TRANSPARENT),
             }
             // The stroke previews as part of its target layer, so it is
             // affected by that layer's opacity just like after commit.
             if let Some(o) = overlay.filter(|_| draws_overlay) {
-                (o.paint)(coord, &mut layer_buf);
+                (o.paint)(coord, layer);
             }
-            layer
-                .blend_mode
-                .composite(&layer_buf, layer.opacity, &mut acc);
+            l.blend_mode.composite(layer, l.opacity, acc);
         }
 
-        let (ox, oy) = coord.origin();
-        let mut out: Vec<[u8; 4]> = acc.iter().map(|p| p.to_rgba8()).collect();
+        for (o, a) in out.iter_mut().zip(acc.iter()) {
+            *o = a.to_rgba8();
+        }
         if in_doc != coord.rect() {
+            let (ox, oy) = coord.origin();
             for y in 0..TILE_SIZE as i32 {
                 for x in 0..TILE_SIZE as i32 {
                     let (px, py) = (ox + x, oy + y);
@@ -106,7 +121,32 @@ impl Document {
                 }
             }
         }
-        Some(out)
+        true
+    }
+}
+
+/// Reusable buffers for [`Document::compose_tile_into`] (about 2.3 MB).
+pub struct ComposeScratch {
+    acc: Vec<PremulRgba>,
+    layer: Vec<PremulRgba>,
+    /// The composed tile, premultiplied RGBA8.
+    pub out: Vec<[u8; 4]>,
+}
+
+impl Default for ComposeScratch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ComposeScratch {
+    pub fn new() -> Self {
+        let n = (TILE_SIZE * TILE_SIZE) as usize;
+        Self {
+            acc: vec![PremulRgba::TRANSPARENT; n],
+            layer: vec![PremulRgba::TRANSPARENT; n],
+            out: vec![[0; 4]; n],
+        }
     }
 }
 
