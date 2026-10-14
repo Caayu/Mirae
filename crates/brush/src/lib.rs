@@ -14,6 +14,7 @@ pub mod analysis;
 pub mod dynamics;
 mod engine;
 mod input;
+pub mod interpolate;
 pub mod pipeline;
 mod settings;
 mod spacing;

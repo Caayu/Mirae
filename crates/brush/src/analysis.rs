@@ -370,9 +370,39 @@ impl Metrics {
     }
 }
 
+/// Largest change of direction, in degrees, between consecutive chords of a
+/// dense polyline: the size of the worst visible "kink". Chords shorter than
+/// `min_chord` are merged so quantization does not count as a kink.
+pub fn max_turn_degrees(points: impl IntoIterator<Item = Vec2>, min_chord: f32) -> f32 {
+    let mut kept: Vec<Vec2> = Vec::new();
+    for p in points {
+        if kept.last().is_none_or(|l| (p - *l).length() >= min_chord) {
+            kept.push(p);
+        }
+    }
+    kept.windows(3)
+        .map(|w| {
+            let (a, b) = ((w[1] - w[0]).normalize(), (w[2] - w[1]).normalize());
+            a.dot(b).clamp(-1.0, 1.0).acos().to_degrees()
+        })
+        .fold(0.0, f32::max)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn max_turn_measures_kinks() {
+        let square = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(10.0, 10.0),
+        ];
+        assert!((max_turn_degrees(square, 0.5) - 90.0).abs() < 1e-3);
+        let straight = (0..10).map(|i| Vec2::new(i as f32, 0.0));
+        assert_eq!(max_turn_degrees(straight, 0.5), 0.0);
+    }
 
     #[test]
     fn rng_is_deterministic_and_roughly_normal() {
