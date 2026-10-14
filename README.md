@@ -11,10 +11,14 @@ cargo run --release -p tela-app
 ```
 
 Pen input (Windows Ink: pressure, tilt, rotation) and mouse share one path.
+The brush panel on the left edits the active preset, its effectors and the
+pressure curve; the pen works on the panel too.
 
 | Input | Action |
 |---|---|
-| Left drag / pen | Paint |
+| Left drag / pen | Paint (pen eraser end erases) |
+| 1–8 | Presets: ink pen, pencil, soft round, marker, airbrush, chalk, calligraphy, eraser |
+| E | Toggle eraser mode |
 | Middle drag, or Space + drag | Pan |
 | Wheel | Zoom at cursor |
 | Shift + wheel | Rotate 15° at cursor |
@@ -41,6 +45,7 @@ color     <- canvas <- brush      (no dependency on tablet, UI or GPU)
                    \<- document   (does not depend on brush)
                    \<- renderer   (sees tiles and a view, never the document)
 tablet: device acquisition + normalization (no dependency on brush)
+ui: egui panel editing brush data, drawn through the renderer's overlay hook
 app: wires everything together; the only crate that knows about winit
 ```
 
@@ -49,12 +54,14 @@ app: wires everything together; the only crate that knows about winit
 | `tela-color` | Straight/premultiplied RGBA, Porter-Duff over, sRGB transfer |
 | `tela-canvas` | Sparse 256×256 tiles, dirty-tile sets, pan/zoom/rotate view |
 | `tela-tablet` | `TabletSample`, unit/timestamp normalization, Windows Ink backend |
-| `tela-brush` | Dynamics/effectors, velocity, jitter filter, stabilizers, interpolators, dab spacing, tapers, stroke buffer, synthetic analysis corpus |
+| `tela-brush` | Versioned JSON presets, effectors, procedural/image tips, canvas textures, scatter, airbrush, velocity, jitter filter, stabilizers, interpolators, dab spacing, tapers, stroke buffer (paint/erase, per-tile parallel) |
 | `tela-document` | Raster layers and per-tile composition |
-| `tela-renderer` | wgpu presentation of composed tiles |
-| `tela-app` | Window, event loop, interaction |
+| `tela-renderer` | wgpu presentation: mipmapped display texture, overlay hook |
+| `tela-ui` | egui brush panel and curve editor (the only crate using egui) |
+| `tela-corpus` | Golden brush sheets, image diff metrics, stamping benchmark |
+| `tela-app` | Window, event loop, tools, interaction |
 
-Planned crates: `vector`, `tools`, `history`, `ui`, `io`.
+Planned crates: `vector`, `history`, `io`.
 
 ### Key decisions
 
@@ -76,20 +83,27 @@ Planned crates: `vector`, `tools`, `history`, `ui`, `io`.
   stroke give the same dabs within 1e-3 px.
 - **Live end taper.** The last `taper.end` px are a re-renderable tail drawn as
   if the stroke ended now; older dabs are final.
+- **Presets are data.** Versioned JSON, step-by-step migration, defaults for
+  missing fields, `Unknown` for unknown variants; loading never panics.
+- **Textures in canvas space modulate the opacity ceiling**, so grain stays
+  put under a moving brush and survives any dab overlap.
+- **Airbrush by time instants** `t₀ + k/rate`: identical at any frame rate;
+  resting is inferred from input motion and measured delivery latency.
+- **Deterministic randomness** `(seed, stream, index)`: replayable strokes.
 - **CPU composition of dirty tiles, GPU presentation.** Deterministic and unit
   tested; can move to compute shaders later without changing interfaces.
 - **sRGB-encoded storage, non-sRGB swapchain.** Values pass through unchanged.
 
 ### Known limitations
 
-- Linear filtering at zoom < 1 can show faint seams at tile borders, and
-  nearest filtering at zoom > 1 shows canvas pixels as blocks (needs gutter
-  pixels or a mip-mapped atlas and a better magnification filter).
+- No physical tablet has been tested (see `docs/phase3`); pen evidence is
+  synthetic Windows Ink injection.
+- 8-bit layer storage can band in soft, low-flow build-ups.
+- The document is limited to the GPU's maximum texture size.
 - Curved interpolation runs one sample behind the input (~4 ms at 240 Hz).
 - Stroke ends use a mirrored phantom neighbour, so the first/last segment of
   an open stroke has slightly less curvature than its interior.
 - Mouse samples carry no device timestamp (stamped on arrival).
-- The pen eraser end is detected but paints like the tip until an eraser exists.
 - Pixels painted outside the document bounds are kept in the layer (clipped
   only at composition).
 
@@ -97,7 +111,7 @@ Planned crates: `vector`, `tools`, `history`, `ui`, `io`.
 
 - [x] Phase 1 — window, wgpu, tiled canvas, mouse drawing, pan/zoom/rotate
 - [x] Phase 2 — Windows Ink input, pressure, interpolation, stabilization ([report](docs/phase2/README.md))
-- [ ] Phase 3 — brush presets, effectors, textures
+- [x] Phase 3 — brush presets, effectors, tips, textures, airbrush, eraser ([report](docs/phase3/README.md))
 - [ ] Phase 4 — layers, blend modes, undo/redo
 - [ ] Phase 5 — vector layers and editing
 - [ ] Phase 6 — selections, transform, fill, gradients
