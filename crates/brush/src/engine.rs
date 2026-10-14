@@ -510,6 +510,7 @@ impl BrushEngine {
             tip: self.preset.tip.prepare(),
             texture: self.preset.texture.as_ref().map(CanvasTexture::new),
             anti_aliasing: self.preset.compositing.anti_aliasing,
+            mode: self.preset.compositing.mode,
         };
         let mut stroke = StrokeBuffer::new(self.color, ctx);
         let params = StrokeParams::new(&self.preset, &self.stroke_defaults, scale, seed);

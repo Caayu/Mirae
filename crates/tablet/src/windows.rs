@@ -278,6 +278,16 @@ fn read_history(shared: &Shared, hwnd: HWND, pointer_id: u32) {
             rotation: mask & PEN_MASK_ROTATION != 0,
         };
         let eraser = info.penFlags & (PEN_FLAG_ERASER | PEN_FLAG_INVERTED) != 0;
+        if phase == Phase::Down || phase == Phase::Up {
+            log::debug!(
+                target: "tela::ink",
+                "{phase:?} pointer_flags={:#x} pen_flags={:#x} mask={:#x} pressure={}",
+                flags,
+                info.penFlags,
+                info.penMask,
+                info.pressure
+            );
+        }
         let sample = TabletSample {
             position: (screen - origin).as_vec2(),
             pressure: if caps.pressure {

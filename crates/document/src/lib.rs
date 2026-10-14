@@ -227,4 +227,43 @@ mod tests {
         // Committing quantizes the layer to 8 bits once more.
         assert!(max_diff <= 1, "preview differs from commit by {max_diff}");
     }
+
+    #[test]
+    fn eraser_preview_matches_committed_result() {
+        let mut d = Document::new(256, 256);
+        for y in 20..60 {
+            for x in 20..60 {
+                d.layers[0].pixels.set_pixel(x, y, [180, 60, 30, 255]);
+            }
+        }
+        let mut preset = BrushPreset::plain(20.0);
+        preset.compositing.mode = tela_brush::preset::PaintMode::Erase;
+        preset.properties.opacity = BrushProperty::constant(0.7);
+        let mut e = tela_brush::BrushEngine::new(preset);
+        e.begin_stroke(
+            BrushInput::from_position(Vec2::new(40.0, 40.0), 0.0),
+            1.0,
+            0,
+        );
+        let stroke = e.end_stroke().unwrap();
+        let coord = TileCoord { x: 0, y: 0 };
+        let paint = |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px);
+        let covers = |c: TileCoord| stroke.touched().contains(c);
+        let o = Overlay {
+            above_layer: 0,
+            paint: &paint,
+            covers: &covers,
+        };
+        let preview = d.compose_tile(coord, Some(&o)).unwrap();
+        stroke.commit_into(&mut d.layers[0].pixels);
+        let committed = d.compose_tile(coord, None).unwrap();
+        assert_eq!(committed[40 * 256 + 40], [54, 18, 9, 77], "70% erased");
+        let max_diff = preview
+            .iter()
+            .zip(&committed)
+            .flat_map(|(a, b)| a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)))
+            .max()
+            .unwrap();
+        assert!(max_diff <= 1, "preview differs from commit by {max_diff}");
+    }
 }

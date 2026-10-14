@@ -1,5 +1,6 @@
 mod app;
 mod stats;
+mod tools;
 
 use app::{App, AppEvent};
 

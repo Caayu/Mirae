@@ -18,6 +18,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::stats::LatencyStats;
+use crate::tools::Tools;
 
 const DOCUMENT_SIZE: (u32, u32) = (4000, 3000);
 const WORKSPACE_COLOR: [f32; 4] = [0.18, 0.18, 0.2, 1.0];
@@ -65,6 +66,7 @@ pub struct App {
     last_device: Option<DeviceKind>,
     /// Seed of the next stroke; recorded strokes replay identically.
     stroke_seed: u64,
+    tools: Tools,
 }
 
 impl App {
@@ -89,6 +91,7 @@ impl App {
             show_stats: false,
             last_device: None,
             stroke_seed: 0,
+            tools: Tools::new(),
         }
     }
 
@@ -109,8 +112,8 @@ impl App {
         let Some(gpu) = &self.gpu else {
             return;
         };
-        let s = &self.engine.preset;
-        let st = self.engine.resolved_stroke();
+        let s = self.tools.active();
+        let st = s.stroke.resolve(&self.engine.stroke_defaults);
         let taper = if s.taper.start > 0.0 || s.taper.end > 0.0 {
             "on"
         } else {
@@ -123,7 +126,8 @@ impl App {
             .iter()
             .any(|e| e.enabled && e.source == DynamicsSource::Pressure);
         let mut title = format!(
-            "Tela — {:.0}px | stab {} {:.0} | {} | taper {taper} | opacity×pressure {} | {}",
+            "Tela — {} {:.0}px | stab {} {:.0} | {} | taper {taper} | opacity×pressure {} | {}",
+            s.name,
             s.properties.size.base,
             st.stabilizer.name(),
             st.stabilization,
@@ -179,6 +183,7 @@ impl App {
                 self.timestamps.reset();
                 let input = self.brush_input(&ev.sample);
                 let t = Instant::now();
+                self.engine.preset = self.tools.for_stroke(ev.sample.device_kind).clone();
                 self.stroke_seed = self.stroke_seed.wrapping_add(1);
                 self.engine
                     .begin_stroke(input, self.view.zoom, self.stroke_seed);
@@ -281,7 +286,7 @@ impl App {
         }
         // Stroke settings are user preferences; editing one drops the
         // preset's override of it.
-        let p = &mut self.engine.preset;
+        let p = self.tools.active_mut();
         let s = &mut self.engine.stroke_defaults;
         match &event.logical_key {
             Key::Named(NamedKey::Home) => self.fit_view(),
@@ -320,6 +325,11 @@ impl App {
                     }
                 }
                 "c" | "C" => self.clear_canvas(),
+                "e" | "E" => self.tools.eraser_mode = !self.tools.eraser_mode,
+                d if d.len() == 1 && d.as_bytes()[0].is_ascii_digit() => {
+                    let i = (d.as_bytes()[0] - b'1') as usize;
+                    self.tools.select(i);
+                }
                 _ => return,
             },
             _ => return,
@@ -373,6 +383,12 @@ impl App {
     }
 
     fn redraw(&mut self) {
+        // Airbrush presets keep depositing while the pen rests, so keep
+        // frames coming for the duration of such a stroke.
+        if self.engine.is_stroking() && self.engine.is_time_based() {
+            self.engine.advance_time(clock::now());
+            self.request_redraw();
+        }
         let t = Instant::now();
         let tiles = self.refresh_tiles();
         if tiles > 0 {

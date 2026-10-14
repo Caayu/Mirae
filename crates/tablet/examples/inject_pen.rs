@@ -5,7 +5,7 @@
 //! ```sh
 //! cargo run -p tela-tablet --example inject_pen -- [window title prefix] [pattern]
 //! ```
-//! Patterns: `all` (default), `pressure`, `fast`, `detail`.
+//! Patterns: `all` (default), `pressure`, `fast`, `detail`, `eraser`.
 
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -29,6 +29,7 @@ mod inject {
         EnumWindows, GetClientRect, GetWindowTextW, IsWindowVisible, PEN_MASK_PRESSURE,
         PEN_MASK_ROTATION, PEN_MASK_TILT_X, PEN_MASK_TILT_Y, PT_PEN, SetForegroundWindow,
     };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{PEN_FLAG_ERASER, PEN_FLAG_INVERTED};
     use windows_sys::core::BOOL;
 
     /// One pen state in client-relative unit coordinates (`0..1`).
@@ -40,6 +41,7 @@ mod inject {
         tilt_x: i32,
         tilt_y: i32,
         rotation: u32,
+        eraser: bool,
     }
 
     struct Injector {
@@ -66,6 +68,15 @@ mod inject {
             info.tiltX = pen.tilt_x;
             info.tiltY = pen.tilt_y;
             info.rotation = pen.rotation % 360;
+            if pen.eraser {
+                let contact = flags & POINTER_FLAG_INCONTACT != 0;
+                info.penFlags = match std::env::var("TELA_ERASER_FLAGS").as_deref() {
+                    Ok("both") => PEN_FLAG_ERASER | PEN_FLAG_INVERTED,
+                    Ok("eraser") => PEN_FLAG_ERASER,
+                    Ok("contact") if contact => PEN_FLAG_ERASER,
+                    _ => PEN_FLAG_INVERTED,
+                };
+            }
             let input = POINTER_TYPE_INFO {
                 r#type: PT_PEN,
                 Anonymous: POINTER_TYPE_INFO_0 { penInfo: info },
@@ -123,6 +134,7 @@ mod inject {
             tilt_x: 0,
             tilt_y: 0,
             rotation: 0,
+            eraser: false,
         }
     }
 
@@ -223,6 +235,19 @@ mod inject {
                     (0.38 + 0.16 * (t - 0.5), 0.35 + 1.0 * (t - 0.5))
                 };
                 pen(u, v, 0.7)
+            });
+        }
+        if pattern == "eraser" {
+            // Flipped stylus: erase across what the other patterns drew.
+            let rub = |u: f32, v: f32| Pen {
+                eraser: true,
+                ..pen(u, v, 1.0)
+            };
+            inj.stroke(120, |t| {
+                rub(0.2 + 0.6 * t, 0.12 + 0.03 * (TAU * 3.0 * t).sin())
+            });
+            inj.stroke(120, |t| {
+                rub(0.15 + 0.06 * (TAU * 2.0 * t).sin(), 0.2 + 0.6 * t)
             });
         }
         if all || pattern == "detail" {

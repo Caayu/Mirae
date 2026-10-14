@@ -2,6 +2,7 @@ use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
 use tela_color::{PremulRgba, Rgba};
 
 use crate::Dab;
+use crate::preset::PaintMode;
 use crate::texture::CanvasTexture;
 use crate::tip::{DabShape, PreparedTip};
 
@@ -73,6 +74,7 @@ pub struct StampContext {
     pub tip: PreparedTip,
     pub texture: Option<CanvasTexture>,
     pub anti_aliasing: bool,
+    pub mode: PaintMode,
 }
 
 fn stamp_into(
@@ -170,10 +172,22 @@ impl StrokeBuffer {
         let Some(mask) = self.mask_tile(coord) else {
             return;
         };
-        let paint = self.paint();
-        for (dst, &m) in pixels.iter_mut().zip(mask.pixels()) {
-            if m > 0.0 {
-                *dst = paint.scale(m).over(*dst);
+        match self.ctx.mode {
+            // Destination-out: the stroke's alpha removes layer alpha.
+            PaintMode::Erase => {
+                for (dst, &m) in pixels.iter_mut().zip(mask.pixels()) {
+                    if m > 0.0 {
+                        *dst = dst.scale(1.0 - m);
+                    }
+                }
+            }
+            PaintMode::Paint | PaintMode::Unknown => {
+                let paint = self.paint();
+                for (dst, &m) in pixels.iter_mut().zip(mask.pixels()) {
+                    if m > 0.0 {
+                        *dst = paint.scale(m).over(*dst);
+                    }
+                }
             }
         }
     }
@@ -321,6 +335,27 @@ mod tests {
         s.dab(&dab(10.5, 10.5, 3.0, 0.5, 1.0));
         s.commit_into(&mut target);
         assert_eq!(target.pixel(10, 10), [128, 0, 128, 255]);
+    }
+
+    #[test]
+    fn erase_mode_removes_alpha_through_the_same_engine() {
+        let mut target = TiledSurface::new();
+        target.set_pixel(10, 10, [200, 100, 0, 255]);
+        target.set_pixel(40, 10, [200, 100, 0, 255]);
+        let ctx = StampContext {
+            anti_aliasing: true,
+            mode: PaintMode::Erase,
+            ..Default::default()
+        };
+        let mut s = StrokeBuffer::new(Rgba::BLACK, ctx);
+        s.dab(&dab(10.5, 10.5, 3.0, 0.5, 1.0));
+        s.commit_into(&mut target);
+        assert_eq!(
+            target.pixel(10, 10),
+            [100, 50, 0, 128],
+            "half erased, color kept"
+        );
+        assert_eq!(target.pixel(40, 10), [200, 100, 0, 255], "untouched");
     }
 
     #[test]
