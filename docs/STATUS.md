@@ -8,7 +8,7 @@ audit and handoff). Update this file at the end of every phase.
 | | |
 |---|---|
 | Current phase | 3.5 complete; phase 4 **not started** (awaiting approval) |
-| Tests | **206** passing, 0 failing (phase 3 ended at 188) |
+| Tests | **207** passing, 0 failing (phase 3 ended at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -30,7 +30,7 @@ audit and handoff). Update this file at the end of every phase.
 | Eraser | Destination-out through the same engine; stylus eraser end switches automatically; `E` for the mouse |
 | UI | egui side panel: presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
-| Performance | 0 allocations per dab; ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile |
+| Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile |
 | Document | One raster layer in practice (layer stack exists; `Normal` blend only); no undo; no file I/O |
 
 ## Hardware validation

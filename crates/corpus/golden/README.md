@@ -40,8 +40,9 @@ Only deliberately, after a visual change you have inspected:
 TELA_UPDATE_GOLDEN=1 cargo test --release -p tela-corpus --test golden
 ```
 
-Only the exact value `1` updates. To render sheets elsewhere without
-touching the references: `cargo run --release -p tela-corpus -- <dir>`.
+Only the exact value `1` updates. To render sheets elsewhere for
+inspection: `cargo run --release -p tela-corpus -- <dir>` (it refuses to
+write into this directory).
 
 ## Thresholds
 

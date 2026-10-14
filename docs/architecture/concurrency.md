@@ -33,8 +33,11 @@ sample, or one tail rebuild) with `stamp_batch` (`crates/brush/src/stroke.rs`):
    the jobs with `par_iter_mut` (each job owns its tile exclusively and
    applies its dabs in stroke order), then move the tiles back.
 
-No locks and no atomics are involved: each tile has exactly one owner at a
-time, the dab list and `StampContext` (tip, texture) are shared read-only.
+No locks and no atomics are involved in Tela's code: each tile has exactly
+one owner at a time, the dab list and `StampContext` (tip, texture) are
+shared read-only. (rayon itself uses lock-free queues; submitting a batch
+from the UI thread allocates one queue block per 63 batches, see
+performance.md.)
 
 ### Determinism
 

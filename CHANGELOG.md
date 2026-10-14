@@ -43,8 +43,16 @@ main change; see `git log` for everything.
   (dbb7d05).
 - `TELA_UPDATE_GOLDEN` updated goldens for any value, including `0`; now
   only `1` (660f328).
+- `cargo run -p tela-corpus` without arguments silently overwrote the golden
+  references; it now requires an output directory and refuses the golden
+  directory.
+- The "0 allocations per dab" claim was only measured on the sequential
+  path; a new test pins it for sequential stamping and per-sample
+  processing, and documents the parallel path's amortized rayon
+  allocations.
 
 ### Added
+- `brush/tests/allocation.rs`: zero allocation per sample/dab, tested.
 - Property tests (`proptest`): curves, angles, RNG, preset validation
   idempotence, spacing vs sample density, tiles, view transform (12c97c2).
 - Crate-level and API documentation with units and domains (9a96e2c).

@@ -11,7 +11,7 @@ already `opt-level = 1`, so plain `cargo test` also works, slower.) The full
 gate, including fmt, clippy, docs and the release build, is
 `scripts/check.ps1` (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
-Counts at the end of phase 3.5: **206 tests**, all passing (phase 3 ended
+Counts at the end of phase 3.5: **207 tests**, all passing (phase 3 ended
 with 188). GPU tests skip themselves when no adapter is available.
 
 ## Kinds of tests
@@ -38,6 +38,7 @@ clock (`tablet`), curve-editor geometry (`ui`), tools selection (`app`).
 | `brush/tests/scatter_dynamics.rs` | Scatter driven by effectors; reproducibility. |
 | `brush/tests/texture_canvas_space.rs` | Grain fixed in canvas space. |
 | `brush/tests/properties.rs` | Property tests (below). |
+| `brush/tests/allocation.rs` | Zero allocation per sample/dab (thread-local counting allocator). |
 | `canvas/tests/properties.rs` | Property tests for tiles and view. |
 | `renderer/tests/display_quality.rs` | Headless GPU: seams, 100% identity, magnified texels. |
 | `corpus/tests/golden.rs` | Golden sheets (below). |
@@ -101,10 +102,22 @@ development machine is a virtual HID ("Microsoft HID RID 000D_0002"). Pen
 input is exercised end to end through the real `WM_POINTER` path with
 synthetic Windows Ink injection:
 
+Bash:
+
 ```sh
 cargo build --release -p tela-app -p tela-tablet --examples
-target/release/tela.exe &
-target/release/examples/inject_pen.exe "Tela" all
+target/release/tela.exe &          # start the app, wait for its window
+TELA_INJECT_REGION="0.26,0.02,0.99,0.98" target/release/examples/inject_pen.exe "Tela" all
+```
+
+PowerShell:
+
+```powershell
+cargo build --release -p tela-app -p tela-tablet --examples
+$app = Start-Process target\release\tela.exe -PassThru; Start-Sleep 3
+$env:TELA_INJECT_REGION = "0.26,0.02,0.99,0.98"
+target\release\examples\inject_pen.exe "Tela" all
+Stop-Process -Id $app.Id
 ```
 
 Patterns: `all`, `pressure`, `fast`, `detail`, `eraser`,
@@ -114,6 +127,10 @@ patterns off the left panel. Limits: injection sends integer pixel
 positions (HIMETRIC sub-pixel mapping untested), and tilt/rotation were not
 validated against a real pen. When real hardware is available, record the
 device, driver and results in docs/STATUS.md.
+
+`cargo run --release -p tela-tablet --example pointer_devices` lists the
+pointer devices Windows reports (type, name, rectangles) — use it to see
+whether a real tablet is visible.
 
 Useful logging: `RUST_LOG=info,tela::ink=debug,tela::latency=debug,tela::stroke=debug`.
 

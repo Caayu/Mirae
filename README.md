@@ -7,7 +7,7 @@ is original ([docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md)).
 
 **Status:** phases 1–3 complete (canvas, tablet input, brush engine);
 phase 3.5 (architecture audit and handoff) complete; phase 4 (layers, undo,
-blend modes, I/O) planned, not started. 206 tests passing. Windows is the
+blend modes, I/O) planned, not started. 207 tests passing. Windows is the
 primary platform (Windows Ink); no physical tablet has been validated yet.
 Details: [docs/STATUS.md](docs/STATUS.md).
 
@@ -77,7 +77,7 @@ enforced by a test. Read [docs/architecture/ARCHITECTURE.md](docs/architecture/A
 
 ## Tests
 
-206 tests: unit, integration, property (`proptest`), golden images of every
+207 tests: unit, integration, property (`proptest`), golden images of every
 built-in preset, GPU display tests (skipped without a GPU) and crate
 boundary checks. Benchmarks are separate examples. See
 [docs/testing.md](docs/testing.md) and [docs/golden-tests.md](docs/golden-tests.md).

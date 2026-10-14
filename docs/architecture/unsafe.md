@@ -23,6 +23,7 @@ Policy:
 | `crates/tablet/examples/inject_pen.rs` | example (dev tool) | Synthetic pointer device injection, window enumeration callback | Audited; every block documented |
 | `crates/tablet/examples/pointer_devices.rs` | example | Device enumeration | Documented |
 | `crates/corpus/examples/stamp_bench.rs` | benchmark | Counting `GlobalAlloc` forwarding to `System` | Documented |
+| `crates/brush/tests/allocation.rs` | test | Counting `GlobalAlloc` (thread-local counters, const-initialized) forwarding to `System` | Documented |
 
 No `unsafe` exists in color, canvas, brush, document, renderer, ui, corpus
 (library) or app. The app reaches Windows Ink only through `InkBackend`.

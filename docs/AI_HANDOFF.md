@@ -15,7 +15,7 @@ measured performance, documented decisions.
 ## 2. Current state
 
 Phase 3.5 (architecture audit/handoff) is complete. **Phase 4 has not
-started and must not start without the owner's explicit approval.** 206
+started and must not start without the owner's explicit approval.** 207
 tests pass; fmt/clippy/doc are clean. Facts: [STATUS.md](STATUS.md).
 
 ## 3. Repository
@@ -47,7 +47,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 206 tests, ~5 s after build
+cargo test --workspace --release        # 207 tests, ~5 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -78,9 +78,13 @@ target/release/tela.exe                                   # start it first
 TELA_INJECT_REGION="0.26,0.02,0.99,0.98" target/release/examples/inject_pen.exe "Tela" all
 ```
 
+PowerShell: `$env:TELA_INJECT_REGION = "0.26,0.02,0.99,0.98"; target\release\examples\inject_pen.exe "Tela" all`
+(full sequence in docs/testing.md#hardware-tests).
+
 Patterns: `all`, `pressure`, `fast`, `detail`, `eraser`,
 `drag:x0,y0,x1,y1[,pressure]`, `hold:u,v,seconds[,pressure]` (fractions
-of the client area). Pitfalls on this machine: PowerShell swallows a bare
+of the client area). `cargo run -p tela-tablet --example pointer_devices`
+lists the pen devices Windows sees. Pitfalls on this machine: PowerShell swallows a bare
 `--` argument; the pt-BR locale formats decimals with commas (use
 `[string]::Format([cultureinfo]::InvariantCulture, ...)` when generating
 numbers in PowerShell); kill a running `tela.exe` before rebuilding or the
@@ -122,7 +126,9 @@ easily broken:
 4. Parallel stamping bit-identical to sequential.
 5. Airbrush independent of frame rate.
 6. Invalid presets never panic; unknown values are neutral.
-7. 0 allocations per dab; composition allocation-free.
+7. 0 allocations per sample/dab on the sequential path (tested); the
+   parallel path only has rayon's amortized queue blocks; composition is
+   allocation-free.
 8. Crate boundaries (brush ⟂ tablet/UI/GPU/document; renderer ⟂ document).
 
 ## 14. Architectural decisions
@@ -169,7 +175,7 @@ deliberately: `TELA_UPDATE_GOLDEN=1 cargo test --release -p tela-corpus --test g
 
 ## 20. Current performance
 
-0 allocations per dab; ~375 k dabs/s at 5 px, ~490 dabs/s at 500 px hard
+0 allocations per dab (sequential path; parallel: rayon queue blocks only); ~375 k dabs/s at 5 px, ~490 dabs/s at 500 px hard
 (single thread), ~3× parallel at 500 px; 0.107 ms per composed tile.
 [performance.md](performance.md).
 
@@ -216,6 +222,7 @@ history. Public math/papers and observed behaviour are fine.
   deliberately if presets change).
 - Docs updated when architecture, invariants or formats change (ADR if a
   decision changes); STATUS/CHANGELOG at phase end.
-- Small commits, message explains why, ending with the
-  `Co-Authored-By:` line used in this repository's history.
+- Small commits, message explains why. AI-authored commits in this
+  repository end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
+  (use the attribution your own session specifies, if different).
 - Phase boundaries respected: never advance a phase automatically.

@@ -29,8 +29,10 @@ per frame:
 
 | Stage | Expectation | How it is checked |
 |---|---|---|
-| Stamping a dab into existing tiles | **0 allocations** | `stamp_bench` counting allocator: `allocs/dab (hot path)` must print `0.000` |
-| Stroke processor per sample | no allocation after buffers grow (all stages write into owned, reused buffers) | Design; reviewed in phase 3.5 |
+| Stamping a dab into existing tiles, sequential path | **0 allocations** | `stamp_bench` (`allocs/dab (hot path)` = `0.000`; the benchmark's hot-path table uses the sequential path) and `brush/tests/allocation.rs` |
+| Stroke processor per sample (filters, interpolation, spacing, dynamics, scatter) + sequential stamping | **0 allocations** after buffers and tiles exist | `brush/tests/allocation.rs` (12 px and 400 px brushes, 2800 samples) |
+| Parallel stamping (batches ≥ 60 000 px of work) | **amortized, inside rayon**: submitting a batch from the UI thread pushes a job onto rayon's injector queue (crossbeam `Injector`), which allocates one block per 63 jobs; measured 9 allocations in 2800 samples of a 400 px brush | `brush/tests/allocation.rs` bounds it (≤ 1 per 100 samples) |
+| Dirty-tile bookkeeping | `StrokeBuffer::take_dirty` hands its `BTreeSet` away once per frame, so the next frame's marks allocate a few set nodes (per frame, not per dab) | Design; documented here |
 | Composition of a dirty tile | **0 allocations** (`compose_tile_into` + `ComposeScratch`) | `stamp_bench` composition line |
 | First touch of a tile | allocates the tile (by design, ADR 0002) | — |
 | Parallel batch | reuses `BatchScratch` vectors; tiles are moved, not copied | — |
@@ -64,7 +66,8 @@ cargo run --release -p tela-corpus --example stamp_bench
 
 Throughput for large dabs: ~120 Mpx/s hard, ~103 Mpx/s soft, ~62 Mpx/s
 textured. Tiles touched per dab: 1.03 (5 px) to 8.9 (500 px).
-Allocations per dab: **0.000** for every row.
+Allocations per dab: **0.000** for every row (sequential path; see the
+table above for the parallel path).
 
 ### Single vs parallel (batches of one input sample)
 
@@ -106,4 +109,4 @@ app with F3 (title bar) or `RUST_LOG=tela::latency=debug`.
 - Measure before and after any change to a hot path; record numbers in the
   commit message or here.
 - Never trade determinism (bit-identical results) for speed.
-- Keep `allocs/dab` at 0.000.
+- Keep `allocs/dab` at 0.000 and `brush/tests/allocation.rs` passing.

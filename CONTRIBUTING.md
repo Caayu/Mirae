@@ -23,7 +23,7 @@
 | Everything | `powershell -ExecutionPolicy Bypass -File scripts\check.ps1` (`-Quick`, `-Bench`) |
 | Benchmarks | `cargo run --release -p tela-corpus --example stamp_bench` (and `tela-brush` examples `stabilizer_bench`, `interpolation_bench`) |
 | Golden update | `TELA_UPDATE_GOLDEN=1 cargo test --release -p tela-corpus --test golden` (deliberately; see docs/golden-tests.md) |
-| Synthetic pen | `target/release/examples/inject_pen.exe "Tela" all` with the app running |
+| Synthetic pen | build with `--examples`, start `tela.exe`, then `TELA_INJECT_REGION="0.26,0.02,0.99,0.98" target/release/examples/inject_pen.exe "Tela" all` (PowerShell form in docs/testing.md) |
 
 ## Architecture rules
 
@@ -56,7 +56,8 @@ something could only be tested synthetically.
 - Small and focused; refactors separate from behaviour changes.
 - Message: imperative subject (≤ 72 chars), body explaining *why*, numbers
   for performance claims, and what was verified (tests, app, benchmark).
-- End with the repository's `Co-Authored-By:` line when applicable.
+- AI-authored commits end with a `Co-Authored-By:` line (history uses
+  `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`).
 - Never rewrite or squash published history.
 
 ## ADRs

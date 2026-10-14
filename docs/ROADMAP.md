@@ -8,7 +8,7 @@ explicitly approves it; phases are never started automatically.
 | 1 | Window, wgpu renderer, sparse tiled canvas, mouse drawing, pan/zoom/rotate | **Complete** |
 | 2 | Windows Ink input (pressure, tilt, rotation, history, QPC timestamps), dynamics with curves, stabilizers, interpolation, sample-rate-invariant spacing, live tapers | **Complete** ([report](phase2/README.md)) |
 | 3 | Professional brush engine: versioned presets, generic effectors, procedural/image tips, canvas-space textures, scatter, time-based airbrush, eraser, egui panel and curve editor, golden corpus, parallel stamping | **Complete** ([report](phase3/README.md)) |
-| 3.5 | Architecture audit, Rust idioms, boundaries enforced, documentation, ADRs, handoff | **Current** (see STATUS.md) |
+| 3.5 | Architecture audit, Rust idioms, boundaries enforced, documentation, ADRs, handoff | **Complete** (see STATUS.md) |
 | 4 | Layers and document | **Planned** — not started |
 | 5 | Vector layers and editing | Planned |
 | 6 | Selections, transform, fill, gradients | Planned |

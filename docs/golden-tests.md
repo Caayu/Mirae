@@ -62,9 +62,9 @@ actual image to the system temp directory
    commit as the change, and say in the message which presets changed and
    why.
 
-`cargo run --release -p tela-corpus` with no argument writes into the
-golden directory as well; prefer the test-based update so the update is
-explicit in the command.
+`cargo run --release -p tela-corpus -- <dir>` requires a directory and
+refuses to write into `crates/corpus/golden`, so the test-based command
+above is the only way to replace references.
 
 ## Adding a preset
 

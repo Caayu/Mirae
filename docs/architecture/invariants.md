@@ -70,12 +70,14 @@ Test names are `crate::module::tests::name` for unit tests and
 
 | # | Invariant | Protected by |
 |---|---|---|
-| F1 | No allocation per dab on the stamping hot path (after tiles exist). | `stamp_bench` counting allocator (reports allocs/dab; must stay 0.000) |
-| F2 | No allocation per sample in the stroke processor (owned, reused buffers). | Design + review; `stamp_bench` covers the stamping side |
+| F1 | No allocation per dab on the sequential stamping path (after tiles exist); the parallel path allocates only rayon's amortized injector blocks (≤ 1 per 100 samples). | `allocation.rs::processing_and_stamping_do_not_allocate_per_sample`, `stamp_bench` (allocs/dab = 0.000) |
+| F2 | No allocation per sample in the stroke processor (owned, reused buffers). | `allocation.rs::processing_and_stamping_do_not_allocate_per_sample` |
 | F3 | Composition of a dirty tile does not allocate. | `stamp_bench` composition line (0 allocations) |
 
-F1–F3 are measured by the benchmark, not by `cargo test`; run it after
-touching hot paths (docs/performance.md).
+F1 and F2 are tested by `cargo test` (thread-local counting allocator);
+F3 and throughput are measured by the benchmark; run it after touching hot
+paths (docs/performance.md). B4 is the only invariant protected by review
+alone.
 
 ## Hardware
 
