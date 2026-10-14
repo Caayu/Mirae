@@ -1889,6 +1889,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tela-tablet"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "log",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "termcolor"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -14,6 +14,7 @@ tela-canvas = { path = "crates/canvas" }
 tela-brush = { path = "crates/brush" }
 tela-document = { path = "crates/document" }
 tela-renderer = { path = "crates/renderer" }
+tela-tablet = { path = "crates/tablet" }
 
 glam = "0.34"
 wgpu = "30"
