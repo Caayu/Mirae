@@ -1,0 +1,26 @@
+[package]
+name = "tela-app"
+description = "Desktop application shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tela"
+path = "src/main.rs"
+
+[dependencies]
+tela-color.workspace = true
+tela-canvas.workspace = true
+tela-brush.workspace = true
+tela-document.workspace = true
+tela-renderer.workspace = true
+winit.workspace = true
+glam.workspace = true
+pollster.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+[lints]
+workspace = true
