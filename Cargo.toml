@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+tela-color = { path = "crates/color" }
+tela-canvas = { path = "crates/canvas" }
+tela-brush = { path = "crates/brush" }
+tela-document = { path = "crates/document" }
+tela-renderer = { path = "crates/renderer" }
+
+glam = "0.34"
+wgpu = "30"
+winit = "0.30"
+pollster = "1"
+bytemuck = { version = "1", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.dev]
+# Pixel loops are unusably slow at opt-level 0; keep debug info but optimize.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
