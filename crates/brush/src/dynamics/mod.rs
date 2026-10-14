@@ -166,6 +166,15 @@ fn turns(radians: f32) -> f32 {
 impl DynamicsInput {
     /// Speed mapped to `1.0` by the `Speed` source.
     pub const SPEED_FOR_FULL: f32 = 3000.0;
+    /// Screen pixels per second below which direction is undefined.
+    pub const MIN_DIRECTION_SPEED: f32 = 1.0;
+
+    /// Whether the pen is moving fast enough for its direction to mean
+    /// anything; at rest `direction` is undefined and direction-driven
+    /// effectors stay neutral.
+    pub fn has_direction(&self) -> bool {
+        self.speed > Self::MIN_DIRECTION_SPEED
+    }
 
     fn tilt_azimuth(&self) -> f32 {
         self.tilt_y.atan2(self.tilt_x)
@@ -186,7 +195,7 @@ impl DynamicsInput {
             }
             DynamicsSource::TiltDirection => self.caps.tilt.then(|| turns(self.tilt_azimuth()))?,
             DynamicsSource::Rotation => self.caps.rotation.then(|| turns(self.rotation))?,
-            DynamicsSource::Direction => turns(self.direction),
+            DynamicsSource::Direction => self.has_direction().then(|| turns(self.direction))?,
             DynamicsSource::Distance { length } => {
                 if length > 0.0 {
                     self.distance / length
@@ -214,7 +223,7 @@ impl DynamicsInput {
     /// The angle (radians) an angular source points to.
     pub fn angle(&self, source: DynamicsSource) -> Option<f32> {
         match source {
-            DynamicsSource::Direction => Some(self.direction),
+            DynamicsSource::Direction => self.has_direction().then_some(self.direction),
             DynamicsSource::TiltDirection => self.caps.tilt.then(|| self.tilt_azimuth()),
             DynamicsSource::Rotation => self.caps.rotation.then_some(self.rotation),
             _ => None,
@@ -268,6 +277,26 @@ impl Effector {
         let x = input.value(self.source, stream)?;
         Some(self.min + (self.max - self.min) * self.curve.eval(x))
     }
+}
+
+/// Rotates angle `from` toward `to` (degrees) by `amount` in `0..=1`,
+/// for angles with the given symmetry `period`.
+///
+/// Blends unit vectors in the "multiplied angle" space (`angle * 360 /
+/// period`), where the symmetry becomes a full turn, then normalizes. This
+/// is continuous in both angles everywhere except the degenerate case of
+/// exactly opposite angles at `amount = 0.5`. Scaling the shortest
+/// difference instead would jump by `amount * period` whenever the target
+/// crosses the point opposite to `from`.
+pub fn follow(from: f32, to: f32, amount: f32, period: f32) -> f32 {
+    let k = std::f32::consts::TAU / period;
+    let (a, b) = (from * k, to * k);
+    let x = (1.0 - amount) * a.cos() + amount * b.cos();
+    let y = (1.0 - amount) * a.sin() + amount * b.sin();
+    if x * x + y * y < 1e-12 {
+        return from;
+    }
+    from + angle_delta(from, y.atan2(x) / k, period)
 }
 
 /// Shortest signed difference `b - a` for angles of the given period.
@@ -330,8 +359,7 @@ impl BrushProperty {
                 let Some(target) = input.angle(e.source) else {
                     continue;
                 };
-                let amount = e.max.clamp(0.0, 1.0);
-                acc += amount * angle_delta(acc, target.to_degrees(), period);
+                acc = follow(acc, target.to_degrees(), e.max.clamp(0.0, 1.0), period);
                 continue;
             }
             let Some(v) = e.output(input, Self::stream(slot, i)) else {
@@ -449,6 +477,7 @@ mod tests {
         };
         let input = DynamicsInput {
             direction: 10f32.to_radians(),
+            speed: 100.0,
             ..Default::default()
         };
         // Halfway from 350° to 10° is 0°, not 180°.
@@ -459,9 +488,46 @@ mod tests {
         // With 180° symmetry, travelling at 190° equals travelling at 10°.
         let back = DynamicsInput {
             direction: 190f32.to_radians(),
+            speed: 100.0,
             ..Default::default()
         };
         assert!((follow(1.0).eval_angle(&back, 0, 180.0) - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn follow_is_continuous_where_the_target_crosses_the_opposite_angle() {
+        // Base 35°, ellipse symmetry 180°: the opposite angle is 125°.
+        let mut prev = follow(35.0, 120.0, 0.12, 180.0);
+        for i in 1..=100 {
+            let target = 120.0 + i as f32 * 0.1;
+            let v = follow(35.0, target, 0.12, 180.0);
+            assert!(
+                angle_delta(prev, v, 180.0).abs() < 0.2,
+                "jump at {target}: {prev} -> {v}"
+            );
+            prev = v;
+        }
+        assert!((follow(10.0, 50.0, 1.0, 360.0) - 50.0).abs() < 1e-3);
+        assert!((follow(10.0, 50.0, 0.0, 360.0) - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn direction_is_undefined_at_rest() {
+        let p = BrushProperty::constant(30.0).with(
+            Effector::new(DynamicsSource::Direction, Curve::linear()).with_mode(
+                CombineMode::Follow,
+                0.0,
+                1.0,
+            ),
+        );
+        let rest = DynamicsInput::default();
+        assert_eq!(p.eval_angle(&rest, 0, 360.0), 30.0);
+        let moving = DynamicsInput {
+            speed: 500.0,
+            direction: 1.0,
+            ..Default::default()
+        };
+        assert!((p.eval_angle(&moving, 0, 360.0) - 1f32.to_degrees()).abs() < 1e-3);
     }
 
     #[test]
