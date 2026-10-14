@@ -5,6 +5,8 @@
 pub mod image;
 pub mod trajectory;
 
+use std::path::PathBuf;
+
 use glam::Vec2;
 use tela_brush::interpolate::InterpolationKind;
 use tela_brush::preset::PaintMode;
@@ -15,6 +17,28 @@ use tela_color::{PremulRgba, Rgba};
 
 pub use crate::image::{Diff, Image, Thresholds};
 pub use crate::trajectory::{CELL, COLUMNS, ROWS, Trajectory, trajectories};
+
+/// Environment variable that makes the golden test rewrite its references.
+/// Only the exact value `1` counts, so a stray `TELA_UPDATE_GOLDEN=0` can
+/// never update images silently.
+pub const UPDATE_GOLDEN_ENV: &str = "TELA_UPDATE_GOLDEN";
+
+/// Whether this run was explicitly asked to rewrite golden images.
+pub fn update_golden_requested() -> bool {
+    std::env::var(UPDATE_GOLDEN_ENV).is_ok_and(|v| v == "1")
+}
+
+/// Directory holding the golden sheets (`crates/corpus/golden`),
+/// independent of the working directory.
+pub fn golden_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden")
+}
+
+/// Golden file name of a preset: its id without the `tela.` namespace,
+/// e.g. `tela.ink-pen` -> `ink-pen.png`.
+pub fn golden_file_name(preset: &BrushPreset) -> String {
+    format!("{}.png", preset.id.trim_start_matches("tela."))
+}
 
 /// Renders `preset` over every standard trajectory: a `COLUMNS x ROWS`
 /// grid of `CELL`-sized cells on white paper.

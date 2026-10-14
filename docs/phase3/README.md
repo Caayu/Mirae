@@ -50,7 +50,7 @@ are clamped with a warning. Malformed JSON is an error, never a panic. The
 format, not a real legacy format.
 
 Built-ins: ink pen, pencil, soft round, marker, airbrush, chalk, calligraphy,
-eraser (keys 1–8). Each has a golden sheet in [`corpus/`](corpus/README.md).
+eraser (keys 1–8). Each has a golden sheet in [`crates/corpus/golden/`](../../crates/corpus/golden/README.md) (moved there from `docs/phase3/corpus` in phase 3.5).
 
 ## Effectors
 
@@ -183,7 +183,7 @@ the batch stays on one thread, which is why small sizes stay at ~1.0×.
 
 ## Evidence
 
-Golden corpus: [`corpus/`](corpus/README.md), checked by
+Golden corpus: [`crates/corpus/golden/`](../../crates/corpus/golden/README.md), checked by
 `cargo test -p tela-corpus --test golden`.
 
 Running app, synthetic Windows Ink pen (`inject_pen`), no physical tablet:
