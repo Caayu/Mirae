@@ -85,7 +85,7 @@ impl App {
             }
             (MouseButton::Left, ElementState::Pressed, Drag::None) => {
                 self.drag = Drag::Paint;
-                self.engine.begin_stroke(self.sample());
+                self.engine.begin_stroke(self.sample(), self.view.zoom);
             }
             (MouseButton::Middle, ElementState::Pressed, Drag::None) => self.drag = Drag::Pan,
             (MouseButton::Left, ElementState::Released, Drag::Paint) => {
@@ -147,8 +147,8 @@ impl App {
 
     fn resize_brush(&mut self, factor: f32) {
         let s = &mut self.engine.settings;
-        s.size = (s.size * factor).clamp(1.0, 2000.0);
-        log::info!("brush size {:.1}px", s.size);
+        s.size.base = (s.size.base * factor).clamp(1.0, 2000.0);
+        log::info!("brush size {:.1}px", s.size.base);
     }
 
     fn finish_stroke(&mut self) {

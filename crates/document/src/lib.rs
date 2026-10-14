@@ -113,17 +113,18 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use glam::Vec2;
+    use tela_brush::dynamics::BrushProperty;
     use tela_brush::{BrushInput, BrushSettings, StrokeBuffer};
 
     use super::*;
 
     fn stroke_at(x: f32, y: f32, opacity: f32) -> StrokeBuffer {
         let settings = BrushSettings {
-            opacity,
-            ..Default::default()
+            opacity: BrushProperty::constant(opacity),
+            ..BrushSettings::plain(12.0)
         };
         let mut e = tela_brush::BrushEngine::new(settings);
-        e.begin_stroke(BrushInput::from_position(Vec2::new(x, y), 0.0));
+        e.begin_stroke(BrushInput::from_position(Vec2::new(x, y), 0.0), 1.0);
         e.end_stroke().unwrap()
     }
 

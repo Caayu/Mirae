@@ -1,14 +1,15 @@
-//! Brush engine. Independent of windowing, UI and GPU: it consumes
-//! [`BrushInput`] samples in canvas coordinates and writes coverage into a
-//! [`StrokeBuffer`], which is later committed onto a layer.
-//!
-//! Pipeline (stages marked * are pass-through for now):
+//! Brush engine. Independent of windowing, UI, GPU and input devices: it
+//! consumes [`BrushInput`] samples in canvas coordinates and emits dabs into
+//! a [`DabSink`] (normally a [`StrokeBuffer`], later committed onto a layer).
 //!
 //! ```text
-//! raw samples -> normalization* -> velocity* -> jitter filter* -> stabilization*
-//!   -> path interpolation -> dab generation -> tip sampling -> color -> compositing
-//!   -> dirty tiles
+//! BrushInput -> pressure curve -> velocity -> jitter filter -> stabilizer
+//!   -> interpolator -> dab spacing -> dynamics & taper -> tip rasterization
+//!   -> stroke buffer -> dirty tiles
 //! ```
+//!
+//! Acquisition, device normalization and timestamp normalization happen
+//! before this crate (see `tela-tablet`).
 
 pub mod analysis;
 pub mod dynamics;
@@ -22,9 +23,9 @@ pub mod stabilizer;
 mod stroke;
 mod tip;
 
-pub use engine::BrushEngine;
+pub use engine::{BrushEngine, StrokeProcessor, StrokeStats};
 pub use input::BrushInput;
-pub use settings::BrushSettings;
-pub use spacing::{Dab, DabSpacer};
-pub use stroke::StrokeBuffer;
+pub use settings::{BrushSettings, Taper};
+pub use spacing::{Dab, DabSite, DabSpacer};
+pub use stroke::{DabLog, DabSink, StrokeBuffer};
 pub use tip::round_tip_coverage;

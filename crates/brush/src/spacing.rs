@@ -1,26 +1,42 @@
 use glam::Vec2;
 
-use crate::{BrushInput, BrushSettings};
+use crate::pipeline::StrokePoint;
 
-/// One brush-tip impression.
+/// One brush-tip impression, fully resolved.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Dab {
     pub center: Vec2,
     pub radius: f32,
-    /// Alpha contributed at full tip coverage.
+    /// Alpha ceiling this dab pulls pixels toward, `0..=1`.
+    pub opacity: f32,
+    /// Fraction of the remaining distance to the ceiling covered at full
+    /// tip coverage, `0..=1`.
     pub flow: f32,
-    pub pressure: f32,
+    pub hardness: f32,
 }
 
-/// Turns a polyline of samples into evenly spaced dabs.
+/// Where along the path a dab falls, before dynamics are applied.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DabSite {
+    pub point: StrokePoint,
+    /// Canvas pixels from the stroke start along the path.
+    pub distance: f32,
+    /// Sequential number of the dab within the stroke.
+    pub index: u32,
+}
+
+/// Places dabs along a dense polyline at a spacing that may vary per dab.
 ///
-/// The distance still owed to the next dab is carried across segments, so
-/// spacing does not depend on how densely the device reports samples.
-#[derive(Clone, Debug, Default)]
+/// The arc length still owed to the next dab is carried across segments, so
+/// placement depends only on the path and on the step function, never on
+/// how densely the path was sampled. `Clone` is cheap so a provisional run
+/// (the stroke's tail) can start from a snapshot of the committed state.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct DabSpacer {
-    last: Option<BrushInput>,
-    /// Arc length remaining on the path before the next dab is due.
+    last: Option<StrokePoint>,
     until_next: f32,
+    distance: f32,
+    next_index: u32,
 }
 
 impl DabSpacer {
@@ -36,124 +52,124 @@ impl DabSpacer {
         *self = Self::default();
     }
 
-    fn step(settings: &BrushSettings, radius: f32) -> f32 {
-        (2.0 * radius * settings.spacing).max(Self::MIN_STEP)
+    /// Arc length processed so far, canvas pixels.
+    pub fn distance(&self) -> f32 {
+        self.distance
     }
 
-    /// Feeds one sample and appends the dabs it produces to `out`.
-    /// The first sample of a stroke always produces a dab.
-    pub fn push(&mut self, sample: BrushInput, settings: &BrushSettings, out: &mut Vec<Dab>) {
-        let make = |center: Vec2, pressure: f32| Dab {
-            center,
-            radius: settings.radius_at(pressure),
-            flow: settings.flow,
-            pressure,
+    /// Feeds the next path point. `step` returns the distance to the next
+    /// dab after a dab placed at the given site. The first point of a stroke
+    /// always produces a dab.
+    pub fn push(
+        &mut self,
+        p: StrokePoint,
+        mut step: impl FnMut(&DabSite) -> f32,
+        out: &mut Vec<DabSite>,
+    ) {
+        let mut emit = |this: &mut Self, point: StrokePoint, distance: f32| {
+            let site = DabSite {
+                point,
+                distance,
+                index: this.next_index,
+            };
+            this.next_index += 1;
+            this.until_next = step(&site).max(Self::MIN_STEP);
+            out.push(site);
         };
 
-        let Some(prev) = self.last.replace(sample) else {
-            let dab = make(sample.position, sample.pressure);
-            self.until_next = Self::step(settings, dab.radius);
-            out.push(dab);
+        let Some(prev) = self.last.replace(p) else {
+            emit(self, p, 0.0);
             return;
         };
-
-        let seg = sample.position - prev.position;
-        let len = seg.length();
+        let len = (p.pos - prev.pos).length();
         if len <= f32::EPSILON {
             return;
         }
-
         let mut walked = 0.0;
         while walked + self.until_next <= len {
             walked += self.until_next;
-            let t = walked / len;
-            let pressure = prev.pressure + (sample.pressure - prev.pressure) * t;
-            let dab = make(prev.position + seg * t, pressure);
-            self.until_next = Self::step(settings, dab.radius);
-            out.push(dab);
+            let point = prev.lerp(&p, walked / len);
+            emit(self, point, self.distance + walked);
         }
         self.until_next -= len - walked;
+        self.distance += len;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BrushInput;
 
-    fn sample(x: f32, y: f32) -> BrushInput {
-        BrushInput::from_position(Vec2::new(x, y), 0.0)
-    }
-
-    fn settings(size: f32, spacing: f32) -> BrushSettings {
-        BrushSettings {
-            size,
-            spacing,
-            ..Default::default()
-        }
+    fn point(x: f32, y: f32) -> StrokePoint {
+        BrushInput::from_position(Vec2::new(x, y), 0.0).into()
     }
 
     #[test]
-    fn first_sample_emits_one_dab() {
+    fn first_point_emits_one_dab() {
         let mut s = DabSpacer::new();
         let mut out = vec![];
-        s.push(sample(3.0, 4.0), &settings(10.0, 0.5), &mut out);
+        s.push(point(3.0, 4.0), |_| 5.0, &mut out);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].center, Vec2::new(3.0, 4.0));
+        assert_eq!(out[0].point.pos, Vec2::new(3.0, 4.0));
+        assert_eq!(out[0].distance, 0.0);
     }
 
     #[test]
-    fn spacing_is_uniform_regardless_of_sample_density() {
-        // 10 px brush, 50% spacing => a dab every 5 px along 100 px.
-        let st = settings(10.0, 0.5);
-        for samples in [2usize, 7, 33, 101] {
+    fn spacing_is_uniform_regardless_of_point_density() {
+        for n in [2usize, 7, 33, 101] {
             let mut s = DabSpacer::new();
             let mut out = vec![];
-            for i in 0..samples {
-                let x = 100.0 * i as f32 / (samples - 1) as f32;
-                s.push(sample(x, 0.0), &st, &mut out);
+            for i in 0..n {
+                let x = 100.0 * i as f32 / (n - 1) as f32;
+                s.push(point(x, 0.0), |_| 5.0, &mut out);
             }
-            assert_eq!(out.len(), 21, "samples={samples}");
-            for w in out.windows(2) {
-                let d = w[1].center.x - w[0].center.x;
-                assert!((d - 5.0).abs() < 1e-3, "gap {d} with {samples} samples");
+            assert_eq!(out.len(), 21, "n={n}");
+            for (i, w) in out.windows(2).enumerate() {
+                assert!((w[1].point.pos.x - w[0].point.pos.x - 5.0).abs() < 1e-3);
+                assert_eq!(w[1].index, i as u32 + 1);
             }
+            assert!((s.distance() - 100.0).abs() < 1e-3);
         }
     }
 
     #[test]
-    fn repeated_position_emits_nothing() {
-        let st = settings(10.0, 0.5);
+    fn variable_step_follows_the_step_function() {
+        // Step grows with distance: dab gaps must match it exactly.
         let mut s = DabSpacer::new();
         let mut out = vec![];
-        s.push(sample(1.0, 1.0), &st, &mut out);
-        s.push(sample(1.0, 1.0), &st, &mut out);
-        assert_eq!(out.len(), 1);
+        let step = |site: &DabSite| 1.0 + site.distance * 0.1;
+        for i in 0..=200 {
+            s.push(point(i as f32, 0.0), step, &mut out);
+        }
+        for w in out.windows(2) {
+            let expected = 1.0 + w[0].distance * 0.1;
+            assert!((w[1].distance - w[0].distance - expected).abs() < 1e-3);
+        }
     }
 
     #[test]
-    fn pressure_is_interpolated_along_segment() {
-        let st = settings(10.0, 0.5);
-        let mut s = DabSpacer::new();
-        let mut out = vec![];
-        let mut a = sample(0.0, 0.0);
-        a.pressure = 1.0;
-        let mut b = sample(100.0, 0.0);
-        b.pressure = 1.0;
-        s.push(a, &st, &mut out);
-        b.pressure = 0.0;
-        s.push(b, &st, &mut out);
-        // Pressure falls monotonically as the dabs advance.
-        assert!(out.windows(2).all(|w| w[1].pressure <= w[0].pressure));
-        assert!(out.len() > 2);
+    fn snapshot_resumes_identically() {
+        let mut a = DabSpacer::new();
+        let mut out_a = vec![];
+        for i in 0..50 {
+            a.push(point(i as f32 * 3.0, 0.0), |_| 4.0, &mut out_a);
+        }
+        let mut b = a;
+        let (mut tail_a, mut tail_b) = (vec![], vec![]);
+        for i in 50..80 {
+            a.push(point(i as f32 * 3.0, 0.0), |_| 4.0, &mut tail_a);
+            b.push(point(i as f32 * 3.0, 0.0), |_| 4.0, &mut tail_b);
+        }
+        assert_eq!(tail_a, tail_b);
     }
 
     #[test]
     fn minimum_step_bounds_dab_count() {
-        let st = settings(1.0, 0.01);
         let mut s = DabSpacer::new();
         let mut out = vec![];
-        s.push(sample(0.0, 0.0), &st, &mut out);
-        s.push(sample(10.0, 0.0), &st, &mut out);
+        s.push(point(0.0, 0.0), |_| 0.0, &mut out);
+        s.push(point(10.0, 0.0), |_| 0.0, &mut out);
         assert_eq!(out.len(), 1 + (10.0 / DabSpacer::MIN_STEP) as usize);
     }
 }
