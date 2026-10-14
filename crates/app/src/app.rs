@@ -5,7 +5,7 @@ use glam::Vec2;
 use tela_brush::dynamics::{DynamicsSource, InputCaps};
 use tela_brush::interpolate::InterpolationKind;
 use tela_brush::stabilizer::StabilizerKind;
-use tela_brush::{BrushEngine, BrushInput, BrushSettings};
+use tela_brush::{BrushEngine, BrushInput, BrushPreset};
 use tela_canvas::{DirtyTiles, TileCoord, ViewTransform};
 use tela_color::PremulRgba;
 use tela_document::{ComposeScratch, Document, Overlay};
@@ -63,6 +63,8 @@ pub struct App {
     stats: LatencyStats,
     show_stats: bool,
     last_device: Option<DeviceKind>,
+    /// Seed of the next stroke; recorded strokes replay identically.
+    stroke_seed: u64,
 }
 
 impl App {
@@ -73,7 +75,7 @@ impl App {
             gpu: None,
             document: Document::new(w, h),
             view: ViewTransform::default(),
-            engine: BrushEngine::new(BrushSettings::default()),
+            engine: BrushEngine::new(BrushPreset::default()),
             stale: DirtyTiles::new(),
             compose: ComposeScratch::new(),
             cursor: Vec2::ZERO,
@@ -86,6 +88,7 @@ impl App {
             stats: LatencyStats::default(),
             show_stats: false,
             last_device: None,
+            stroke_seed: 0,
         }
     }
 
@@ -106,23 +109,25 @@ impl App {
         let Some(gpu) = &self.gpu else {
             return;
         };
-        let s = &self.engine.settings;
+        let s = &self.engine.preset;
+        let st = self.engine.resolved_stroke();
         let taper = if s.taper.start > 0.0 || s.taper.end > 0.0 {
             "on"
         } else {
             "off"
         };
         let opacity_pressure = s
+            .properties
             .opacity
             .effectors
             .iter()
             .any(|e| e.enabled && e.source == DynamicsSource::Pressure);
         let mut title = format!(
             "Tela — {:.0}px | stab {} {:.0} | {} | taper {taper} | opacity×pressure {} | {}",
-            s.size.base,
-            s.stabilizer.name(),
-            s.stabilization,
-            s.interpolation.name(),
+            s.properties.size.base,
+            st.stabilizer.name(),
+            st.stabilization,
+            st.interpolation.name(),
             if opacity_pressure { "on" } else { "off" },
             match self.last_device {
                 Some(DeviceKind::Pen) => "pen",
@@ -174,7 +179,9 @@ impl App {
                 self.timestamps.reset();
                 let input = self.brush_input(&ev.sample);
                 let t = Instant::now();
-                self.engine.begin_stroke(input, self.view.zoom);
+                self.stroke_seed = self.stroke_seed.wrapping_add(1);
+                self.engine
+                    .begin_stroke(input, self.view.zoom, self.stroke_seed);
                 self.stats
                     .sample(ev.sample.timestamp, t.elapsed().as_secs_f64());
             }
@@ -272,32 +279,43 @@ impl App {
         if !pressed || self.engine.is_stroking() {
             return;
         }
-        let s = &mut self.engine.settings;
+        // Stroke settings are user preferences; editing one drops the
+        // preset's override of it.
+        let p = &mut self.engine.preset;
+        let s = &mut self.engine.stroke_defaults;
         match &event.logical_key {
             Key::Named(NamedKey::Home) => self.fit_view(),
             Key::Named(NamedKey::F3) => self.show_stats = !self.show_stats,
             Key::Character(c) => match c.as_str() {
-                "]" => s.size.base = (s.size.base * 1.25).clamp(1.0, 2000.0),
-                "[" => s.size.base = (s.size.base / 1.25).clamp(1.0, 2000.0),
-                "=" | "+" => s.stabilization = (s.stabilization + 10.0).min(100.0),
-                "-" => s.stabilization = (s.stabilization - 10.0).max(0.0),
+                "]" => p.properties.size.base = (p.properties.size.base * 1.25).clamp(1.0, 2000.0),
+                "[" => p.properties.size.base = (p.properties.size.base / 1.25).clamp(1.0, 2000.0),
+                "=" | "+" => {
+                    s.stabilization = (s.stabilization + 10.0).min(100.0);
+                    p.stroke.stabilization = None;
+                }
+                "-" => {
+                    s.stabilization = (s.stabilization - 10.0).max(0.0);
+                    p.stroke.stabilization = None;
+                }
                 "s" | "S" => {
                     let all = StabilizerKind::ALL;
                     let i = all.iter().position(|k| *k == s.stabilizer).unwrap_or(0);
                     s.stabilizer = all[(i + 1) % all.len()];
+                    p.stroke.stabilizer = None;
                 }
                 "i" | "I" => {
                     let all = InterpolationKind::ALL;
                     let i = all.iter().position(|k| *k == s.interpolation).unwrap_or(0);
                     s.interpolation = all[(i + 1) % all.len()];
+                    p.stroke.interpolation = None;
                 }
                 "t" | "T" => {
-                    let on = s.taper.start <= 0.0 && s.taper.end <= 0.0;
-                    s.taper.start = if on { 30.0 } else { 0.0 };
-                    s.taper.end = if on { 60.0 } else { 0.0 };
+                    let on = p.taper.start <= 0.0 && p.taper.end <= 0.0;
+                    p.taper.start = if on { 30.0 } else { 0.0 };
+                    p.taper.end = if on { 60.0 } else { 0.0 };
                 }
                 "o" | "O" => {
-                    if let Some(e) = s.opacity.effector_mut(DynamicsSource::Pressure) {
+                    if let Some(e) = p.properties.opacity.effector_mut(DynamicsSource::Pressure) {
                         e.enabled = !e.enabled;
                     }
                 }

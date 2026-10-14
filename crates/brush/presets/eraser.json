@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "id": "tela.eraser",
+  "name": "Eraser",
+  "metadata": {
+    "author": "Tela",
+    "description": "Removes alpha with the regular brush engine; used for the stylus eraser end.",
+    "tags": ["eraser"]
+  },
+  "tip": { "shape": { "kind": "round" } },
+  "properties": {
+    "size": {
+      "base": 30.0,
+      "effectors": [{ "source": { "kind": "pressure" }, "curve": [[0.0, 0.3], [1.0, 1.0]] }]
+    },
+    "hardness": { "base": 0.8 },
+    "spacing": { "base": 0.08 }
+  },
+  "compositing": { "mode": "erase" }
+}

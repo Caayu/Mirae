@@ -154,17 +154,15 @@ impl ComposeScratch {
 mod tests {
     use glam::Vec2;
     use tela_brush::dynamics::BrushProperty;
-    use tela_brush::{BrushInput, BrushSettings, StrokeBuffer};
+    use tela_brush::{BrushInput, BrushPreset, StrokeBuffer};
 
     use super::*;
 
     fn stroke_at(x: f32, y: f32, opacity: f32) -> StrokeBuffer {
-        let settings = BrushSettings {
-            opacity: BrushProperty::constant(opacity),
-            ..BrushSettings::plain(12.0)
-        };
+        let mut settings = BrushPreset::plain(12.0);
+        settings.properties.opacity = BrushProperty::constant(opacity);
         let mut e = tela_brush::BrushEngine::new(settings);
-        e.begin_stroke(BrushInput::from_position(Vec2::new(x, y), 0.0), 1.0);
+        e.begin_stroke(BrushInput::from_position(Vec2::new(x, y), 0.0), 1.0, 0);
         e.end_stroke().unwrap()
     }
 

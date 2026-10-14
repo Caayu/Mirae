@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "id": "tela.chalk",
+  "name": "Chalk",
+  "metadata": {
+    "author": "Tela",
+    "description": "Dry, broken stroke: rough paper grain, ragged image tip spun at random, light scatter.",
+    "tags": ["chalk", "textured", "dry"]
+  },
+  "tip": { "shape": { "kind": "image", "source": { "kind": "builtin", "name": "charcoal" } } },
+  "properties": {
+    "size": {
+      "base": 30.0,
+      "effectors": [{ "source": { "kind": "pressure" }, "curve": [[0.0, 0.5], [1.0, 1.0]] }]
+    },
+    "opacity": {
+      "base": 1.0,
+      "effectors": [{ "source": { "kind": "pressure" }, "curve": [[0.0, 0.3], [1.0, 1.0]] }]
+    },
+    "flow": { "base": 0.7 },
+    "hardness": { "base": 0.3 },
+    "spacing": { "base": 0.12 },
+    "scatter": { "base": 0.08 },
+    "texture_strength": { "base": 1.0 }
+  },
+  "scatter": { "mode": "perpendicular", "count": 1, "rotation_jitter": 180.0, "scale_jitter": 0.25 },
+  "texture": { "pattern": "chalk", "mode": "height", "scale": 1.0, "contrast": 1.2 }
+}

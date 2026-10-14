@@ -1,0 +1,31 @@
+{
+  "format_version": 1,
+  "id": "tela.pencil",
+  "name": "Pencil",
+  "metadata": {
+    "author": "Tela",
+    "description": "Graphite on paper: grain that fills in with pressure, soft opacity response, slight angle wander.",
+    "tags": ["sketch", "textured"]
+  },
+  "tip": { "shape": { "kind": "round" } },
+  "properties": {
+    "size": {
+      "base": 6.0,
+      "effectors": [{ "source": { "kind": "pressure" }, "curve": [[0.0, 0.6], [1.0, 1.0]] }]
+    },
+    "opacity": {
+      "base": 0.9,
+      "effectors": [{ "source": { "kind": "pressure" }, "curve": [[0.0, 0.15], [0.5, 0.55], [1.0, 1.0]] }]
+    },
+    "flow": { "base": 0.6 },
+    "hardness": { "base": 0.6 },
+    "spacing": { "base": 0.08 },
+    "aspect": { "base": 0.8 },
+    "angle": {
+      "base": 0.0,
+      "effectors": [{ "source": { "kind": "random" }, "mode": "add", "min": -20.0, "max": 20.0 }]
+    },
+    "texture_strength": { "base": 0.9 }
+  },
+  "texture": { "pattern": "paper_fine", "mode": "height", "scale": 1.0, "contrast": 1.3 }
+}

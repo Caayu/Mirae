@@ -1,0 +1,25 @@
+{
+  "format_version": 1,
+  "id": "tela.calligraphy",
+  "name": "Calligraphy",
+  "metadata": {
+    "author": "Tela",
+    "description": "Flat nib whose angle partially follows the stroke direction; thick and thin by direction.",
+    "tags": ["ink", "calligraphy"]
+  },
+  "tip": { "shape": { "kind": "round" } },
+  "properties": {
+    "size": {
+      "base": 22.0,
+      "effectors": [{ "source": { "kind": "pressure" }, "curve": [[0.0, 0.4], [1.0, 1.0]] }]
+    },
+    "hardness": { "base": 0.95 },
+    "spacing": { "base": 0.04 },
+    "aspect": { "base": 0.18 },
+    "angle": {
+      "base": 45.0,
+      "effectors": [{ "source": { "kind": "direction" }, "mode": "follow", "max": 0.35 }]
+    }
+  },
+  "stroke": { "stabilization": 25.0 }
+}

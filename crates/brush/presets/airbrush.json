@@ -1,0 +1,21 @@
+{
+  "format_version": 1,
+  "id": "tela.airbrush",
+  "name": "Airbrush",
+  "metadata": {
+    "author": "Tela",
+    "description": "Continuous soft deposition: holding still keeps adding paint; pressure controls flow.",
+    "tags": ["airbrush", "soft"]
+  },
+  "tip": { "shape": { "kind": "round" } },
+  "properties": {
+    "size": { "base": 120.0 },
+    "flow": {
+      "base": 0.05,
+      "effectors": [{ "source": { "kind": "pressure" }, "curve": [[0.0, 0.0], [1.0, 1.0]] }]
+    },
+    "hardness": { "base": 0.0 },
+    "spacing": { "base": 0.1 }
+  },
+  "airbrush": { "enabled": true, "rate": 80.0 }
+}

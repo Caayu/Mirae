@@ -1,0 +1,25 @@
+{
+  "format_version": 1,
+  "id": "tela.marker",
+  "name": "Marker",
+  "metadata": {
+    "author": "Tela",
+    "description": "Chisel-like elliptical nib at a nearly fixed angle; strokes build up where they overlap.",
+    "tags": ["marker", "flat"]
+  },
+  "tip": { "shape": { "kind": "round" } },
+  "properties": {
+    "size": {
+      "base": 24.0,
+      "effectors": [{ "source": { "kind": "pressure" }, "curve": [[0.0, 0.7], [1.0, 1.0]] }]
+    },
+    "opacity": { "base": 0.55 },
+    "hardness": { "base": 0.85 },
+    "spacing": { "base": 0.05 },
+    "aspect": { "base": 0.3 },
+    "angle": {
+      "base": 35.0,
+      "effectors": [{ "source": { "kind": "direction" }, "mode": "follow", "max": 0.12 }]
+    }
+  }
+}

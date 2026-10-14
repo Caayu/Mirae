@@ -1,10 +1,16 @@
 use std::collections::VecDeque;
 
-use crate::dynamics::{Curve, DynamicsInput};
+use glam::Vec2;
+use tela_color::Rgba;
+
+use crate::dynamics::{Curve, DynamicsInput, slot};
 use crate::interpolate::{Interpolator, PathInterpolator};
 use crate::pipeline::{JitterFilter, StrokePoint, VelocityEstimator};
+use crate::preset::{BrushPreset, Param, StrokeSettings};
+use crate::rng::StrokeRng;
 use crate::stabilizer::{Stabilizer, StrokeStabilizer, catch_up, stabilizer};
-use crate::{BrushInput, BrushSettings, Dab, DabSink, DabSite, DabSpacer, StrokeBuffer};
+use crate::texture::CanvasTexture;
+use crate::{BrushInput, Dab, DabSink, DabSite, DabSpacer, StampContext, StrokeBuffer};
 
 /// Counters for one stroke, for instrumentation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -16,11 +22,34 @@ pub struct StrokeStats {
     pub tail_dabs: u32,
 }
 
+/// Per-stroke parameters that are not part of the brush.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StrokeParams {
+    /// Screen pixels per canvas pixel (the view zoom).
+    pub scale: f32,
+    /// Seeds every random choice of the stroke. Same preset + seed + input
+    /// samples give identical dabs.
+    pub seed: u64,
+    /// Stroke processing settings, already resolved from user defaults
+    /// and preset overrides.
+    pub stroke: StrokeSettings,
+}
+
+impl StrokeParams {
+    pub fn new(preset: &BrushPreset, user: &StrokeSettings, scale: f32, seed: u64) -> Self {
+        Self {
+            scale,
+            seed,
+            stroke: preset.stroke.resolve(user),
+        }
+    }
+}
+
 /// Runs one stroke through every stage after input normalization:
 ///
 /// ```text
 /// pressure curve -> velocity -> jitter filter -> stabilizer -> interpolator
-///   -> dab spacing -> dynamics & taper -> DabSink
+///   -> dab spacing -> dynamics, taper & scatter -> DabSink
 /// ```
 ///
 /// The last `taper.end` canvas pixels of the path form a provisional tail
@@ -31,10 +60,11 @@ pub struct StrokeStats {
 /// All intermediate buffers are owned and reused: no allocation per sample.
 #[derive(Debug)]
 pub struct StrokeProcessor {
-    settings: BrushSettings,
+    preset: BrushPreset,
     pressure_curve: Curve,
     /// Screen pixels per canvas pixel.
     scale: f32,
+    rng: StrokeRng,
     velocity: VelocityEstimator,
     jitter: JitterFilter,
     stabilizer: Stabilizer,
@@ -47,7 +77,6 @@ pub struct StrokeProcessor {
     last_path_point: Option<StrokePoint>,
     /// Last sample that entered the stabilizer, target of the final catch-up.
     last_filtered_input: Option<StrokePoint>,
-    seed: u64,
     stats: StrokeStats,
     active: bool,
     buf_jitter: Vec<StrokePoint>,
@@ -65,13 +94,14 @@ impl Default for StrokeProcessor {
 
 impl StrokeProcessor {
     pub fn new() -> Self {
-        let settings = BrushSettings::default();
+        let stroke = StrokeSettings::default();
         Self {
-            stabilizer: stabilizer(settings.stabilizer, settings.stabilization),
-            interpolator: Interpolator::new(settings.interpolation),
-            settings,
+            stabilizer: stabilizer(stroke.stabilizer, stroke.stabilization),
+            interpolator: Interpolator::new(stroke.interpolation),
+            preset: BrushPreset::default(),
             pressure_curve: Curve::linear(),
             scale: 1.0,
+            rng: StrokeRng::default(),
             velocity: VelocityEstimator::default(),
             jitter: JitterFilter::default(),
             spacer: DabSpacer::new(),
@@ -80,7 +110,6 @@ impl StrokeProcessor {
             head_distance: 0.0,
             last_path_point: None,
             last_filtered_input: None,
-            seed: 0,
             stats: StrokeStats::default(),
             active: false,
             buf_jitter: Vec::with_capacity(16),
@@ -99,8 +128,8 @@ impl StrokeProcessor {
         self.stats
     }
 
-    pub fn settings(&self) -> &BrushSettings {
-        &self.settings
+    pub fn preset(&self) -> &BrushPreset {
+        &self.preset
     }
 
     /// Updates the view scale mid-stroke (e.g. the user zoomed).
@@ -115,28 +144,43 @@ impl StrokeProcessor {
         (1.5 / self.scale).clamp(0.1, 1.0)
     }
 
+    /// Starts a stroke with the preset's own stroke settings over the
+    /// defaults, seed 0. Convenient for tests and tools.
     pub fn begin(
         &mut self,
-        settings: &BrushSettings,
+        preset: &BrushPreset,
         pressure_curve: &Curve,
         scale: f32,
         first: BrushInput,
         sink: &mut impl DabSink,
     ) {
-        self.settings.clone_from(settings);
+        let params = StrokeParams::new(preset, &StrokeSettings::default(), scale, 0);
+        self.begin_with(preset, pressure_curve, &params, first, sink);
+    }
+
+    pub fn begin_with(
+        &mut self,
+        preset: &BrushPreset,
+        pressure_curve: &Curve,
+        params: &StrokeParams,
+        first: BrushInput,
+        sink: &mut impl DabSink,
+    ) {
+        self.preset.clone_from(preset);
         self.pressure_curve.clone_from(pressure_curve);
-        self.set_scale(scale);
+        self.set_scale(params.scale);
+        self.rng = StrokeRng::new(params.seed);
+        let s = &params.stroke;
         self.velocity.reset();
-        self.jitter = JitterFilter::new(settings.jitter_threshold);
-        self.stabilizer = stabilizer(settings.stabilizer, settings.stabilization);
-        self.interpolator = Interpolator::new(settings.interpolation);
+        self.jitter = JitterFilter::new(s.jitter_threshold);
+        self.stabilizer = stabilizer(s.stabilizer, s.stabilization);
+        self.interpolator = Interpolator::new(s.interpolation);
         self.spacer.reset();
         self.tail.clear();
         self.tail_dirty = false;
         self.head_distance = 0.0;
         self.last_path_point = None;
         self.last_filtered_input = None;
-        self.seed = first.timestamp.to_bits() ^ 0xA5A5_5A5A_DEAD_BEEF;
         self.stats = StrokeStats::default();
         self.active = true;
         self.push(first, sink);
@@ -206,7 +250,7 @@ impl StrokeProcessor {
     /// Appends freshly interpolated points to the path, committing whatever
     /// the end taper can no longer reach.
     fn consume_path(&mut self, sink: &mut impl DabSink) {
-        let taper_len = self.settings.taper.end.max(0.0);
+        let taper_len = self.preset.taper.end.max(0.0);
         for i in 0..self.buf_path.len() {
             let p = self.buf_path[i];
             self.stats.path_points += 1;
@@ -235,15 +279,15 @@ impl StrokeProcessor {
         self.buf_dabs.clear();
         self.buf_sites.clear();
         let Self {
-            settings,
+            preset,
             scale,
-            seed,
+            rng,
             buf_dabs,
             ..
         } = self;
         self.spacer.push(
             p,
-            |site| place(settings, *scale, *seed, site, head, buf_dabs),
+            |site| place(preset, *scale, rng, site, head, buf_dabs),
             &mut self.buf_sites,
         );
         for d in &self.buf_dabs {
@@ -258,9 +302,9 @@ impl StrokeProcessor {
         self.buf_dabs.clear();
         self.buf_sites.clear();
         let Self {
-            settings,
+            preset,
             scale,
-            seed,
+            rng,
             buf_dabs,
             tail,
             buf_sites,
@@ -269,7 +313,7 @@ impl StrokeProcessor {
         for (p, _) in tail.iter() {
             spacer.push(
                 *p,
-                |site| place(settings, *scale, *seed, site, head, buf_dabs),
+                |site| place(preset, *scale, rng, site, head, buf_dabs),
                 buf_sites,
             );
         }
@@ -281,17 +325,15 @@ impl StrokeProcessor {
     }
 }
 
-/// Resolves the dab at `site` and returns the distance to the next one.
-fn place(
-    settings: &BrushSettings,
+/// Dynamics inputs at a path point.
+fn dynamics_at(
+    p: &StrokePoint,
+    distance: f32,
+    index: u64,
     scale: f32,
-    seed: u64,
-    site: &DabSite,
-    head: f32,
-    out: &mut Vec<Dab>,
-) -> f32 {
-    let p = &site.point;
-    let input = DynamicsInput {
+    rng: &StrokeRng,
+) -> DynamicsInput {
+    DynamicsInput {
         caps: p.caps,
         pressure: p.pressure,
         speed: p.velocity.length() * scale,
@@ -299,73 +341,81 @@ fn place(
         tilt_y: p.tilt.y,
         rotation: p.rotation,
         direction: p.velocity.y.atan2(p.velocity.x),
-        distance: site.distance,
-        dab_index: site.index as u64,
-        rng: crate::rng::StrokeRng::new(seed),
-    };
-    let to_end = if settings.taper.end > 0.0 {
+        distance,
+        dab_index: index,
+        rng: *rng,
+    }
+}
+
+/// Resolves the dab at `site` (plus its scattered copies) into `out` and
+/// returns the distance to the next site.
+fn place(
+    preset: &BrushPreset,
+    scale: f32,
+    rng: &StrokeRng,
+    site: &DabSite,
+    head: f32,
+    out: &mut Vec<Dab>,
+) -> f32 {
+    let p = &site.point;
+    let input = dynamics_at(p, site.distance, site.index as u64, scale, rng);
+    let to_end = if preset.taper.end > 0.0 {
         (head - site.distance).max(0.0)
     } else {
         f32::INFINITY
     };
-    let taper = settings.taper.factor(site.distance, to_end);
-    let angle = settings.angle.eval_angle(
-        &input,
-        crate::dynamics::slot::ANGLE,
-        settings.tip.symmetry_period(),
-    );
-    let dab = Dab {
-        center: p.pos,
-        radius: settings.radius(&input, taper),
-        aspect: settings
-            .aspect
-            .eval(&input, crate::dynamics::slot::ASPECT)
-            .clamp(0.01, 1.0),
+    let taper = preset.taper.factor(site.distance, to_end);
+    let dab = resolve_dab(preset, &input, p.pos, taper);
+    let dir = p.velocity.try_normalize().unwrap_or(Vec2::X);
+    let scatter = preset.properties.eval(Param::Scatter, &input);
+    preset
+        .scatter
+        .apply(&dab, scatter, dir, rng, site.index as u64, out);
+    // Spacing rule: the next dab is `spacing` times the unscattered dab's
+    // extent along the direction of travel (its diameter for round tips).
+    preset.properties.eval(Param::Spacing, &input) * dab.extent_along(dir)
+}
+
+/// The dab a preset produces for given dynamics inputs at `center`.
+pub fn resolve_dab(preset: &BrushPreset, input: &DynamicsInput, center: Vec2, taper: f32) -> Dab {
+    let props = &preset.properties;
+    let angle = props
+        .angle
+        .eval_angle(input, slot::ANGLE, preset.tip.symmetry_period());
+    Dab {
+        center,
+        radius: preset.radius(input, taper),
+        aspect: props.eval(Param::Aspect, input),
         angle: angle.to_radians(),
-        texture: if settings.texture.is_some() {
-            settings
-                .texture_strength
-                .eval(&input, crate::dynamics::slot::TEXTURE)
-                .clamp(0.0, 1.0)
+        opacity: preset.opacity(input, taper),
+        flow: props.eval(Param::Flow, input),
+        hardness: props.eval(Param::Hardness, input),
+        texture: if preset.texture.is_some() {
+            props.eval(Param::TextureStrength, input)
         } else {
             0.0
         },
-        opacity: settings.opacity(&input, taper),
-        flow: settings
-            .flow
-            .eval(&input, crate::dynamics::slot::FLOW)
-            .clamp(0.0, 1.0),
-        hardness: settings
-            .hardness
-            .eval(&input, crate::dynamics::slot::HARDNESS)
-            .clamp(0.0, 1.0),
-    };
-    let dir = p.velocity.try_normalize().unwrap_or(glam::Vec2::X);
-    let scatter = settings
-        .scatter
-        .eval(&input, crate::dynamics::slot::SCATTER);
-    settings
-        .scatter_style
-        .apply(&dab, scatter, dir, &input.rng, site.index as u64, out);
-    // Spacing rule: the next dab is `spacing` times the unscattered dab's
-    // extent along the direction of travel (its diameter for round tips).
-    settings.spacing * dab.extent_along(dir)
+    }
 }
 
 /// Drives one stroke at a time into a [`StrokeBuffer`].
 #[derive(Debug, Default)]
 pub struct BrushEngine {
-    pub settings: BrushSettings,
+    pub preset: BrushPreset,
+    /// The user's stroke settings; the preset may override them.
+    pub stroke_defaults: StrokeSettings,
     /// Global pressure calibration applied before brush effectors.
     pub pressure_curve: Curve,
+    pub color: Rgba,
     processor: StrokeProcessor,
     stroke: Option<StrokeBuffer>,
 }
 
 impl BrushEngine {
-    pub fn new(settings: BrushSettings) -> Self {
+    pub fn new(preset: BrushPreset) -> Self {
         Self {
-            settings,
+            preset,
+            color: Rgba::BLACK,
             ..Default::default()
         }
     }
@@ -387,22 +437,25 @@ impl BrushEngine {
         self.processor.stats()
     }
 
-    /// `scale`: screen pixels per canvas pixel (the view zoom).
-    pub fn begin_stroke(&mut self, input: BrushInput, scale: f32) {
-        let ctx = crate::StampContext {
-            tip: self.settings.tip.prepare(),
-            texture: self
-                .settings
-                .texture
-                .as_ref()
-                .map(crate::texture::CanvasTexture::new),
-            anti_aliasing: self.settings.anti_aliasing,
+    /// The stroke settings the current preset resolves to.
+    pub fn resolved_stroke(&self) -> StrokeSettings {
+        self.preset.stroke.resolve(&self.stroke_defaults)
+    }
+
+    /// `scale`: screen pixels per canvas pixel (the view zoom). `seed`
+    /// makes the stroke reproducible.
+    pub fn begin_stroke(&mut self, input: BrushInput, scale: f32, seed: u64) {
+        let ctx = StampContext {
+            tip: self.preset.tip.prepare(),
+            texture: self.preset.texture.as_ref().map(CanvasTexture::new),
+            anti_aliasing: self.preset.compositing.anti_aliasing,
         };
-        let mut stroke = StrokeBuffer::new(self.settings.color, ctx);
-        self.processor.begin(
-            &self.settings,
+        let mut stroke = StrokeBuffer::new(self.color, ctx);
+        let params = StrokeParams::new(&self.preset, &self.stroke_defaults, scale, seed);
+        self.processor.begin_with(
+            &self.preset,
             &self.pressure_curve,
-            scale,
+            &params,
             input,
             &mut stroke,
         );
@@ -436,10 +489,9 @@ impl BrushEngine {
 
 #[cfg(test)]
 mod tests {
-    use glam::Vec2;
-
     use super::*;
     use crate::DabLog;
+    use crate::interpolate::InterpolationKind;
 
     fn at(x: f32, y: f32, t: f64) -> BrushInput {
         BrushInput::from_position(Vec2::new(x, y), t)
@@ -447,12 +499,12 @@ mod tests {
 
     #[test]
     fn stroke_lifecycle() {
-        let mut e = BrushEngine::new(BrushSettings::default());
+        let mut e = BrushEngine::new(BrushPreset::default());
         assert!(!e.is_stroking());
         e.add_input(at(0.0, 0.0, 0.0));
         assert!(e.stroke().is_none(), "input outside a stroke is ignored");
 
-        e.begin_stroke(at(10.0, 10.0, 0.0), 1.0);
+        e.begin_stroke(at(10.0, 10.0, 0.0), 1.0, 1);
         e.add_input(at(300.0, 10.0, 0.05));
         let s = e.end_stroke().expect("stroke");
         assert_eq!(s.touched().len(), 2);
@@ -462,19 +514,11 @@ mod tests {
 
     #[test]
     fn stroke_ends_on_the_last_sample_even_with_heavy_stabilization() {
-        let settings = BrushSettings {
-            stabilization: 100.0,
-            ..BrushSettings::plain(4.0)
-        };
+        let mut preset = BrushPreset::plain(4.0);
+        preset.stroke.stabilization = Some(100.0);
         let mut p = StrokeProcessor::new();
         let mut log = DabLog::default();
-        p.begin(
-            &settings,
-            &Curve::linear(),
-            1.0,
-            at(0.0, 0.0, 0.0),
-            &mut log,
-        );
+        p.begin(&preset, &Curve::linear(), 1.0, at(0.0, 0.0, 0.0), &mut log);
         for i in 1..=100 {
             p.push(at(i as f32 * 4.0, 0.0, i as f64 * 0.004), &mut log);
         }
@@ -485,18 +529,12 @@ mod tests {
 
     #[test]
     fn end_taper_preview_matches_final_result() {
-        let mut settings = BrushSettings::plain(10.0);
-        settings.taper.end = 40.0;
-        settings.interpolation = crate::interpolate::InterpolationKind::Linear;
+        let mut preset = BrushPreset::plain(10.0);
+        preset.taper.end = 40.0;
+        preset.stroke.interpolation = Some(InterpolationKind::Linear);
         let mut p = StrokeProcessor::new();
         let mut log = DabLog::default();
-        p.begin(
-            &settings,
-            &Curve::linear(),
-            1.0,
-            at(0.0, 0.0, 0.0),
-            &mut log,
-        );
+        p.begin(&preset, &Curve::linear(), 1.0, at(0.0, 0.0, 0.0), &mut log);
         for i in 1..=50 {
             p.push(at(i as f32 * 4.0, 0.0, i as f64 * 0.01), &mut log);
         }
@@ -515,17 +553,11 @@ mod tests {
 
     #[test]
     fn tail_moves_forward_as_the_stroke_grows() {
-        let mut settings = BrushSettings::plain(10.0);
-        settings.taper.end = 30.0;
+        let mut preset = BrushPreset::plain(10.0);
+        preset.taper.end = 30.0;
         let mut p = StrokeProcessor::new();
         let mut log = DabLog::default();
-        p.begin(
-            &settings,
-            &Curve::linear(),
-            1.0,
-            at(0.0, 0.0, 0.0),
-            &mut log,
-        );
+        p.begin(&preset, &Curve::linear(), 1.0, at(0.0, 0.0, 0.0), &mut log);
         for i in 1..=100 {
             p.push(at(i as f32 * 3.0, 0.0, i as f64 * 0.01), &mut log);
             p.update_preview(&mut log);
@@ -539,5 +571,30 @@ mod tests {
             }
         }
         assert!(p.stats().committed_dabs > 0 && p.stats().tail_dabs > 0);
+    }
+
+    #[test]
+    fn seed_controls_randomness() {
+        let mut preset = BrushPreset::plain(10.0);
+        preset.properties.scatter = crate::dynamics::BrushProperty::constant(0.5);
+        let run = |seed| {
+            let mut p = StrokeProcessor::new();
+            let mut log = DabLog::default();
+            let params = StrokeParams::new(&preset, &StrokeSettings::default(), 1.0, seed);
+            p.begin_with(
+                &preset,
+                &Curve::linear(),
+                &params,
+                at(0.0, 0.0, 0.0),
+                &mut log,
+            );
+            for i in 1..=40 {
+                p.push(at(i as f32 * 5.0, 0.0, i as f64 * 0.01), &mut log);
+            }
+            p.finish(&mut log);
+            log.all().copied().collect::<Vec<_>>()
+        };
+        assert_eq!(run(7), run(7));
+        assert_ne!(run(7), run(8));
     }
 }

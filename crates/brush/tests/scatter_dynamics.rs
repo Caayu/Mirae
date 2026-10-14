@@ -3,7 +3,7 @@
 use glam::Vec2;
 use tela_brush::dynamics::{BrushProperty, Curve, DynamicsSource, Effector};
 use tela_brush::scatter::ScatterMode;
-use tela_brush::{BrushInput, BrushSettings, Dab, DabLog, StrokeProcessor};
+use tela_brush::{BrushInput, BrushPreset as BrushSettings, Dab, DabLog, StrokeProcessor};
 
 fn draw(settings: &BrushSettings, pressure: f32) -> Vec<Dab> {
     let mut p = StrokeProcessor::new();
@@ -29,7 +29,7 @@ fn spread(dabs: &[Dab]) -> f32 {
 fn scattered() -> BrushSettings {
     let mut s = BrushSettings::plain(10.0);
     // Full scatter at no pressure, none at full pressure.
-    s.scatter = BrushProperty::constant(1.0).with(Effector::new(
+    s.properties.scatter = BrushProperty::constant(1.0).with(Effector::new(
         DynamicsSource::Pressure,
         Curve::new(&[(0.0, 1.0), (1.0, 0.0)]),
     ));
@@ -53,9 +53,9 @@ fn more_pressure_means_less_scatter() {
 #[test]
 fn more_speed_means_more_scatter() {
     let mut s = BrushSettings::plain(10.0);
-    s.scatter =
+    s.properties.scatter =
         BrushProperty::constant(1.0).with(Effector::new(DynamicsSource::Speed, Curve::linear()));
-    s.scatter_style.mode = ScatterMode::Radial;
+    s.scatter.mode = ScatterMode::Radial;
     let run = |dt: f64| {
         let mut p = StrokeProcessor::new();
         let mut log = DabLog::default();

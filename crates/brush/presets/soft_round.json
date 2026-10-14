@@ -1,0 +1,21 @@
+{
+  "format_version": 1,
+  "id": "tela.soft-round",
+  "name": "Soft Round",
+  "metadata": {
+    "author": "Tela",
+    "description": "Fully soft falloff with low flow for blending; pressure optionally on opacity.",
+    "tags": ["paint", "soft"]
+  },
+  "tip": { "shape": { "kind": "round" } },
+  "properties": {
+    "size": { "base": 60.0 },
+    "opacity": {
+      "base": 1.0,
+      "effectors": [{ "source": { "kind": "pressure" }, "curve": [[0.0, 0.1], [1.0, 1.0]] }]
+    },
+    "flow": { "base": 0.35 },
+    "hardness": { "base": 0.0 },
+    "spacing": { "base": 0.08 }
+  }
+}

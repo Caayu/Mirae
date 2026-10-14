@@ -24,7 +24,10 @@ pub trait PathInterpolator {
     fn finish(&mut self, step: f32, out: &mut Vec<StrokePoint>);
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum InterpolationKind {
     Linear,
     /// Default: chosen from the comparative tests (see `tests/interpolation_comparison.rs`).

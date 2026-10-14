@@ -23,7 +23,10 @@ pub trait StrokeStabilizer {
 }
 
 /// Available algorithms.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum StabilizerKind {
     None,
     MovingAverage,

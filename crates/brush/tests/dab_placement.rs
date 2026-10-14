@@ -6,18 +6,18 @@
 use glam::Vec2;
 use tela_brush::dynamics::{BrushProperty, Curve, DynamicsSource, Effector};
 use tela_brush::interpolate::InterpolationKind;
-use tela_brush::{BrushInput, BrushSettings, Dab, DabLog, StrokeProcessor};
+use tela_brush::{BrushInput, BrushPreset as BrushSettings, Dab, DabLog, StrokeProcessor};
 
 const POS_TOL: f32 = 0.01;
 const RADIUS_TOL: f32 = 0.005;
+const SPACING: f32 = 0.15;
 
 fn pressure_brush() -> BrushSettings {
-    BrushSettings {
-        size: BrushProperty::constant(20.0)
-            .with(Effector::new(DynamicsSource::Pressure, Curve::linear())),
-        spacing: 0.15,
-        ..BrushSettings::plain(20.0)
-    }
+    let mut p = BrushSettings::plain(20.0);
+    p.properties.size = BrushProperty::constant(20.0)
+        .with(Effector::new(DynamicsSource::Pressure, Curve::linear()));
+    p.properties.spacing = BrushProperty::constant(SPACING);
+    p
 }
 
 /// Draws `path(u)` with `n` evenly spaced samples; pressure is `pressure(u)`.
@@ -72,10 +72,8 @@ fn line(u: f32) -> Vec2 {
 fn straight_stroke_with_varying_pressure_is_sample_count_invariant() {
     let ramp = |u: f32| 0.2 + 0.8 * u;
     for interpolation in InterpolationKind::ALL {
-        let settings = BrushSettings {
-            interpolation,
-            ..pressure_brush()
-        };
+        let mut settings = pressure_brush();
+        settings.stroke.interpolation = Some(interpolation);
         let reference = draw(&settings, 1000, line, ramp);
         assert!(reference.len() > 100);
         for n in COUNTS {
@@ -118,7 +116,7 @@ fn spacing_matches_size_everywhere_on_a_curve() {
         let dabs = draw(&settings, n, circle, wave);
         for w in dabs.windows(2) {
             let gap = (w[1].center - w[0].center).length();
-            let expected = 2.0 * w[0].radius * settings.spacing;
+            let expected = 2.0 * w[0].radius * SPACING;
             assert!(
                 (gap - expected).abs() <= expected * 0.02 + 0.01,
                 "n={n}: gap {gap} vs {expected}"
