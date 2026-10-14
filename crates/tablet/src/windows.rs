@@ -28,9 +28,9 @@ use windows_sys::Win32::UI::Controls::{
     FEEDBACK_PEN_RIGHTTAP, FEEDBACK_PEN_TAP, SetWindowFeedbackSetting,
 };
 use windows_sys::Win32::UI::Input::Pointer::{
-    GetPointerDeviceRects, GetPointerPenInfo, GetPointerPenInfoHistory, GetPointerType,
-    POINTER_FLAG_CANCELED, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_UP,
-    POINTER_PEN_INFO,
+    GetPointerDeviceRects, GetPointerInfo, GetPointerPenInfo, GetPointerPenInfoHistory,
+    GetPointerType, POINTER_FLAG_CANCELED, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT,
+    POINTER_FLAG_UP, POINTER_INFO, POINTER_PEN_INFO,
 };
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -70,6 +70,11 @@ struct Shared {
     history: RefCell<Vec<POINTER_PEN_INFO>>,
     in_contact: Cell<bool>,
     samples_received: Cell<u64>,
+    /// Client-area regions (physical pixels, `[x0, y0, x1, y1]`) where pen
+    /// input is left to the system so it reaches UI as mouse input.
+    passthrough: RefCell<Vec<[f32; 4]>>,
+    /// Pointer whose current contact started in a passthrough region.
+    passing: Cell<Option<u32>>,
 }
 
 /// Pen input for one window. Dropping it removes the subclass.
@@ -91,6 +96,8 @@ impl InkBackend {
             history: RefCell::new(Vec::with_capacity(MAX_HISTORY)),
             in_contact: Cell::new(false),
             samples_received: Cell::new(0),
+            passthrough: RefCell::new(Vec::new()),
+            passing: Cell::new(None),
         });
         let raw = Rc::into_raw(shared.clone()) as usize;
         // SAFETY: `hwnd` is a live window owned by this thread; `raw` stays
@@ -113,6 +120,15 @@ impl InkBackend {
     /// Total pen samples received (history included), for diagnostics.
     pub fn samples_received(&self) -> u64 {
         self.shared.samples_received.get()
+    }
+
+    /// Sets the regions (client physical pixels) where pen input is handed
+    /// to the system as mouse input instead of being captured: a contact
+    /// that starts there, and hovering there, reach the UI.
+    pub fn set_passthrough(&self, rects: &[[f32; 4]]) {
+        let mut p = self.shared.passthrough.borrow_mut();
+        p.clear();
+        p.extend_from_slice(rects);
     }
 }
 
@@ -172,6 +188,10 @@ unsafe extern "system" fn subclass_proc(
             // SAFETY: plain out-parameter.
             let is_pen = unsafe { GetPointerType(pointer_id, &mut kind) } != 0 && kind == PT_PEN;
             if is_pen {
+                if passes_through(shared, hwnd, msg, pointer_id) {
+                    // SAFETY: forwarding the original arguments.
+                    return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+                }
                 handle_pen(shared, hwnd, msg, pointer_id);
                 return 0;
             }
@@ -366,4 +386,45 @@ fn screen_position(shared: &Shared, info: &POINTER_PEN_INFO) -> glam::DVec2 {
         }
         None => pixel,
     }
+}
+
+/// Decides whether a pen message goes to the UI (system mouse emulation)
+/// instead of the canvas. Contacts are routed as a whole, by where they
+/// start, so a stroke that wanders over a panel keeps painting.
+fn passes_through(shared: &Shared, hwnd: HWND, msg: u32, pointer_id: u32) -> bool {
+    if shared.passing.get() == Some(pointer_id) {
+        if msg == WM_POINTERUP || msg == WM_POINTERCAPTURECHANGED || msg == WM_POINTERLEAVE {
+            shared.passing.set(None);
+        }
+        return true;
+    }
+    let regions = shared.passthrough.borrow();
+    if regions.is_empty() {
+        return false;
+    }
+    // SAFETY: zeroed POD out-parameter.
+    let mut info: POINTER_INFO = unsafe { std::mem::zeroed() };
+    // SAFETY: out-parameter valid for the call.
+    if unsafe { GetPointerInfo(pointer_id, &mut info) } == 0 {
+        return false;
+    }
+    let mut origin = POINT { x: 0, y: 0 };
+    // SAFETY: valid window and out-parameter.
+    unsafe { ClientToScreen(hwnd, &mut origin) };
+    let (x, y) = (
+        (info.ptPixelLocation.x - origin.x) as f32,
+        (info.ptPixelLocation.y - origin.y) as f32,
+    );
+    let over = regions
+        .iter()
+        .any(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]);
+    if !over || shared.in_contact.get() {
+        return false;
+    }
+    if msg == WM_POINTERDOWN {
+        shared.passing.set(Some(pointer_id));
+        return true;
+    }
+    // Hovering over the UI moves the system cursor there.
+    msg == WM_POINTERUPDATE && info.pointerFlags & POINTER_FLAG_INCONTACT == 0
 }

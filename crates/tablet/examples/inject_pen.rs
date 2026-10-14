@@ -5,7 +5,9 @@
 //! ```sh
 //! cargo run -p tela-tablet --example inject_pen -- [window title prefix] [pattern]
 //! ```
-//! Patterns: `all` (default), `pressure`, `fast`, `detail`, `eraser`.
+//! Patterns: `all` (default), `pressure`, `fast`, `detail`, `eraser`,
+//! `drag:x0,y0,x1,y1[,pressure]` and `hold:u,v,seconds[,pressure]`
+//! (client-area fractions).
 
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -58,9 +60,18 @@ mod inject {
             info.pointerInfo.pointerType = PT_PEN;
             info.pointerInfo.pointerId = 0;
             info.pointerInfo.pointerFlags = flags | POINTER_FLAG_PRIMARY;
+            // Optional TELA_INJECT_REGION="u0,v0,u1,v1" squeezes the patterns
+            // into part of the window (e.g. beside a side panel).
+            let region: Vec<f32> = std::env::var("TELA_INJECT_REGION")
+                .ok()
+                .map(|s| s.split(',').filter_map(|v| v.trim().parse().ok()).collect())
+                .filter(|r: &Vec<f32>| r.len() == 4)
+                .unwrap_or_else(|| vec![0.0, 0.0, 1.0, 1.0]);
+            let u = region[0] + pen.u * (region[2] - region[0]);
+            let v = region[1] + pen.v * (region[3] - region[1]);
             info.pointerInfo.ptPixelLocation = POINT {
-                x: self.origin.0 + (pen.u * self.size.0 as f32).round() as i32,
-                y: self.origin.1 + (pen.v * self.size.1 as f32).round() as i32,
+                x: self.origin.0 + (u * self.size.0 as f32).round() as i32,
+                y: self.origin.1 + (v * self.size.1 as f32).round() as i32,
             };
             info.penMask =
                 PEN_MASK_PRESSURE | PEN_MASK_ROTATION | PEN_MASK_TILT_X | PEN_MASK_TILT_Y;
@@ -236,6 +247,27 @@ mod inject {
                 };
                 pen(u, v, 0.7)
             });
+        }
+        let numbers =
+            |s: &str| -> Vec<f32> { s.split(',').filter_map(|v| v.trim().parse().ok()).collect() };
+        if let Some(args) = pattern.strip_prefix("drag:") {
+            // drag:x0,y0,x1,y1[,pressure] in client fractions.
+            let a = numbers(args);
+            if a.len() >= 4 {
+                let p = a.get(4).copied().unwrap_or(0.7);
+                inj.stroke(40, |t| {
+                    pen(a[0] + (a[2] - a[0]) * t, a[1] + (a[3] - a[1]) * t, p)
+                });
+            }
+        }
+        if let Some(args) = pattern.strip_prefix("hold:") {
+            // hold:u,v,seconds[,pressure]: the pen pressed and not moving.
+            let a = numbers(args);
+            if a.len() >= 3 {
+                let p = a.get(3).copied().unwrap_or(0.8);
+                let steps = (a[2] * 250.0) as usize;
+                inj.stroke(steps.max(1), |_| pen(a[0], a[1], p));
+            }
         }
         if pattern == "eraser" {
             // Flipped stylus: erase across what the other patterns drew.
