@@ -2,6 +2,7 @@ use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
 use tela_color::{PremulRgba, Rgba};
 
 use crate::Dab;
+use crate::texture::CanvasTexture;
 use crate::tip::{DabShape, PreparedTip};
 
 /// Receives the dabs of a stroke. Dabs are either *committed* (final) or part
@@ -70,6 +71,7 @@ pub struct StrokeBuffer {
 #[derive(Clone, Debug, Default)]
 pub struct StampContext {
     pub tip: PreparedTip,
+    pub texture: Option<CanvasTexture>,
     pub anti_aliasing: bool,
 }
 
@@ -86,6 +88,7 @@ fn stamp_into(
         return;
     }
     let shape = DabShape::new(&ctx.tip, dab, ctx.anti_aliasing);
+    let texture = ctx.texture.as_ref().filter(|_| dab.texture > 0.0);
     let bounds = shape.bounds();
     for coord in bounds.tiles() {
         let area = bounds.intersect(&coord.rect());
@@ -106,9 +109,17 @@ fn stamp_into(
                 if *m >= ceiling {
                     continue;
                 }
-                let cov = shape.coverage(x as f32 + 0.5, py);
-                if cov > 0.0 {
-                    *m += (ceiling - *m) * flow * cov;
+                let px = x as f32 + 0.5;
+                let cov = shape.coverage(px, py);
+                if cov <= 0.0 {
+                    continue;
+                }
+                let target = match texture {
+                    Some(t) => t.modulate(ceiling, cov, t.height(px, py), dab.texture),
+                    None => ceiling,
+                };
+                if target > *m {
+                    *m += (target - *m) * flow * cov;
                 }
             }
         }

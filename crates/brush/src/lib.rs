@@ -23,6 +23,7 @@ mod settings;
 mod spacing;
 pub mod stabilizer;
 mod stroke;
+pub mod texture;
 pub mod tip;
 
 pub use engine::{BrushEngine, StrokeProcessor, StrokeStats};

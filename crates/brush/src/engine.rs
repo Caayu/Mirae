@@ -322,7 +322,14 @@ fn place(
             .eval(&input, crate::dynamics::slot::ASPECT)
             .clamp(0.01, 1.0),
         angle: angle.to_radians(),
-        texture: 0.0,
+        texture: if settings.texture.is_some() {
+            settings
+                .texture_strength
+                .eval(&input, crate::dynamics::slot::TEXTURE)
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        },
         opacity: settings.opacity(&input, taper),
         flow: settings
             .flow
@@ -384,6 +391,11 @@ impl BrushEngine {
     pub fn begin_stroke(&mut self, input: BrushInput, scale: f32) {
         let ctx = crate::StampContext {
             tip: self.settings.tip.prepare(),
+            texture: self
+                .settings
+                .texture
+                .as_ref()
+                .map(crate::texture::CanvasTexture::new),
             anti_aliasing: self.settings.anti_aliasing,
         };
         let mut stroke = StrokeBuffer::new(self.settings.color, ctx);

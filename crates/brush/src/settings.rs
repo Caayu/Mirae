@@ -70,6 +70,9 @@ pub struct BrushSettings {
     /// Maximum displacement as a fraction of the diameter.
     pub scatter: BrushProperty,
     pub scatter_style: crate::scatter::ScatterStyle,
+    pub texture: Option<crate::texture::TextureSettings>,
+    /// How strongly the texture modulates each dab, `0..=1`.
+    pub texture_strength: BrushProperty,
     /// Distance between dabs as a fraction of the current diameter.
     pub spacing: f32,
     pub anti_aliasing: bool,
@@ -99,6 +102,8 @@ impl Default for BrushSettings {
             aspect: BrushProperty::constant(1.0),
             scatter: BrushProperty::constant(0.0),
             scatter_style: crate::scatter::ScatterStyle::default(),
+            texture: None,
+            texture_strength: BrushProperty::constant(1.0),
             spacing: 0.1,
             anti_aliasing: true,
             taper: Taper::default(),
