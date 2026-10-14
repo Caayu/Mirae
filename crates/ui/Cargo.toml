@@ -1,0 +1,19 @@
+[package]
+name = "tela-ui"
+description = "Minimal brush-editing UI (egui), kept out of the engine crates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tela-brush.workspace = true
+tela-renderer.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+egui-winit.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+
+[lints]
+workspace = true

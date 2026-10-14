@@ -17,6 +17,7 @@ tela-brush.workspace = true
 tela-document.workspace = true
 tela-renderer.workspace = true
 tela-tablet.workspace = true
+tela-ui.workspace = true
 winit.workspace = true
 glam.workspace = true
 pollster.workspace = true

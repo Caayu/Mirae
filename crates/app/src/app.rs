@@ -19,6 +19,7 @@ use winit::window::{Window, WindowId};
 
 use crate::stats::LatencyStats;
 use crate::tools::Tools;
+use tela_ui::{BrushPanel, PanelAction, PanelModel, UiLayer, egui};
 
 const DOCUMENT_SIZE: (u32, u32) = (4000, 3000);
 const WORKSPACE_COLOR: [f32; 4] = [0.18, 0.18, 0.2, 1.0];
@@ -41,6 +42,7 @@ enum Drag {
 struct Gpu {
     window: Arc<Window>,
     renderer: Renderer,
+    ui: UiLayer,
     #[cfg(windows)]
     ink: Option<tela_tablet::windows::InkBackend>,
 }
@@ -67,6 +69,8 @@ pub struct App {
     /// Seed of the next stroke; recorded strokes replay identically.
     stroke_seed: u64,
     tools: Tools,
+    panel: BrushPanel,
+    last_title: String,
 }
 
 impl App {
@@ -92,6 +96,8 @@ impl App {
             last_device: None,
             stroke_seed: 0,
             tools: Tools::new(),
+            panel: BrushPanel::default(),
+            last_title: String::new(),
         }
     }
 
@@ -104,11 +110,21 @@ impl App {
     fn fit_view(&mut self) {
         if let Some(gpu) = &self.gpu {
             let doc = Vec2::new(self.document.width as f32, self.document.height as f32);
-            self.view = ViewTransform::fit(doc, gpu.renderer.size());
+            // Fit into the area the side panel leaves free.
+            let panel = gpu
+                .ui
+                .occupied()
+                .iter()
+                .filter(|r| r[0] <= 1.0)
+                .map(|r| r[2])
+                .fold(0.0f32, f32::max);
+            let size = gpu.renderer.size();
+            self.view = ViewTransform::fit(doc, Vec2::new((size.x - panel).max(1.0), size.y));
+            self.view.pan.x += panel;
         }
     }
 
-    fn update_title(&self) {
+    fn update_title(&mut self) {
         let Some(gpu) = &self.gpu else {
             return;
         };
@@ -144,7 +160,10 @@ impl App {
             title.push_str(" || ");
             title.push_str(&self.stats.summary);
         }
-        gpu.window.set_title(&title);
+        if title != self.last_title {
+            gpu.window.set_title(&title);
+            self.last_title = title;
+        }
     }
 
     /// Maps a normalized device sample into the brush engine's canvas space.
@@ -382,6 +401,58 @@ impl App {
         tiles.len()
     }
 
+    /// Builds the brush panel for this frame and returns what it asked for.
+    fn build_ui(&mut self) -> PanelAction {
+        let Some(gpu) = &mut self.gpu else {
+            return PanelAction::None;
+        };
+        let names: Vec<String> = self.tools.presets.iter().map(|p| p.name.clone()).collect();
+        let selected = if self.tools.eraser_mode {
+            self.tools.eraser
+        } else {
+            self.tools.brush
+        };
+        let eraser_mode = self.tools.eraser_mode;
+        let mut action = PanelAction::None;
+        let (tools, engine, panel) = (&mut self.tools, &mut self.engine, &mut self.panel);
+        let repaint = gpu.ui.build(&gpu.window, |ui| {
+            let r = egui::Panel::left("brush-panel")
+                .default_size(290.0)
+                .show(ui, |ui| {
+                    action = panel.show(
+                        ui,
+                        PanelModel {
+                            preset_names: &names,
+                            selected,
+                            eraser_mode,
+                            preset: tools.active_mut(),
+                            stroke: &mut engine.stroke_defaults,
+                            pressure_curve: &mut engine.pressure_curve,
+                        },
+                    );
+                });
+            vec![r.response.rect]
+        });
+        #[cfg(windows)]
+        if let Some(ink) = &gpu.ink {
+            ink.set_passthrough(gpu.ui.occupied());
+        }
+        if repaint {
+            gpu.window.request_redraw();
+        }
+        action
+    }
+
+    fn apply(&mut self, action: PanelAction) {
+        match action {
+            PanelAction::None => return,
+            PanelAction::SelectPreset(i) => self.tools.select(i),
+            PanelAction::ToggleEraser => self.tools.eraser_mode = !self.tools.eraser_mode,
+            PanelAction::ClearLayer => self.clear_canvas(),
+        }
+        self.request_redraw();
+    }
+
     fn redraw(&mut self) {
         // Airbrush presets keep depositing while the pen rests, so keep
         // frames coming for the duration of such a stroke.
@@ -394,15 +465,19 @@ impl App {
         if tiles > 0 {
             self.stats.frame(t.elapsed().as_secs_f64(), tiles);
         }
+        let action = self.build_ui();
+        self.apply(action);
         let Some(gpu) = &mut self.gpu else {
             return;
         };
         let bg = self.document.background;
-        gpu.renderer.render(&Frame {
+        let frame = Frame {
             view: &self.view,
             paper: [bg.r, bg.g, bg.b, bg.a],
             workspace: WORKSPACE_COLOR,
-        });
+        };
+        gpu.renderer.render_with(&frame, Some(&mut gpu.ui));
+        self.update_title();
         let before = self.stats.summary.len();
         self.stats.submitted();
         if self.show_stats && self.stats.summary.len() != before {
@@ -466,12 +541,16 @@ impl ApplicationHandler<AppEvent> for App {
                         self.stale.mark(c);
                     }
                 }
+                let ui = UiLayer::new(&window, renderer.device(), renderer.format());
                 self.gpu = Some(Gpu {
+                    ui,
                     #[cfg(windows)]
                     ink: attach_ink(&window, self.proxy.clone()),
                     window,
                     renderer,
                 });
+                // Lay the panel out once so fitting knows its width.
+                self.build_ui();
                 self.fit_view();
                 self.update_title();
                 self.request_redraw();
@@ -490,6 +569,29 @@ impl ApplicationHandler<AppEvent> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let Some(gpu) = &mut self.gpu {
+            let response = gpu.ui.on_window_event(&gpu.window, &event);
+            if response.repaint {
+                gpu.window.request_redraw();
+            }
+            // Input the UI took (or that lands on it outside a stroke) never
+            // reaches the canvas.
+            let ui_input = match &event {
+                WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::MouseWheel { .. } => {
+                    self.drag == Drag::None && (response.consumed || gpu.ui.wants_pointer())
+                }
+                WindowEvent::KeyboardInput { .. } => response.consumed || gpu.ui.wants_keyboard(),
+                _ => false,
+            };
+            if ui_input {
+                if let WindowEvent::CursorMoved { position, .. } = &event {
+                    self.cursor = Vec2::new(position.x as f32, position.y as f32);
+                }
+                return;
+            }
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
