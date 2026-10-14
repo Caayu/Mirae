@@ -103,3 +103,43 @@ fn non_airbrush_presets_ignore_time() {
     let long = hold(&p, 60.0, 2.0, 1.0).alpha(300, 300);
     assert_eq!(short, long);
 }
+
+/// Airbrush stroke along y=300 at `speed` canvas px/s, 200 Hz samples.
+fn moving(speed: f32) -> tela_brush::StrokeBuffer {
+    let p = airbrush();
+    let mut e = BrushEngine::new(p);
+    let step = speed / 200.0;
+    let n = (2000.0 / step) as usize;
+    e.begin_stroke(input(0.0, 0.0, 1.0), 1.0, 3);
+    for i in 1..=n {
+        let t = i as f64 / 200.0;
+        e.advance_time(t);
+        e.add_input(input(i as f32 * step, t, 1.0));
+    }
+    e.end_stroke().unwrap()
+}
+
+#[test]
+fn fast_strokes_deposit_evenly_without_beads() {
+    let s = moving(14_000.0);
+    let line: Vec<f32> = (400..1600).map(|x| s.alpha(x, 300)).collect();
+    let mean = line.iter().sum::<f32>() / line.len() as f32;
+    assert!(mean > 0.01, "something is deposited");
+    // Beads are local: compare each pixel with its ±30 px neighbourhood
+    // (slow trends from the pen accelerating are legitimate).
+    let ripple = (30..line.len() - 30)
+        .map(|i| {
+            let local = line[i - 30..=i + 30].iter().sum::<f32>() / 61.0;
+            (line[i] - local).abs() / local
+        })
+        .fold(0.0, f32::max);
+    assert!(ripple < 0.02, "beads: local deviation {ripple}");
+}
+
+#[test]
+fn slower_strokes_deposit_more_paint() {
+    let mean =
+        |s: &tela_brush::StrokeBuffer| (400..1600).map(|x| s.alpha(x, 300)).sum::<f32>() / 1200.0;
+    let (slow, fast) = (mean(&moving(600.0)), mean(&moving(6000.0)));
+    assert!(slow > fast * 1.5, "slow {slow} vs fast {fast}");
+}

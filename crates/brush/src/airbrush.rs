@@ -24,6 +24,8 @@ pub struct TimeDeposit {
     path: VecDeque<(StrokePoint, f32)>,
     /// Latest instant already resolved.
     horizon: f64,
+    /// Path distance at the previous instant.
+    last_distance: Option<f32>,
 }
 
 impl TimeDeposit {
@@ -37,6 +39,7 @@ impl TimeDeposit {
         self.next = 0;
         self.path.clear();
         self.horizon = f64::NEG_INFINITY;
+        self.last_distance = None;
     }
 
     pub fn emitted(&self) -> u64 {
@@ -64,8 +67,16 @@ impl TimeDeposit {
             .max(now - Self::HOLD_DELAY)
     }
 
-    /// Emits every instant up to `horizon` through `emit(k, point, distance)`.
-    pub fn emit(&mut self, rate: f32, horizon: f64, mut emit: impl FnMut(u64, &StrokePoint, f32)) {
+    /// Emits every instant up to `horizon` through
+    /// `emit(k, point, distance, moved)`, where `moved` is the path length
+    /// travelled since the previous instant (so the caller can leave fast
+    /// motion to movement dabs).
+    pub fn emit(
+        &mut self,
+        rate: f32,
+        horizon: f64,
+        mut emit: impl FnMut(u64, &StrokePoint, f32, f32),
+    ) {
         let (Some(t0), true) = (self.t0, rate > 0.0 && rate.is_finite()) else {
             return;
         };
@@ -96,7 +107,9 @@ impl TimeDeposit {
                 (Some(&(a, da)), _) => (StrokePoint { time: t, ..a }, da),
                 (None, _) => return,
             };
-            emit(self.next, &point, distance);
+            let moved = self.last_distance.map_or(0.0, |d| distance - d);
+            self.last_distance = Some(distance);
+            emit(self.next, &point, distance, moved);
             self.next += 1;
         }
     }
@@ -121,7 +134,7 @@ mod tests {
         let mut now = 0.0;
         while now <= seconds {
             let h = d.horizon_at(now);
-            d.emit(100.0, h, |k, p, _| out.push((k, p.pos.x)));
+            d.emit(100.0, h, |k, p, _, _| out.push((k, p.pos.x)));
             now += 1.0 / fps;
         }
         out
@@ -148,7 +161,7 @@ mod tests {
             d.record(point(i as f32 * 10.0, i as f64 * 0.01), i as f32 * 10.0);
         }
         let mut out = vec![];
-        d.emit(400.0, 0.1, |k, p, dist| out.push((k, p.pos.x, dist)));
+        d.emit(400.0, 0.1, |k, p, dist, _| out.push((k, p.pos.x, dist)));
         assert_eq!(out.len(), 41);
         for (k, x, dist) in out {
             let expected = k as f32 / 400.0 * 1000.0;
@@ -162,9 +175,9 @@ mod tests {
         d.reset();
         d.record(point(0.0, 0.0), 0.0);
         let mut n = 0;
-        d.emit(0.0, 10.0, |_, _, _| n += 1);
+        d.emit(0.0, 10.0, |_, _, _, _| n += 1);
         assert_eq!(n, 0);
-        d.emit(1000.0, 1e9, |_, _, _| n += 1);
+        d.emit(1000.0, 1e9, |_, _, _, _| n += 1);
         assert_eq!(n as u64, TimeDeposit::MAX_PER_CALL);
     }
 }

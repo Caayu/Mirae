@@ -245,12 +245,17 @@ impl StrokeProcessor {
             airbrush,
             ..
         } = self;
-        airbrush.emit(preset.airbrush.rate, horizon, |k, p, distance| {
+        airbrush.emit(preset.airbrush.rate, horizon, |k, p, distance, moved| {
             let index = AIRBRUSH_INDEX_BASE + k;
             let input = dynamics_at(p, distance, index, *scale, rng);
             let taper = preset.taper.factor(distance, f32::INFINITY);
             let dab = resolve_dab(preset, &input, p.pos, taper);
             let dir = p.velocity.try_normalize().unwrap_or(Vec2::X);
+            // A pen that covered a full spacing step since the last instant
+            // is moving: its movement dabs already carry the deposition.
+            if moved >= preset.properties.eval(Param::Spacing, &input) * dab.extent_along(dir) {
+                return;
+            }
             let scatter = preset.properties.eval(Param::Scatter, &input);
             preset
                 .scatter
@@ -420,15 +425,29 @@ fn place(
         f32::INFINITY
     };
     let taper = preset.taper.factor(site.distance, to_end);
-    let dab = resolve_dab(preset, &input, p.pos, taper);
+    let mut dab = resolve_dab(preset, &input, p.pos, taper);
     let dir = p.velocity.try_normalize().unwrap_or(Vec2::X);
+    // Spacing rule: the next dab is `spacing` times the unscattered dab's
+    // extent along the direction of travel (its diameter for round tips).
+    let step = preset.properties.eval(Param::Spacing, &input) * dab.extent_along(dir);
+    if preset.airbrush.enabled {
+        // Airbrush paint is proportional to dwell time: a movement dab
+        // stands for the `step / speed` seconds the pen spent around it,
+        // capped at one emission period (resting pens are handled by the
+        // time-based emitter).
+        let speed = p.velocity.length();
+        let periods = if speed > 0.0 {
+            (step / speed * preset.airbrush.rate).min(1.0)
+        } else {
+            1.0
+        };
+        dab.flow = 1.0 - (1.0 - dab.flow).powf(periods);
+    }
     let scatter = preset.properties.eval(Param::Scatter, &input);
     preset
         .scatter
         .apply(&dab, scatter, dir, rng, site.index as u64, out);
-    // Spacing rule: the next dab is `spacing` times the unscattered dab's
-    // extent along the direction of travel (its diameter for round tips).
-    preset.properties.eval(Param::Spacing, &input) * dab.extent_along(dir)
+    step
 }
 
 /// The dab a preset produces for given dynamics inputs at `center`.
