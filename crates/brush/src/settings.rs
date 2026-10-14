@@ -67,6 +67,9 @@ pub struct BrushSettings {
     pub angle: BrushProperty,
     /// Minor/major diameter ratio, `0.01..=1`.
     pub aspect: BrushProperty,
+    /// Maximum displacement as a fraction of the diameter.
+    pub scatter: BrushProperty,
+    pub scatter_style: crate::scatter::ScatterStyle,
     /// Distance between dabs as a fraction of the current diameter.
     pub spacing: f32,
     pub anti_aliasing: bool,
@@ -94,6 +97,8 @@ impl Default for BrushSettings {
             tip: crate::tip::Tip::default(),
             angle: BrushProperty::constant(0.0),
             aspect: BrushProperty::constant(1.0),
+            scatter: BrushProperty::constant(0.0),
+            scatter_style: crate::scatter::ScatterStyle::default(),
             spacing: 0.1,
             anti_aliasing: true,
             taper: Taper::default(),

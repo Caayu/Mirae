@@ -333,10 +333,15 @@ fn place(
             .eval(&input, crate::dynamics::slot::HARDNESS)
             .clamp(0.0, 1.0),
     };
-    out.push(dab);
-    // Spacing rule: the next dab is `spacing` times this dab's extent along
-    // the direction of travel (its diameter for round tips).
     let dir = p.velocity.try_normalize().unwrap_or(glam::Vec2::X);
+    let scatter = settings
+        .scatter
+        .eval(&input, crate::dynamics::slot::SCATTER);
+    settings
+        .scatter_style
+        .apply(&dab, scatter, dir, &input.rng, site.index as u64, out);
+    // Spacing rule: the next dab is `spacing` times the unscattered dab's
+    // extent along the direction of travel (its diameter for round tips).
     settings.spacing * dab.extent_along(dir)
 }
 

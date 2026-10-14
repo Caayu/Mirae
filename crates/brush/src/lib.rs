@@ -18,6 +18,7 @@ mod input;
 pub mod interpolate;
 pub mod pipeline;
 pub mod rng;
+pub mod scatter;
 mod settings;
 mod spacing;
 pub mod stabilizer;
