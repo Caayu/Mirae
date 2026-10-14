@@ -212,7 +212,7 @@ impl App {
             (Phase::Move | Phase::Up, Drag::Paint) => {
                 let input = self.brush_input(&ev.sample);
                 let t = Instant::now();
-                self.engine.add_input(input);
+                self.engine.add_input_at(input, clock::now());
                 self.stats
                     .sample(ev.sample.timestamp, t.elapsed().as_secs_f64());
                 if ev.phase == Phase::Up {

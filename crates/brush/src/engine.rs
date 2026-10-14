@@ -85,6 +85,15 @@ pub struct StrokeProcessor {
     last_path_point: Option<StrokePoint>,
     /// Last sample that entered the stabilizer, target of the final catch-up.
     last_filtered_input: Option<StrokePoint>,
+    /// Input time and position of the last real movement (beyond the jitter
+    /// threshold), for airbrush rest detection.
+    last_motion: (f64, Option<glam::Vec2>),
+    /// Screen pixels of input movement still counted as resting.
+    rest_threshold: f32,
+    /// Observed input delivery latency (host time minus sample time),
+    /// a slowly decaying maximum. Rest is only declared after this plus
+    /// the hold delay, so late batches are never mistaken for a resting pen.
+    delivery_lag: f64,
     stats: StrokeStats,
     active: bool,
     buf_jitter: Vec<StrokePoint>,
@@ -119,6 +128,9 @@ impl StrokeProcessor {
             head_distance: 0.0,
             last_path_point: None,
             last_filtered_input: None,
+            last_motion: (f64::NEG_INFINITY, None),
+            rest_threshold: 0.5,
+            delivery_lag: 0.0,
             stats: StrokeStats::default(),
             active: false,
             buf_jitter: Vec::with_capacity(16),
@@ -191,9 +203,21 @@ impl StrokeProcessor {
         self.head_distance = 0.0;
         self.last_path_point = None;
         self.last_filtered_input = None;
+        self.last_motion = (first.timestamp, None);
+        self.delivery_lag = 0.0;
+        self.rest_threshold = params.stroke.jitter_threshold.max(0.5);
         self.stats = StrokeStats::default();
         self.active = true;
         self.push(first, sink);
+    }
+
+    /// Like [`StrokeProcessor::push`], recording that the host received the
+    /// sample at `now` (same clock as timestamps). Only affects when an
+    /// airbrush treats the pen as resting.
+    pub fn push_at(&mut self, input: BrushInput, now: f64, sink: &mut impl DabSink) {
+        let lag = (now - input.timestamp).clamp(0.0, 1.0);
+        self.delivery_lag = lag.max(self.delivery_lag * 0.98);
+        self.push(input, sink);
     }
 
     pub fn push(&mut self, input: BrushInput, sink: &mut impl DabSink) {
@@ -201,6 +225,12 @@ impl StrokeProcessor {
             return;
         }
         self.stats.samples += 1;
+        let moved = self.last_motion.1.is_none_or(|anchor| {
+            (input.position - anchor).length() * self.scale > self.rest_threshold
+        });
+        if moved {
+            self.last_motion = (input.timestamp, Some(input.position));
+        }
         let mut p = StrokePoint::from(input);
         if p.caps.pressure {
             p.pressure = self.pressure_curve.eval(p.pressure);
@@ -227,7 +257,9 @@ impl StrokeProcessor {
     /// once per frame during a stroke; frame rate does not affect the result.
     pub fn advance_time(&mut self, now: f64, sink: &mut impl DabSink) {
         if self.active {
-            let horizon = self.airbrush.horizon_at(now);
+            let horizon = self
+                .airbrush
+                .horizon_at(now - self.delivery_lag, self.last_motion.0);
             self.emit_airbrush(horizon, sink);
         }
     }
@@ -541,6 +573,14 @@ impl BrushEngine {
     pub fn add_input(&mut self, input: BrushInput) {
         if let Some(stroke) = self.stroke.as_mut() {
             self.processor.push(input, stroke);
+        }
+    }
+
+    /// Adds a sample the host received at `now` (input clock), so late
+    /// delivery is not mistaken for a resting pen by airbrush presets.
+    pub fn add_input_at(&mut self, input: BrushInput, now: f64) {
+        if let Some(stroke) = self.stroke.as_mut() {
+            self.processor.push_at(input, now, stroke);
         }
     }
 

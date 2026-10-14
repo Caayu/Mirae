@@ -143,3 +143,56 @@ fn slower_strokes_deposit_more_paint() {
     let (slow, fast) = (mean(&moving(600.0)), mean(&moving(6000.0)));
     assert!(slow > fast * 1.5, "slow {slow} vs fast {fast}");
 }
+
+#[test]
+fn delayed_input_delivery_does_not_create_beads() {
+    // The host clock runs 50 ms ahead of the samples, as when the system
+    // delivers pen input in late batches: the processed path lags "now" by
+    // more than the hold delay while the pen is still moving.
+    let mut e = BrushEngine::new(airbrush());
+    let step = 70.0;
+    e.begin_stroke(input(0.0, 0.0, 1.0), 1.0, 3);
+    // Samples arrive in batches of four, one batch per 60 Hz frame, and
+    // frames also run while a batch is late.
+    for batch in 0..8 {
+        let frame = batch as f64 * 4.0 / 200.0 + 0.05;
+        e.advance_time(frame);
+        e.advance_time(frame + 0.008);
+        for j in 1..=4 {
+            let i = batch * 4 + j;
+            e.add_input_at(input(i as f32 * step, i as f64 / 200.0, 1.0), frame);
+        }
+    }
+    let s = e.end_stroke().unwrap();
+    let line: Vec<f32> = (400..1700).map(|x| s.alpha(x, 300)).collect();
+    let ripple = (30..line.len() - 30)
+        .map(|i| {
+            let local = line[i - 30..=i + 30].iter().sum::<f32>() / 61.0;
+            (line[i] - local).abs() / local
+        })
+        .fold(0.0, f32::max);
+    assert!(ripple < 0.02, "beads: local deviation {ripple}");
+}
+
+#[test]
+fn rest_after_late_delivery_still_builds_up() {
+    let run = |rest: f64| {
+        let mut e = BrushEngine::new(airbrush());
+        e.begin_stroke(input(0.0, 0.0, 1.0), 1.0, 3);
+        for i in 1..=20 {
+            let t = i as f64 / 200.0;
+            e.add_input_at(input(i as f32 * 10.0, t, 1.0), t + 0.05);
+        }
+        let mut now = 0.15;
+        while now < 0.15 + rest {
+            e.advance_time(now);
+            now += 1.0 / 60.0;
+        }
+        e.end_stroke().unwrap().alpha(200, 300)
+    };
+    let (short, long) = (run(0.1), run(1.0));
+    assert!(
+        long > short + 0.2,
+        "resting must keep depositing: {short} -> {long}"
+    );
+}

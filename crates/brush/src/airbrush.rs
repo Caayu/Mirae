@@ -59,12 +59,21 @@ impl TimeDeposit {
         self.path.back().map(|(p, _)| p.time)
     }
 
-    /// Horizon for a host clock reading `now`: real path data, or the hold
-    /// position up to `now - HOLD_DELAY`, whichever reaches further.
-    pub fn horizon_at(&self, now: f64) -> f64 {
-        self.last_time()
-            .unwrap_or(f64::NEG_INFINITY)
-            .max(now - Self::HOLD_DELAY)
+    /// Horizon for a host clock reading `now`. Instants are resolved from
+    /// real path data; beyond it only if the pen has demonstrably rested:
+    /// no real movement since `last_motion` (input time) for `HOLD_DELAY`.
+    /// Testing rest on the input rather than on the processed path matters:
+    /// the path legitimately lags the pen (batched delivery, one-sample
+    /// interpolation delay), and treating that lag as rest would deposit
+    /// periodic blobs along a moving stroke.
+    pub fn horizon_at(&self, now: f64, last_motion: f64) -> f64 {
+        let path = self.last_time().unwrap_or(f64::NEG_INFINITY);
+        let hold = now - Self::HOLD_DELAY;
+        if hold >= last_motion {
+            path.max(hold)
+        } else {
+            path
+        }
     }
 
     /// Emits every instant up to `horizon` through
@@ -133,7 +142,7 @@ mod tests {
         let mut out = vec![];
         let mut now = 0.0;
         while now <= seconds {
-            let h = d.horizon_at(now);
+            let h = d.horizon_at(now, 0.0);
             d.emit(100.0, h, |k, p, _, _| out.push((k, p.pos.x)));
             now += 1.0 / fps;
         }
