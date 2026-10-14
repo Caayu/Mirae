@@ -13,8 +13,10 @@
 pub mod dynamics;
 mod engine;
 mod input;
+pub mod pipeline;
 mod settings;
 mod spacing;
+pub mod stabilizer;
 mod stroke;
 mod tip;
 

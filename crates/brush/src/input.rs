@@ -1,5 +1,7 @@
 use glam::Vec2;
 
+use crate::dynamics::InputCaps;
+
 /// One pointer sample, already mapped to canvas pixel coordinates.
 ///
 /// Backends (mouse, Windows Ink, ...) translate their native events into this
@@ -16,6 +18,8 @@ pub struct BrushInput {
     pub rotation: f32,
     /// Seconds on a monotonic clock shared by all samples of a stroke.
     pub timestamp: f64,
+    /// Which of the fields above the device really measured.
+    pub caps: InputCaps,
 }
 
 impl BrushInput {
@@ -27,6 +31,13 @@ impl BrushInput {
             tilt: Vec2::ZERO,
             rotation: 0.0,
             timestamp,
+            caps: InputCaps::NONE,
         }
+    }
+
+    pub fn with_pressure(mut self, pressure: f32) -> Self {
+        self.pressure = pressure;
+        self.caps.pressure = true;
+        self
     }
 }
