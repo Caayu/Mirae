@@ -491,12 +491,7 @@ fn attach_ink(
     window: &Window,
     proxy: EventLoopProxy<AppEvent>,
 ) -> Option<tela_tablet::windows::InkBackend> {
-    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    let handle = window.window_handle().ok()?;
-    let RawWindowHandle::Win32(w) = handle.as_raw() else {
-        return None;
-    };
-    match tela_tablet::windows::InkBackend::attach(w.hwnd.get(), move || {
+    match tela_tablet::windows::InkBackend::attach(window, move || {
         let _ = proxy.send_event(AppEvent::Tablet);
     }) {
         Ok(ink) => {

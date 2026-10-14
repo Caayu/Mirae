@@ -5,17 +5,19 @@ use glam::DVec2;
 /// Windows Ink reports pressure in `0..=1024`.
 pub const INK_PRESSURE_MAX: u32 = 1024;
 
+/// Raw Windows Ink pressure to normalized `0.0..=1.0`.
 pub fn ink_pressure(raw: u32) -> f32 {
     (raw as f32 / INK_PRESSURE_MAX as f32).clamp(0.0, 1.0)
 }
 
-/// Tilt in whole degrees (`-90..=90`) to radians.
-pub fn tilt_degrees(raw: i32) -> f32 {
+/// Raw Windows Ink tilt (whole degrees, `-90..=90`) to radians.
+pub fn ink_tilt(raw: i32) -> f32 {
     (raw.clamp(-90, 90) as f32).to_radians()
 }
 
-/// Rotation in whole degrees (`0..=359`) to radians in `0..2π`.
-pub fn rotation_degrees(raw: u32) -> f32 {
+/// Raw Windows Ink barrel rotation (whole degrees, `0..=359`) to radians
+/// in `0..2π`.
+pub fn ink_rotation(raw: u32) -> f32 {
     ((raw % 360) as f32).to_radians()
 }
 
@@ -68,10 +70,10 @@ mod tests {
 
     #[test]
     fn angles() {
-        assert!((tilt_degrees(45) - std::f32::consts::FRAC_PI_4).abs() < 1e-6);
-        assert!((tilt_degrees(-200) + std::f32::consts::FRAC_PI_2).abs() < 1e-6);
-        assert_eq!(rotation_degrees(360), 0.0);
-        assert!((rotation_degrees(180) - std::f32::consts::PI).abs() < 1e-6);
+        assert!((ink_tilt(45) - std::f32::consts::FRAC_PI_4).abs() < 1e-6);
+        assert!((ink_tilt(-200) + std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        assert_eq!(ink_rotation(360), 0.0);
+        assert!((ink_rotation(180) - std::f32::consts::PI).abs() < 1e-6);
     }
 
     #[test]

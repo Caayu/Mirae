@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use glam::Vec2;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows_sys::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
 use windows_sys::Win32::UI::Controls::{
@@ -39,7 +40,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_POINTERLEAVE, WM_POINTERUP, WM_POINTERUPDATE,
 };
 
-use crate::normalize::{HimetricMapper, ink_pressure, rotation_degrees, tilt_degrees};
+use crate::normalize::{HimetricMapper, ink_pressure, ink_rotation, ink_tilt};
 use crate::{DeviceKind, Phase, SampleCaps, TabletEvent, TabletSample, clock};
 
 const SUBCLASS_ID: usize = 0x7E1A_0001;
@@ -51,12 +52,19 @@ const MAX_MAPPING_ERROR_PX: f64 = 2.0;
 
 #[derive(Debug)]
 pub enum InkError {
+    /// The window has no Win32 handle (or it is not available now).
+    UnsupportedWindow,
+    /// `SetWindowSubclass` refused, e.g. the window belongs to another
+    /// thread.
     Subclass,
 }
 
 impl std::fmt::Display for InkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "cannot subclass window for pen input")
+        match self {
+            Self::UnsupportedWindow => write!(f, "window has no Win32 handle for pen input"),
+            Self::Subclass => write!(f, "cannot subclass window for pen input"),
+        }
     }
 }
 
@@ -78,17 +86,35 @@ struct Shared {
 }
 
 /// Pen input for one window. Dropping it removes the subclass.
+///
+/// Not `Send`: the window procedure runs on the window's thread, and all
+/// shared state is single-threaded (`Rc`/`RefCell`).
 pub struct InkBackend {
     hwnd: HWND,
     shared: Rc<Shared>,
 }
 
 impl InkBackend {
-    /// Starts capturing pen input for `hwnd`. `waker` runs (on the UI
-    /// thread) whenever events become available after the queue was empty;
-    /// it should schedule a [`InkBackend::drain`].
-    pub fn attach(hwnd: isize, waker: impl Fn() + 'static) -> Result<Self, InkError> {
-        let hwnd = hwnd as HWND;
+    /// Starts capturing pen input for `window`, which must have been
+    /// created by the calling thread (otherwise [`InkError::Subclass`]).
+    /// `waker` runs (on the UI thread, inside the window procedure)
+    /// whenever events become available after the queue was empty; it
+    /// should schedule a [`InkBackend::drain`], must not block and must not
+    /// panic (a panic cannot unwind out of the window procedure and aborts).
+    ///
+    /// If the window is destroyed first, the backend detaches itself on
+    /// `WM_NCDESTROY` and stays inert.
+    pub fn attach(
+        window: &impl HasWindowHandle,
+        waker: impl Fn() + 'static,
+    ) -> Result<Self, InkError> {
+        let handle = window
+            .window_handle()
+            .map_err(|_| InkError::UnsupportedWindow)?;
+        let RawWindowHandle::Win32(win32) = handle.as_raw() else {
+            return Err(InkError::UnsupportedWindow);
+        };
+        let hwnd = win32.hwnd.get() as HWND;
         let shared = Rc::new(Shared {
             queue: RefCell::new(Vec::with_capacity(256)),
             waker: Box::new(waker),
@@ -100,8 +126,11 @@ impl InkBackend {
             passing: Cell::new(None),
         });
         let raw = Rc::into_raw(shared.clone()) as usize;
-        // SAFETY: `hwnd` is a live window owned by this thread; `raw` stays
-        // valid until `Drop` removes the subclass and reclaims it.
+        // SAFETY: `hwnd` comes from a borrowed, live window handle.
+        // SetWindowSubclass itself rejects windows of other threads. `raw`
+        // is one strong reference handed to Windows; it stays valid until
+        // the subclass is removed (in `Drop` or on WM_NCDESTROY), which is
+        // where it is reclaimed, exactly once.
         let ok = unsafe { SetWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID, raw) };
         if ok == 0 {
             // SAFETY: the subclass was not installed, so we still own `raw`.
@@ -316,17 +345,17 @@ fn read_history(shared: &Shared, hwnd: HWND, pointer_id: u32) {
                 1.0
             },
             tilt_x: if mask & PEN_MASK_TILT_X != 0 {
-                tilt_degrees(info.tiltX)
+                ink_tilt(info.tiltX)
             } else {
                 0.0
             },
             tilt_y: if mask & PEN_MASK_TILT_Y != 0 {
-                tilt_degrees(info.tiltY)
+                ink_tilt(info.tiltY)
             } else {
                 0.0
             },
             rotation: if caps.rotation {
-                rotation_degrees(info.rotation)
+                ink_rotation(info.rotation)
             } else {
                 0.0
             },

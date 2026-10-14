@@ -2652,6 +2652,7 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "log",
+ "raw-window-handle",
  "windows-sys 0.61.2",
 ]
 

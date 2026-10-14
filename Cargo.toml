@@ -37,6 +37,7 @@ egui = "0.36"
 egui-wgpu = "0.36"
 egui-winit = "0.36"
 windows-sys = "0.61"
+raw-window-handle = "0.6"
 
 [workspace.lints.rust]
 # unsafe is allowed only where a module opts in explicitly (FFI in
