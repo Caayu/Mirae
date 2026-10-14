@@ -22,13 +22,15 @@ pub struct PanelModel<'a> {
     pub pressure_curve: &'a mut Curve,
 }
 
-/// Requests the panel cannot fulfil by itself.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Requests the panels cannot fulfil by themselves.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PanelAction {
     None,
     SelectPreset(usize),
     ToggleEraser,
     ClearLayer,
+    /// From the layer panel.
+    Layer(crate::LayerAction),
 }
 
 /// Persistent panel state.

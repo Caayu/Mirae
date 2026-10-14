@@ -1,11 +1,12 @@
 //! Minimal brush-editing UI built with egui.
 //!
-//! **Responsibility:** the brush panel ([`BrushPanel`]), the curve editor
-//! ([`curve_editor`]), egui input/output plumbing ([`UiLayer`]) and
+//! **Responsibility:** the brush panel ([`BrushPanel`]), the layer panel
+//! ([`layer_panel`]), the curve editor ([`curve_editor`]), egui
+//! input/output plumbing ([`UiLayer`]) and
 //! reporting which screen regions the UI covers (pen passthrough).
 //! **Does not:** own any authoritative state. It edits data it is lent for
-//! one frame ([`PanelModel`]) and returns requests it cannot fulfil
-//! ([`PanelAction`]). **Depends on:** brush, renderer, egui, egui-wgpu,
+//! one frame ([`PanelModel`], [`LayerRow`]) and returns requests it cannot
+//! fulfil ([`PanelAction`], [`LayerAction`]). **Depends on:** brush, renderer, egui, egui-wgpu,
 //! egui-winit, wgpu, winit. **Used by:** app only.
 //!
 //! This crate is the only place egui appears. It edits plain data from
@@ -15,11 +16,13 @@
 
 pub mod brush_panel;
 pub mod curve_editor;
+pub mod layer_panel;
 
 pub use brush_panel::{BrushPanel, PanelAction, PanelModel};
 pub use egui;
 use egui::{ClippedPrimitive, TexturesDelta, ViewportId};
 use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
+pub use layer_panel::{LayerAction, LayerRow, layer_panel};
 use tela_renderer::FrameOverlay;
 use winit::window::Window;
 

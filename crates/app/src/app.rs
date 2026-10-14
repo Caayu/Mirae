@@ -6,18 +6,18 @@ use tela_brush::dynamics::{DynamicsSource, InputCaps};
 use tela_brush::{BrushEngine, BrushInput, BrushPreset};
 use tela_canvas::{DirtyTiles, TileCoord, ViewTransform};
 use tela_color::PremulRgba;
-use tela_document::{ComposeScratch, Document, LayerId, Overlay};
+use tela_document::{ComposeScratch, Document, LayerId, Overlay, Placement};
 use tela_renderer::{Frame, Renderer};
 use tela_tablet::{DeviceKind, Phase, TabletEvent, TabletSample, TimestampNormalizer, clock};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::stats::LatencyStats;
 use crate::tools::Tools;
-use tela_ui::{BrushPanel, PanelAction, PanelModel, UiLayer, egui};
+use tela_ui::{BrushPanel, LayerAction, LayerRow, PanelAction, PanelModel, UiLayer, egui};
 
 const DOCUMENT_SIZE: (u32, u32) = (4000, 3000);
 const WORKSPACE_COLOR: [f32; 4] = [0.18, 0.18, 0.2, 1.0];
@@ -111,17 +111,21 @@ impl App {
     fn fit_view(&mut self) {
         if let Some(gpu) = &self.gpu {
             let doc = Vec2::new(self.document.width() as f32, self.document.height() as f32);
-            // Fit into the area the side panel leaves free.
-            let panel = gpu
-                .ui
-                .occupied()
+            // Fit into the area the side panels leave free.
+            let size = gpu.renderer.size();
+            let occupied = gpu.ui.occupied();
+            let left = occupied
                 .iter()
                 .filter(|r| r[0] <= 1.0)
                 .map(|r| r[2])
                 .fold(0.0f32, f32::max);
-            let size = gpu.renderer.size();
-            self.view = ViewTransform::fit(doc, Vec2::new((size.x - panel).max(1.0), size.y));
-            self.view.pan.x += panel;
+            let right = occupied
+                .iter()
+                .filter(|r| r[2] >= size.x - 1.0)
+                .map(|r| r[0])
+                .fold(size.x, f32::min);
+            self.view = ViewTransform::fit(doc, Vec2::new((right - left).max(1.0), size.y));
+            self.view.pan.x += left;
         }
     }
 
@@ -320,6 +324,14 @@ impl App {
         if !pressed || self.engine.is_stroking() {
             return;
         }
+        if self.modifiers.control_key()
+            && self.modifiers.shift_key()
+            && event.physical_key == PhysicalKey::Code(KeyCode::KeyN)
+        {
+            self.apply_layer(LayerAction::Add);
+            self.request_redraw();
+            return;
+        }
         let p = self.tools.active_mut();
         let user = &mut self.engine.stroke_defaults;
         match &event.logical_key {
@@ -368,6 +380,48 @@ impl App {
         match self.document.clear_layer(self.document.active_layer()) {
             Ok(dirty) => self.stale.extend(&dirty),
             Err(e) => log::info!("not clearing: {e}"),
+        }
+    }
+
+    /// Applies a layer command to the document. Ignored while a stroke is
+    /// in progress, like the reference (docs/parity/4A-layers.md, O14):
+    /// the stroke always finishes on the layer it started on.
+    fn apply_layer(&mut self, action: LayerAction) {
+        if self.engine.is_stroking() {
+            return;
+        }
+        let doc = &mut self.document;
+        let active = doc.active_layer();
+        let Some(target) = (match action {
+            LayerAction::Select(key)
+            | LayerAction::SetVisible(key, _)
+            | LayerAction::SetLocked(key, _) => doc.find_layer(key),
+            _ => Some(active),
+        }) else {
+            log::info!("layer command for a layer that no longer exists");
+            return;
+        };
+        let result = match action {
+            LayerAction::Add => doc
+                .add_layer(Placement::Above(active))
+                .map(|_| DirtyTiles::new()),
+            LayerAction::Remove => doc.remove_layer(active),
+            LayerAction::MoveUp => match doc.layer_above(active) {
+                Some(above) => doc.move_layer(active, Placement::Above(above)),
+                None => Ok(DirtyTiles::new()),
+            },
+            LayerAction::MoveDown => match doc.layer_below(active) {
+                Some(below) => doc.move_layer(active, Placement::Below(below)),
+                None => Ok(DirtyTiles::new()),
+            },
+            LayerAction::SetOpacity(o) => doc.set_opacity(active, o),
+            LayerAction::Select(_) => doc.set_active_layer(target).map(|()| DirtyTiles::new()),
+            LayerAction::SetVisible(_, v) => doc.set_visible(target, v),
+            LayerAction::SetLocked(_, v) => doc.set_locked(target, v).map(|()| DirtyTiles::new()),
+        };
+        match result {
+            Ok(dirty) => self.stale.extend(&dirty),
+            Err(e) => log::info!("layer command refused: {e}"),
         }
     }
 
@@ -420,9 +474,26 @@ impl App {
             self.tools.brush
         };
         let eraser_mode = self.tools.eraser_mode;
+        let active = self.document.active_layer();
+        let rows: Vec<LayerRow> = self
+            .document
+            .layers()
+            .map(|l| LayerRow {
+                key: l.id().get(),
+                name: l.name(),
+                visible: l.visible(),
+                locked: l.locked(),
+                opacity: l.opacity(),
+                active: l.id() == active,
+            })
+            .collect();
         let mut action = PanelAction::None;
+        let mut layer_action = None;
         let (tools, engine, panel) = (&mut self.tools, &mut self.engine, &mut self.panel);
         let repaint = gpu.ui.build(&gpu.window, |ui| {
+            let layers = egui::Panel::right("layer-panel")
+                .default_size(230.0)
+                .show(ui, |ui| layer_action = tela_ui::layer_panel(ui, &rows));
             let r = egui::Panel::left("brush-panel")
                 .default_size(290.0)
                 .show(ui, |ui| {
@@ -438,7 +509,7 @@ impl App {
                         },
                     );
                 });
-            vec![r.response.rect]
+            vec![r.response.rect, layers.response.rect]
         });
         #[cfg(windows)]
         if let Some(ink) = &gpu.ink {
@@ -447,7 +518,10 @@ impl App {
         if repaint {
             gpu.window.request_redraw();
         }
-        action
+        match layer_action {
+            Some(a) => PanelAction::Layer(a),
+            None => action,
+        }
     }
 
     fn apply(&mut self, action: PanelAction) {
@@ -456,6 +530,7 @@ impl App {
             PanelAction::SelectPreset(i) => self.tools.select(i),
             PanelAction::ToggleEraser => self.tools.eraser_mode = !self.tools.eraser_mode,
             PanelAction::ClearLayer => self.clear_canvas(),
+            PanelAction::Layer(a) => self.apply_layer(a),
         }
         self.request_redraw();
     }
