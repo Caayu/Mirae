@@ -2,6 +2,7 @@
 //! stylus is flipped to its eraser end (or eraser mode is toggled).
 
 use tela_brush::BrushPreset;
+use tela_brush::preset::builtin::ids;
 use tela_brush::preset::{PaintMode, builtin_presets};
 use tela_tablet::DeviceKind;
 
@@ -20,13 +21,13 @@ impl Tools {
             presets.push(BrushPreset::default());
         }
         let find = |id: &str| presets.iter().position(|p| p.id == id);
-        let brush = find("tela.ink-pen").unwrap_or(0);
+        let brush = find(ids::INK_PEN).unwrap_or(0);
         let eraser = presets
             .iter()
             .position(|p| p.compositing.mode == PaintMode::Erase)
             .unwrap_or_else(|| {
                 let mut e = BrushPreset::plain(30.0);
-                e.id = "tela.eraser".into();
+                e.id = ids::ERASER.into();
                 e.name = "Eraser".into();
                 e.compositing.mode = PaintMode::Erase;
                 presets.push(e);
@@ -101,7 +102,7 @@ mod tests {
             t.for_stroke(DeviceKind::Eraser).compositing.mode,
             PaintMode::Erase
         );
-        assert_eq!(t.for_stroke(DeviceKind::Mouse).id, "tela.ink-pen");
+        assert_eq!(t.for_stroke(DeviceKind::Mouse).id, ids::INK_PEN);
     }
 
     #[test]
@@ -112,13 +113,9 @@ mod tests {
             t.for_stroke(DeviceKind::Mouse).compositing.mode,
             PaintMode::Erase
         );
-        let pencil = t
-            .presets
-            .iter()
-            .position(|p| p.id == "tela.pencil")
-            .unwrap();
+        let pencil = t.presets.iter().position(|p| p.id == ids::PENCIL).unwrap();
         t.select(pencil);
         assert!(!t.eraser_mode);
-        assert_eq!(t.active().id, "tela.pencil");
+        assert_eq!(t.active().id, ids::PENCIL);
     }
 }

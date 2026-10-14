@@ -5,10 +5,10 @@
 //! fields can be added without breaking older files, unknown fields are
 //! ignored, and unknown enum variants load as neutral `Unknown` values.
 
-mod builtin;
+pub mod builtin;
 pub mod io;
 
-pub use builtin::builtin_presets;
+pub use builtin::{builtin_preset, builtin_presets};
 use serde::{Deserialize, Serialize};
 
 use crate::dynamics::{BrushProperty, Curve, DynamicsInput, DynamicsSource, Effector, slot};
@@ -317,6 +317,38 @@ pub struct StrokeOverrides {
 }
 
 impl StrokeOverrides {
+    /// Applies a user edit to the stroke settings this preset resolves to.
+    ///
+    /// `edit` receives the resolved settings, i.e. what the user sees. Each
+    /// field it changes becomes the user's own setting and the preset stops
+    /// overriding it, so the next stroke uses exactly the edited value.
+    /// Fields it leaves alone keep their override.
+    pub fn edit_resolved(
+        &mut self,
+        user: &mut StrokeSettings,
+        edit: impl FnOnce(&mut StrokeSettings),
+    ) {
+        let before = self.resolve(user);
+        let mut after = before.clone();
+        edit(&mut after);
+        if after.stabilizer != before.stabilizer {
+            user.stabilizer = after.stabilizer;
+            self.stabilizer = None;
+        }
+        if after.stabilization != before.stabilization {
+            user.stabilization = after.stabilization;
+            self.stabilization = None;
+        }
+        if after.interpolation != before.interpolation {
+            user.interpolation = after.interpolation;
+            self.interpolation = None;
+        }
+        if after.jitter_threshold != before.jitter_threshold {
+            user.jitter_threshold = after.jitter_threshold;
+            self.jitter_threshold = None;
+        }
+    }
+
     pub fn resolve(&self, user: &StrokeSettings) -> StrokeSettings {
         StrokeSettings {
             stabilizer: self.stabilizer.unwrap_or(user.stabilizer),
@@ -595,5 +627,26 @@ mod tests {
         let r = o.resolve(&user);
         assert_eq!(r.stabilization, 40.0);
         assert_eq!(r.interpolation, InterpolationKind::Linear);
+    }
+
+    #[test]
+    fn editing_resolved_settings_drops_only_the_edited_overrides() {
+        let mut user = StrokeSettings::default();
+        let mut o = StrokeOverrides {
+            stabilization: Some(0.0),
+            interpolation: Some(InterpolationKind::Linear),
+            ..StrokeOverrides::default()
+        };
+        // Edits start from what the user sees (the override), not from the
+        // hidden user value.
+        o.edit_resolved(&mut user, |s| s.stabilization += 10.0);
+        assert_eq!(o.stabilization, None);
+        assert_eq!(user.stabilization, 10.0);
+        assert_eq!(o.resolve(&user).stabilization, 10.0);
+        // Untouched overrides survive; an edit that changes nothing is a no-op.
+        assert_eq!(o.interpolation, Some(InterpolationKind::Linear));
+        let before = (o.clone(), user.clone());
+        o.edit_resolved(&mut user, |_| {});
+        assert_eq!((o, user), before);
     }
 }

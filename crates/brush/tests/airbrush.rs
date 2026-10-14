@@ -1,16 +1,14 @@
 //! Airbrush deposition must depend on time, never on the frame rate.
 
 use glam::Vec2;
-use tela_brush::preset::builtin_presets;
+use tela_brush::preset::builtin::ids;
+use tela_brush::preset::builtin_preset;
 use tela_brush::{
     BrushEngine, BrushInput, BrushPreset, DabLog, StrokeParams, StrokeProcessor, StrokeSettings,
 };
 
 fn airbrush() -> BrushPreset {
-    builtin_presets()
-        .into_iter()
-        .find(|p| p.id == "tela.airbrush")
-        .unwrap()
+    builtin_preset(ids::AIRBRUSH).unwrap()
 }
 
 fn input(x: f32, t: f64, pressure: f32) -> BrushInput {

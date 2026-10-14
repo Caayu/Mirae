@@ -39,6 +39,12 @@ pub enum InterpolationKind {
 impl InterpolationKind {
     pub const ALL: [Self; 3] = [Self::Linear, Self::CatmullRom, Self::Bezier];
 
+    /// The next kind in [`Self::ALL`], wrapping around (for cycling UIs).
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|k| *k == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Self::Linear => "linear",

@@ -120,37 +120,26 @@ impl BrushPanel {
             }
             ui.separator();
 
+            // Stroke settings are shown as the preset resolves them; edits go
+            // through `edit_resolved`, which owns the override rule.
             ui.label("Stroke");
-            let mut stab = p.stroke.stabilization.unwrap_or(m.stroke.stabilization);
-            if ui
-                .add(Slider::new(&mut stab, 0.0..=100.0).text("stabilization"))
-                .changed()
-            {
-                m.stroke.stabilization = stab;
-                p.stroke.stabilization = None;
-            }
-            let kind = p.stroke.stabilizer.unwrap_or(m.stroke.stabilizer);
+            let mut stroke = p.stroke.resolve(m.stroke);
+            ui.add(Slider::new(&mut stroke.stabilization, 0.0..=100.0).text("stabilization"));
             ComboBox::from_label("stabilizer")
-                .selected_text(kind.name())
+                .selected_text(stroke.stabilizer.name())
                 .show_ui(ui, |ui| {
                     for k in StabilizerKind::ALL {
-                        if ui.selectable_label(k == kind, k.name()).clicked() {
-                            m.stroke.stabilizer = k;
-                            p.stroke.stabilizer = None;
-                        }
+                        ui.selectable_value(&mut stroke.stabilizer, k, k.name());
                     }
                 });
-            let interp = p.stroke.interpolation.unwrap_or(m.stroke.interpolation);
             ComboBox::from_label("interpolation")
-                .selected_text(interp.name())
+                .selected_text(stroke.interpolation.name())
                 .show_ui(ui, |ui| {
                     for k in InterpolationKind::ALL {
-                        if ui.selectable_label(k == interp, k.name()).clicked() {
-                            m.stroke.interpolation = k;
-                            p.stroke.interpolation = None;
-                        }
+                        ui.selectable_value(&mut stroke.interpolation, k, k.name());
                     }
                 });
+            p.stroke.edit_resolved(m.stroke, |s| *s = stroke);
             ui.add(Slider::new(&mut p.taper.start, 0.0..=300.0).text("taper start px"));
             ui.add(Slider::new(&mut p.taper.end, 0.0..=300.0).text("taper end px"));
             ui.horizontal(|ui| {
