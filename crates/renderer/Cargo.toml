@@ -1,0 +1,17 @@
+[package]
+name = "tela-renderer"
+description = "wgpu presentation of composed canvas tiles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tela-canvas.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+log.workspace = true
+
+[lints]
+workspace = true
