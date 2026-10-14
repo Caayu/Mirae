@@ -34,10 +34,6 @@ pub mod slot {
     pub const TEXTURE: u32 = 8;
 }
 
-/// A device's global pressure calibration curve (applied before any brush
-/// effector). Same representation as every other curve.
-pub type PressureCurve = Curve;
-
 /// Which inputs the device actually reported.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputCaps {

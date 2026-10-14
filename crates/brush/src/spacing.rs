@@ -88,6 +88,7 @@ impl DabSpacer {
     }
 
     /// Arc length processed so far, canvas pixels.
+    #[cfg(test)]
     pub fn distance(&self) -> f32 {
         self.distance
     }

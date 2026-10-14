@@ -9,9 +9,10 @@ use crate::interpolate::{Interpolator, PathInterpolator};
 use crate::pipeline::{JitterFilter, StrokePoint, VelocityEstimator};
 use crate::preset::{BrushPreset, Param, StrokeSettings};
 use crate::rng::StrokeRng;
+use crate::spacing::{DabSite, DabSpacer};
 use crate::stabilizer::{Stabilizer, StrokeStabilizer, catch_up, stabilizer};
 use crate::texture::CanvasTexture;
-use crate::{BrushInput, Dab, DabSink, DabSite, DabSpacer, StampContext, StrokeBuffer};
+use crate::{BrushInput, Dab, DabSink, StampContext, StrokeBuffer};
 
 /// Counters for one stroke, for instrumentation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -483,7 +484,12 @@ fn place(
 }
 
 /// The dab a preset produces for given dynamics inputs at `center`.
-pub fn resolve_dab(preset: &BrushPreset, input: &DynamicsInput, center: Vec2, taper: f32) -> Dab {
+pub(crate) fn resolve_dab(
+    preset: &BrushPreset,
+    input: &DynamicsInput,
+    center: Vec2,
+    taper: f32,
+) -> Dab {
     let props = &preset.properties;
     let angle = props
         .angle

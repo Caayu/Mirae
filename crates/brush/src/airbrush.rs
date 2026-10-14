@@ -42,10 +42,6 @@ impl TimeDeposit {
         self.last_distance = None;
     }
 
-    pub fn emitted(&self) -> u64 {
-        self.next
-    }
-
     /// Records a processed path point.
     pub fn record(&mut self, p: StrokePoint, distance: f32) {
         self.t0.get_or_insert(p.time);

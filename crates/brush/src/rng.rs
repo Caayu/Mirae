@@ -7,7 +7,7 @@
 //! samples gives bit-identical dabs.
 
 /// Mixes 64 bits (SplitMix64 finalizer).
-pub fn mix64(mut z: u64) -> u64 {
+pub(crate) fn mix64(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)

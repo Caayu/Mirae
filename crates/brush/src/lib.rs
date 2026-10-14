@@ -12,7 +12,7 @@
 //! Acquisition, device normalization and timestamp normalization happen
 //! before this crate (see `tela-tablet`).
 
-pub mod airbrush;
+mod airbrush;
 pub mod analysis;
 pub mod dynamics;
 mod engine;
@@ -28,8 +28,8 @@ mod stroke;
 pub mod texture;
 pub mod tip;
 
-pub use engine::{BrushEngine, StrokeParams, StrokeProcessor, StrokeStats, resolve_dab};
+pub use engine::{BrushEngine, StrokeParams, StrokeProcessor, StrokeStats};
 pub use input::BrushInput;
 pub use preset::{BrushPreset, Param, Properties, StrokeSettings, Taper};
-pub use spacing::{Dab, DabSite, DabSpacer};
+pub use spacing::Dab;
 pub use stroke::{DabLog, DabSink, StampContext, StrokeBuffer};

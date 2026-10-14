@@ -12,12 +12,14 @@ use crate::BrushInput;
 use crate::dynamics::InputCaps;
 use crate::pipeline::StrokePoint;
 
-/// SplitMix64: tiny, fast, and identical on every platform, which is what a
-/// reproducible test corpus needs.
+/// Stateful SplitMix64 for generating synthetic input (sensor noise,
+/// tremor, timing jitter): tiny, fast, and identical on every platform,
+/// which is what a reproducible test corpus needs. Not used while drawing;
+/// strokes use the stateless [`crate::rng::StrokeRng`].
 #[derive(Clone, Debug)]
-pub struct Rng(u64);
+pub struct SyntheticRng(u64);
 
-impl Rng {
+impl SyntheticRng {
     pub fn new(seed: u64) -> Self {
         Self(seed)
     }
@@ -239,7 +241,7 @@ impl Scenario {
 
     /// Device samples (mouse-like `caps`, pressure fixed at 1).
     pub fn samples(&self) -> Vec<BrushInput> {
-        let mut rng = Rng::new(self.seed);
+        let mut rng = SyntheticRng::new(self.seed);
         let n = (self.duration * self.rate).round().max(1.0) as usize;
         let tremor_phase = rng.uniform() * std::f64::consts::TAU;
         (0..=n)
@@ -406,8 +408,8 @@ mod tests {
 
     #[test]
     fn rng_is_deterministic_and_roughly_normal() {
-        let mut a = Rng::new(42);
-        let mut b = Rng::new(42);
+        let mut a = SyntheticRng::new(42);
+        let mut b = SyntheticRng::new(42);
         assert_eq!(a.next_u64(), b.next_u64());
         let n = 20_000;
         let xs: Vec<f64> = (0..n).map(|_| a.gaussian()).collect();
