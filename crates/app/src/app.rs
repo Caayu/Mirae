@@ -6,7 +6,7 @@ use tela_brush::dynamics::{DynamicsSource, InputCaps};
 use tela_brush::{BrushEngine, BrushInput, BrushPreset};
 use tela_canvas::{DirtyTiles, TileCoord, ViewTransform};
 use tela_color::PremulRgba;
-use tela_document::{ComposeScratch, Document, Overlay};
+use tela_document::{ComposeScratch, Document, LayerId, Overlay};
 use tela_renderer::{Frame, Renderer};
 use tela_tablet::{DeviceKind, Phase, TabletEvent, TabletSample, TimestampNormalizer, clock};
 use winit::application::ApplicationHandler;
@@ -66,6 +66,8 @@ pub struct App {
     last_device: Option<DeviceKind>,
     /// Seed of the next stroke; recorded strokes replay identically.
     stroke_seed: u64,
+    /// Layer the stroke in progress paints on, fixed when it began.
+    stroke_layer: Option<LayerId>,
     tools: Tools,
     panel: BrushPanel,
     last_title: String,
@@ -93,6 +95,7 @@ impl App {
             show_stats: false,
             last_device: None,
             stroke_seed: 0,
+            stroke_layer: None,
             tools: Tools::new(),
             panel: BrushPanel::default(),
             last_title: String::new(),
@@ -107,7 +110,7 @@ impl App {
 
     fn fit_view(&mut self) {
         if let Some(gpu) = &self.gpu {
-            let doc = Vec2::new(self.document.width as f32, self.document.height as f32);
+            let doc = Vec2::new(self.document.width() as f32, self.document.height() as f32);
             // Fit into the area the side panel leaves free.
             let panel = gpu
                 .ui
@@ -196,7 +199,15 @@ impl App {
         match (ev.phase, self.drag) {
             (Phase::Down, Drag::None) if self.space_held => self.drag = Drag::Pan,
             (Phase::Down, Drag::None) => {
+                let target = self.document.active_layer();
+                if let Err(e) = self.document.paint_target(target) {
+                    // Like the reference, hidden and locked layers take no
+                    // paint; the press does nothing.
+                    log::info!(target: "tela::stroke", "not painting: {e}");
+                    return;
+                }
                 self.drag = Drag::Paint;
+                self.stroke_layer = Some(target);
                 self.timestamps.reset();
                 let input = self.brush_input(&ev.sample);
                 let t = Instant::now();
@@ -227,9 +238,17 @@ impl App {
 
     fn finish_stroke(&mut self) {
         self.drag = Drag::None;
+        let target = self.stroke_layer.take();
         if let Some(stroke) = self.engine.end_stroke() {
-            let touched = stroke.commit_into(&mut self.document.active_layer_mut().pixels);
-            self.stale.extend(&touched);
+            // The preview disappears either way, so its tiles recompose.
+            self.stale.extend(stroke.touched());
+            let committed = target.map(|id| {
+                self.document
+                    .modify_tiles(id, stroke.touched(), |c, t| stroke.commit_tile(c, t))
+            });
+            if let Some(Err(e)) = committed {
+                log::warn!(target: "tela::stroke", "stroke discarded: {e}");
+            }
             log::debug!(target: "tela::stroke", "{:?}", self.engine.stats());
         }
     }
@@ -346,11 +365,9 @@ impl App {
     }
 
     fn clear_canvas(&mut self) {
-        let layer = self.document.active_layer_mut();
-        let coords: Vec<TileCoord> = layer.pixels.tile_coords().collect();
-        layer.pixels.clear();
-        for c in coords {
-            self.stale.mark(c);
+        match self.document.clear_layer(self.document.active_layer()) {
+            Ok(dirty) => self.stale.extend(&dirty),
+            Err(e) => log::info!("not clearing: {e}"),
         }
     }
 
@@ -374,7 +391,9 @@ impl App {
         };
         let covers = |c: TileCoord| stroke.is_some_and(|s| s.touched().contains(c));
         let overlay = Overlay {
-            above_layer: self.document.active_layer,
+            target: self
+                .stroke_layer
+                .unwrap_or_else(|| self.document.active_layer()),
             paint: &paint,
             covers: &covers,
         };
@@ -458,7 +477,7 @@ impl App {
         let Some(gpu) = &mut self.gpu else {
             return;
         };
-        let bg = self.document.background;
+        let bg = self.document.background();
         let frame = Frame {
             view: &self.view,
             paper: [bg.r, bg.g, bg.b, bg.a],
@@ -513,17 +532,13 @@ impl ApplicationHandler<AppEvent> for App {
         match pollster::block_on(Renderer::new(window.clone(), size.width, size.height)) {
             Ok(mut renderer) => {
                 if let Err(e) =
-                    renderer.set_document_size(self.document.width, self.document.height)
+                    renderer.set_document_size(self.document.width(), self.document.height())
                 {
                     log::error!("{e}");
                     event_loop.exit();
                     return;
                 }
-                for layer in &self.document.layers {
-                    for c in layer.pixels.tile_coords() {
-                        self.stale.mark(c);
-                    }
-                }
+                self.stale.extend(&self.document.content_tiles());
                 let ui = UiLayer::new(&window, renderer.device(), renderer.format());
                 self.gpu = Some(Gpu {
                     ui,

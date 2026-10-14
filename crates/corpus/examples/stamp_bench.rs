@@ -15,9 +15,9 @@ use tela_brush::scatter::ScatterMode;
 use tela_brush::texture::{CanvasTexture, TextureMode, TexturePattern, TextureSettings};
 use tela_brush::tip::Tip;
 use tela_brush::{Dab, DabSink, StampContext, StrokeBuffer};
-use tela_canvas::TileCoord;
+use tela_canvas::{DirtyTiles, IRect, TILE_SIZE, TileCoord};
 use tela_color::{PremulRgba, Rgba};
-use tela_document::{ComposeScratch, Document, Overlay};
+use tela_document::{ComposeScratch, Document, Overlay, Placement};
 
 /// Counts allocations so "no allocation per dab" is measured, not assumed.
 struct Counting;
@@ -195,11 +195,20 @@ fn main() {
 
     // Composition: one stroke previewed over a two-layer document.
     let mut doc = Document::new(2048, 2048);
-    doc.layers.push(tela_document::RasterLayer::new("Layer 2"));
-    for layer in &mut doc.layers {
-        for y in 0..2048 {
-            layer.pixels.set_pixel(y, y, [20, 30, 40, 255]);
-        }
+    let bottom = doc.active_layer();
+    let top = doc.add_layer(Placement::Top).unwrap();
+    let mut diagonal = DirtyTiles::new();
+    diagonal.mark_rect(IRect::from_size(2048, 2048));
+    for layer in [bottom, top] {
+        doc.modify_tiles(layer, &diagonal, |c, t| {
+            let (ox, oy) = c.origin();
+            for i in 0..TILE_SIZE {
+                if ox == oy {
+                    *t.get_mut(i, i) = [20, 30, 40, 255];
+                }
+            }
+        })
+        .unwrap();
     }
     let mut stroke = StrokeBuffer::new(Rgba::BLACK, context(Kind::Soft));
     for d in dabs(Kind::Soft, 120.0, 400) {
@@ -208,7 +217,7 @@ fn main() {
     let paint = |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px);
     let covers = |c: TileCoord| stroke.touched().contains(c);
     let overlay = Overlay {
-        above_layer: 1,
+        target: top,
         paint: &paint,
         covers: &covers,
     };
