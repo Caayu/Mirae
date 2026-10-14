@@ -1972,6 +1972,7 @@ dependencies = [
  "tela-brush",
  "tela-canvas",
  "tela-color",
+ "tela-document",
 ]
 
 [[package]]

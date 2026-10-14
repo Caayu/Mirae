@@ -89,16 +89,21 @@ impl HeightMap {
     }
 
     /// Bilinear, wrapping at the edges.
+    #[inline]
     pub fn sample(&self, x: f32, y: f32) -> f32 {
-        let s = self.size as f32;
-        let (x, y) = (x.rem_euclid(s) - 0.5, y.rem_euclid(s) - 0.5);
+        // Sizes are powers of two, so wrapping is a bit mask (also correct
+        // for negative coordinates in two's complement).
+        let (x, y) = (x - 0.5, y - 0.5);
         let (x0, y0) = (x.floor(), y.floor());
         let (fx, fy) = (x - x0, y - y0);
-        let n = self.size as i64;
-        let at = |xi: i64, yi: i64| self.data[(yi.rem_euclid(n) * n + xi.rem_euclid(n)) as usize];
+        let mask = (self.size - 1) as i64;
+        let n = self.size as usize;
         let (xi, yi) = (x0 as i64, y0 as i64);
-        let top = at(xi, yi) + (at(xi + 1, yi) - at(xi, yi)) * fx;
-        let bottom = at(xi, yi + 1) + (at(xi + 1, yi + 1) - at(xi, yi + 1)) * fx;
+        let (xa, xb) = ((xi & mask) as usize, ((xi + 1) & mask) as usize);
+        let (ya, yb) = ((yi & mask) as usize * n, ((yi + 1) & mask) as usize * n);
+        let d = &self.data;
+        let top = d[ya + xa] + (d[ya + xb] - d[ya + xa]) * fx;
+        let bottom = d[yb + xa] + (d[yb + xb] - d[yb + xa]) * fx;
         top + (bottom - top) * fy
     }
 }
@@ -186,6 +191,7 @@ impl TexturePattern {
                 _ => t,
             };
         }
+        debug_assert!(n.is_power_of_two(), "texture sampling wraps with a mask");
         HeightMap { size: n, data }
     }
 }

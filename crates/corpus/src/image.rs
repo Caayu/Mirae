@@ -56,10 +56,7 @@ impl Image {
         if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
             return Err(std::io::Error::other("golden images must be RGBA8"));
         }
-        let pixels = buf[..info.buffer_size()]
-            .as_chunks::<4>()
-            .0
-            .to_vec();
+        let pixels = buf[..info.buffer_size()].as_chunks::<4>().0.to_vec();
         Ok(Self {
             width: info.width,
             height: info.height,
