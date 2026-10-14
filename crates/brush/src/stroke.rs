@@ -1,7 +1,8 @@
-use tela_canvas::{DirtyTiles, IRect, TILE_SIZE, Tile, TileCoord, TiledSurface};
+use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
 use tela_color::{PremulRgba, Rgba};
 
-use crate::{Dab, round_tip_coverage};
+use crate::Dab;
+use crate::tip::{DabShape, PreparedTip};
 
 /// Receives the dabs of a stroke. Dabs are either *committed* (final) or part
 /// of the provisional *tail*, which is re-emitted from scratch every time it
@@ -58,33 +59,34 @@ pub struct StrokeBuffer {
     committed: TiledSurface<f32>,
     tail: TiledSurface<f32>,
     color: Rgba,
-    anti_aliasing: bool,
+    ctx: StampContext,
     /// Tiles changed since the last [`StrokeBuffer::take_dirty`].
     dirty: DirtyTiles,
     /// Every tile the stroke has touched.
     touched: DirtyTiles,
 }
 
+/// Everything constant across the dabs of one stroke.
+#[derive(Clone, Debug, Default)]
+pub struct StampContext {
+    pub tip: PreparedTip,
+    pub anti_aliasing: bool,
+}
+
 fn stamp_into(
     mask: &mut TiledSurface<f32>,
     seed: Option<&TiledSurface<f32>>,
     dab: &Dab,
-    aa: bool,
+    ctx: &StampContext,
     mut on_tile: impl FnMut(TileCoord),
 ) {
-    let reach = dab.radius + 1.0;
-    let bounds = IRect::enclosing(
-        dab.center.x - reach,
-        dab.center.y - reach,
-        dab.center.x + reach,
-        dab.center.y + reach,
-    );
     let flow = dab.flow.clamp(0.0, 1.0);
     let ceiling = dab.opacity.clamp(0.0, 1.0);
     if flow <= 0.0 || ceiling <= 0.0 {
         return;
     }
-    let r_out = dab.radius + 0.5;
+    let shape = DabShape::new(&ctx.tip, dab, ctx.anti_aliasing);
+    let bounds = shape.bounds();
     for coord in bounds.tiles() {
         let area = bounds.intersect(&coord.rect());
         let (ox, oy) = coord.origin();
@@ -97,20 +99,17 @@ fn stamp_into(
         }
         let tile = mask.tile_mut(coord).expect("inserted above");
         for y in area.y0..area.y1 {
-            let py = y as f32 + 0.5 - dab.center.y;
+            let py = y as f32 + 0.5;
             let row = tile.row_mut((y - oy) as u32);
             for x in area.x0..area.x1 {
-                let px = x as f32 + 0.5 - dab.center.x;
-                let d2 = px * px + py * py;
-                if d2 >= r_out * r_out {
-                    continue;
-                }
                 let m = &mut row[(x - ox) as usize];
                 if *m >= ceiling {
                     continue;
                 }
-                let cov = round_tip_coverage(d2.sqrt(), dab.radius, dab.hardness, aa);
-                *m += (ceiling - *m) * flow * cov;
+                let cov = shape.coverage(x as f32 + 0.5, py);
+                if cov > 0.0 {
+                    *m += (ceiling - *m) * flow * cov;
+                }
             }
         }
         on_tile(coord);
@@ -118,12 +117,12 @@ fn stamp_into(
 }
 
 impl StrokeBuffer {
-    pub fn new(color: Rgba, anti_aliasing: bool) -> Self {
+    pub fn new(color: Rgba, ctx: StampContext) -> Self {
         Self {
             committed: TiledSurface::new(),
             tail: TiledSurface::new(),
             color,
-            anti_aliasing,
+            ctx,
             dirty: DirtyTiles::new(),
             touched: DirtyTiles::new(),
         }
@@ -191,7 +190,7 @@ impl StrokeBuffer {
 impl DabSink for StrokeBuffer {
     fn dab(&mut self, dab: &Dab) {
         let (dirty, touched) = (&mut self.dirty, &mut self.touched);
-        stamp_into(&mut self.committed, None, dab, self.anti_aliasing, |c| {
+        stamp_into(&mut self.committed, None, dab, &self.ctx, |c| {
             dirty.mark(c);
             touched.mark(c);
         });
@@ -211,16 +210,10 @@ impl DabSink for StrokeBuffer {
 
     fn tail_dab(&mut self, dab: &Dab) {
         let (dirty, touched) = (&mut self.dirty, &mut self.touched);
-        stamp_into(
-            &mut self.tail,
-            Some(&self.committed),
-            dab,
-            self.anti_aliasing,
-            |c| {
-                dirty.mark(c);
-                touched.mark(c);
-            },
-        );
+        stamp_into(&mut self.tail, Some(&self.committed), dab, &self.ctx, |c| {
+            dirty.mark(c);
+            touched.mark(c);
+        });
     }
 
     fn commit_tail(&mut self) {
@@ -246,13 +239,23 @@ mod tests {
             radius,
             opacity,
             flow,
-            hardness: 1.0,
+            ..Dab::default()
         }
+    }
+
+    fn buffer() -> StrokeBuffer {
+        StrokeBuffer::new(
+            Rgba::BLACK,
+            StampContext {
+                anti_aliasing: true,
+                ..Default::default()
+            },
+        )
     }
 
     #[test]
     fn opacity_caps_overlapping_dabs() {
-        let mut s = StrokeBuffer::new(Rgba::BLACK, true);
+        let mut s = buffer();
         for _ in 0..50 {
             s.dab(&dab(10.0, 10.0, 5.0, 0.5, 0.3));
         }
@@ -267,7 +270,7 @@ mod tests {
 
     #[test]
     fn flow_builds_up_gradually() {
-        let mut s = StrokeBuffer::new(Rgba::BLACK, true);
+        let mut s = buffer();
         s.dab(&dab(10.0, 10.0, 5.0, 1.0, 0.25));
         let one = s.alpha(10, 10);
         s.dab(&dab(10.0, 10.0, 5.0, 1.0, 0.25));
@@ -278,7 +281,7 @@ mod tests {
 
     #[test]
     fn lighter_dab_never_lightens_existing_paint() {
-        let mut s = StrokeBuffer::new(Rgba::BLACK, true);
+        let mut s = buffer();
         s.dab(&dab(10.0, 10.0, 5.0, 0.9, 1.0));
         s.dab(&dab(10.0, 10.0, 5.0, 0.2, 1.0));
         assert!((s.alpha(10, 10) - 0.9).abs() < 1e-6);
@@ -286,7 +289,7 @@ mod tests {
 
     #[test]
     fn dab_crossing_tile_corner_touches_four_tiles() {
-        let mut s = StrokeBuffer::new(Rgba::BLACK, true);
+        let mut s = buffer();
         s.dab(&dab(256.0, 256.0, 4.0, 1.0, 1.0));
         assert_eq!(s.touched().len(), 4);
         assert_eq!(s.take_dirty().len(), 4);
@@ -297,7 +300,13 @@ mod tests {
     fn commit_composites_over_existing_pixels() {
         let mut target = TiledSurface::new();
         target.set_pixel(10, 10, [0, 0, 255, 255]);
-        let mut s = StrokeBuffer::new(Rgba::new(1.0, 0.0, 0.0, 1.0), true);
+        let mut s = StrokeBuffer::new(
+            Rgba::new(1.0, 0.0, 0.0, 1.0),
+            StampContext {
+                anti_aliasing: true,
+                ..Default::default()
+            },
+        );
         s.dab(&dab(10.5, 10.5, 3.0, 0.5, 1.0));
         s.commit_into(&mut target);
         assert_eq!(target.pixel(10, 10), [128, 0, 128, 255]);
@@ -305,7 +314,7 @@ mod tests {
 
     #[test]
     fn tail_is_rebuilt_from_committed_and_can_be_committed() {
-        let mut s = StrokeBuffer::new(Rgba::BLACK, true);
+        let mut s = buffer();
         s.dab(&dab(10.0, 10.0, 3.0, 0.5, 1.0));
         s.begin_tail();
         s.tail_dab(&dab(10.0, 10.0, 3.0, 1.0, 1.0));

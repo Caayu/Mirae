@@ -63,14 +63,6 @@ impl Default for StrokeProcessor {
     }
 }
 
-fn hash01(seed: u64, index: u32) -> f32 {
-    let mut z = seed ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^= z >> 31;
-    (z >> 40) as f32 / (1u64 << 24) as f32
-}
-
 impl StrokeProcessor {
     pub fn new() -> Self {
         let settings = BrushSettings::default();
@@ -317,9 +309,20 @@ fn place(
         f32::INFINITY
     };
     let taper = settings.taper.factor(site.distance, to_end);
+    let angle = settings.angle.eval_angle(
+        &input,
+        crate::dynamics::slot::ANGLE,
+        settings.tip.symmetry_period(),
+    );
     let dab = Dab {
         center: p.pos,
         radius: settings.radius(&input, taper),
+        aspect: settings
+            .aspect
+            .eval(&input, crate::dynamics::slot::ASPECT)
+            .clamp(0.01, 1.0),
+        angle: angle.to_radians(),
+        texture: 0.0,
         opacity: settings.opacity(&input, taper),
         flow: settings
             .flow
@@ -331,7 +334,10 @@ fn place(
             .clamp(0.0, 1.0),
     };
     out.push(dab);
-    2.0 * dab.radius * settings.spacing
+    // Spacing rule: the next dab is `spacing` times this dab's extent along
+    // the direction of travel (its diameter for round tips).
+    let dir = p.velocity.try_normalize().unwrap_or(glam::Vec2::X);
+    settings.spacing * dab.extent_along(dir)
 }
 
 /// Drives one stroke at a time into a [`StrokeBuffer`].
@@ -371,7 +377,11 @@ impl BrushEngine {
 
     /// `scale`: screen pixels per canvas pixel (the view zoom).
     pub fn begin_stroke(&mut self, input: BrushInput, scale: f32) {
-        let mut stroke = StrokeBuffer::new(self.settings.color, self.settings.anti_aliasing);
+        let ctx = crate::StampContext {
+            tip: self.settings.tip.prepare(),
+            anti_aliasing: self.settings.anti_aliasing,
+        };
+        let mut stroke = StrokeBuffer::new(self.settings.color, ctx);
         self.processor.begin(
             &self.settings,
             &self.pressure_curve,
@@ -512,15 +522,5 @@ mod tests {
             }
         }
         assert!(p.stats().committed_dabs > 0 && p.stats().tail_dabs > 0);
-    }
-
-    #[test]
-    fn random_source_is_reproducible_per_dab() {
-        assert_eq!(hash01(7, 3), hash01(7, 3));
-        assert_ne!(hash01(7, 3), hash01(7, 4));
-        let v: Vec<f32> = (0..1000).map(|i| hash01(99, i)).collect();
-        assert!(v.iter().all(|x| (0.0..1.0).contains(x)));
-        let mean = v.iter().sum::<f32>() / v.len() as f32;
-        assert!((mean - 0.5).abs() < 0.05);
     }
 }

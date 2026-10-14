@@ -6,13 +6,48 @@ use crate::pipeline::StrokePoint;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Dab {
     pub center: Vec2,
+    /// Half the tip's major diameter, canvas pixels.
     pub radius: f32,
+    /// Minor/major diameter ratio, `0.01..=1`.
+    pub aspect: f32,
+    /// Rotation of the tip's major axis, radians.
+    pub angle: f32,
     /// Alpha ceiling this dab pulls pixels toward, `0..=1`.
     pub opacity: f32,
     /// Fraction of the remaining distance to the ceiling covered at full
     /// tip coverage, `0..=1`.
     pub flow: f32,
     pub hardness: f32,
+    /// How strongly the paper texture modulates this dab, `0..=1`.
+    pub texture: f32,
+}
+
+impl Default for Dab {
+    fn default() -> Self {
+        Self {
+            center: Vec2::ZERO,
+            radius: 1.0,
+            aspect: 1.0,
+            angle: 0.0,
+            opacity: 1.0,
+            flow: 1.0,
+            hardness: 1.0,
+            texture: 0.0,
+        }
+    }
+}
+
+impl Dab {
+    /// Length of the tip's support along `direction` (a unit vector):
+    /// the extent of the ellipse with radii `radius`, `radius * aspect`
+    /// projected on that direction, times two.
+    pub fn extent_along(&self, direction: Vec2) -> f32 {
+        let along = Vec2::from_angle(self.angle);
+        let c = direction.dot(along);
+        let s = direction.perp_dot(along);
+        let (a, b) = (self.radius, self.radius * self.aspect);
+        2.0 * ((a * c).powi(2) + (b * s).powi(2)).sqrt()
+    }
 }
 
 /// Where along the path a dab falls, before dynamics are applied.

@@ -22,11 +22,10 @@ mod settings;
 mod spacing;
 pub mod stabilizer;
 mod stroke;
-mod tip;
+pub mod tip;
 
 pub use engine::{BrushEngine, StrokeProcessor, StrokeStats};
 pub use input::BrushInput;
 pub use settings::{BrushSettings, Taper};
 pub use spacing::{Dab, DabSite, DabSpacer};
-pub use stroke::{DabLog, DabSink, StrokeBuffer};
-pub use tip::round_tip_coverage;
+pub use stroke::{DabLog, DabSink, StampContext, StrokeBuffer};

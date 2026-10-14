@@ -62,6 +62,11 @@ pub struct BrushSettings {
     pub flow: BrushProperty,
     /// Fraction of the radius that is fully opaque, `0..=1`.
     pub hardness: BrushProperty,
+    pub tip: crate::tip::Tip,
+    /// Tip rotation, degrees.
+    pub angle: BrushProperty,
+    /// Minor/major diameter ratio, `0.01..=1`.
+    pub aspect: BrushProperty,
     /// Distance between dabs as a fraction of the current diameter.
     pub spacing: f32,
     pub anti_aliasing: bool,
@@ -86,6 +91,9 @@ impl Default for BrushSettings {
             opacity: BrushProperty::constant(1.0).with(opacity_pressure),
             flow: BrushProperty::constant(1.0),
             hardness: BrushProperty::constant(0.9),
+            tip: crate::tip::Tip::default(),
+            angle: BrushProperty::constant(0.0),
+            aspect: BrushProperty::constant(1.0),
             spacing: 0.1,
             anti_aliasing: true,
             taper: Taper::default(),
