@@ -40,20 +40,21 @@ graph BT
     app --> ui
 ```
 
-ASCII version:
+ASCII version (each line: crate -> what it may use):
 
 ```
-                      app  (composition layer: winit, event loop)
-        ┌──────┬───────┼────────┬─────────┬─────────┐
-        ui     │    document  renderer   tablet     │
-     ┌──┴──┐   │       │         │       (FFI)      │
-   brush renderer      │         │                  │
-     │                 │         │                  │
-     ├── canvas ───────┴─────────┘                  │
-     └── color ─────────────────────────────────────┘
-corpus (tests/benchmarks): brush, canvas, color [+ document as dev-dep]
+layer 3   app       -> ui, document, renderer, tablet, brush, canvas, color
+layer 2   ui        -> brush, renderer
+          corpus    -> brush, canvas, color            (test support only)
+layer 1   brush     -> canvas, color
+          document  -> canvas, color
+          renderer  -> canvas
+          tablet    -> (none)                          (FFI, Windows Ink)
+layer 0   canvas    -> (none)
+          color     -> (none)
 ```
 
+A crate may only use crates in lower layers, and not every lower crate.
 `tela-tablet` and `tela-color` have no workspace dependencies; `tela-canvas`
 depends only on `glam`.
 

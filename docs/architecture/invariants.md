@@ -1,0 +1,84 @@
+# Invariants
+
+Properties the code must keep. Each one lists what protects it. Breaking
+one is a design change: it needs an ADR, not just an updated test.
+
+Test names are `crate::module::tests::name` for unit tests and
+`file.rs::name` for integration tests under `crates/<crate>/tests/`.
+
+## Determinism
+
+| # | Invariant | Protected by |
+|---|---|---|
+| D1 | Same preset + same seed + same input samples ⇒ bit-identical dabs. | `brush::engine::tests::seed_controls_randomness`, `scatter_dynamics.rs::scattered_strokes_are_reproducible`, `golden.rs::rendering_is_deterministic` |
+| D2 | Randomness is a pure function of `(seed, stream, index)`; evaluation order never matters. | `brush::rng::tests::streams_and_seeds_are_independent`, `properties.rs::stroke_rng_is_pure_and_bounded`, `brush::dynamics::tests::random_effectors_are_deterministic_and_per_property` |
+| D3 | Each effector of each property has its own random stream (≤ 64 effectors per property). | `brush::preset::io::tests::effector_lists_are_capped`, `properties.rs::repaired_presets_round_trip_cleanly` |
+| D4 | Parallel stamping is bit-identical to sequential stamping. | `brush::stroke::tests::parallel_stamping_is_bit_identical_to_sequential` |
+| D5 | Golden sheets render identically run to run. | `golden.rs::rendering_is_deterministic`, `golden.rs::presets_match_their_golden_images` |
+
+## Sampling and time independence
+
+| # | Invariant | Protected by |
+|---|---|---|
+| S1 | Dab placement depends on the path, not on how many samples describe it (spacing carried across segments). | `dab_placement.rs::*` (2 vs 1000 samples), `brush::spacing::tests::spacing_is_uniform_regardless_of_point_density`, `properties.rs::spacing_is_independent_of_sample_density` |
+| S2 | Velocity and filters behave the same at any device sample rate. | `brush::pipeline::velocity::tests::converges_to_constant_velocity_at_any_rate`, `stabilizer_comparison.rs::behaviour_is_independent_of_sample_rate` |
+| S3 | Airbrush output does not depend on the host frame rate. | `airbrush.rs::same_result_at_30_and_144_fps`, `airbrush.rs::moving_strokes_are_frame_rate_independent`, `brush::airbrush::tests::resting_pen_deposits_identically_at_any_frame_rate` |
+| S4 | Late or batched input delivery does not create airbrush beads; a resting pen keeps depositing. | `airbrush.rs::delayed_input_delivery_does_not_create_beads`, `airbrush.rs::rest_after_late_delivery_still_builds_up`, `airbrush.rs::fast_strokes_deposit_evenly_without_beads` |
+| S5 | A stroke ends on the last real sample, whatever the stabilization. | `brush::engine::tests::stroke_ends_on_the_last_sample_even_with_heavy_stabilization`, `brush::stabilizer::tests::catch_up_ends_on_the_last_raw_sample` |
+
+## Preview equals result
+
+| # | Invariant | Protected by |
+|---|---|---|
+| P1 | The live preview (including the end-taper tail) equals the committed stroke. | `brush::engine::tests::end_taper_preview_matches_final_result`, `brush::stroke::tests::tail_is_rebuilt_from_committed_and_can_be_committed` |
+| P2 | Preview composition and commit use the same math (`paint_over_tile`), for paint and erase. | `document::tests::preview_matches_committed_result`, `document::tests::eraser_preview_matches_committed_result` |
+| P3 | A stroke previews under its layer's opacity exactly as after commit. | `document::tests::preview_matches_committed_result` |
+
+## Storage and compositing
+
+| # | Invariant | Protected by |
+|---|---|---|
+| T1 | Tiles never written are not allocated; absent tiles read as default. | `canvas::tile::tests::surface_is_sparse_and_reads_default`, `brush::engine::tests::stroke_lifecycle` |
+| T2 | Tile addressing is exact for any coordinate, including negative. | `properties.rs::containing_tile_holds_the_pixel`, `properties.rs::rect_tiles_cover_exactly` (canvas) |
+| T3 | Compositing uses premultiplied alpha; `over` is associative; RGBA8 round trips exactly. | `color::tests::over_is_associative`, `color::tests::rgba8_round_trip_is_exact` |
+| T4 | A stroke's alpha never exceeds the largest opacity that touched a pixel. | `brush::stroke::tests::opacity_caps_overlapping_dabs`, `…::lighter_dab_never_lightens_existing_paint`, `…::flow_builds_up_gradually` |
+| T5 | The view transform round-trips and zoom/rotate keep the anchor fixed. | `canvas::view::tests::*`, `properties.rs::view_round_trips_and_pins_the_anchor` |
+| T6 | The display is seam-free when minified and rotated; magnified texels are flat squares. | `display_quality.rs::no_seams_when_minified_and_rotated`, `display_quality.rs::magnified_texels_are_flat_squares` |
+
+## Robustness
+
+| # | Invariant | Protected by |
+|---|---|---|
+| R1 | Invalid presets never panic: malformed JSON is an error; anything that parses loads (repaired, with warnings). | `brush::preset::io::tests::broken_input_is_an_error_not_a_panic`, `…::out_of_range_values_are_repaired_with_warnings`, `properties.rs::repaired_presets_round_trip_cleanly` |
+| R2 | Unknown fields are ignored; unknown enum variants load as neutral `Unknown`; newer versions load what they can. | `brush::preset::io::tests::newer_versions_load_what_they_can`, `brush::dynamics::tests::unknown_sources_and_modes_deserialize`, `brush::tip::tests::unknown_shape_deserializes_as_round` |
+| R3 | Older formats migrate step by step; huge versions never wrap to 0. | `brush::preset::io::tests::version_zero_is_migrated`, `…::huge_versions_are_newer_not_version_zero` |
+| R4 | Validation is idempotent; saved presets reload without warnings and unchanged. | `brush::preset::io::tests::round_trip_is_exact`, `properties.rs::repaired_presets_round_trip_cleanly` |
+| R5 | Curves never produce NaN or values outside `[0, 1]`; pressure curves are monotone; edits keep curves valid. | `properties.rs::curves_stay_in_the_unit_range`, `…::monotone_curves_never_decrease`, `…::curve_edits_preserve_validity` |
+| R6 | Inputs a device lacks (pressure on a mouse, tilt on a basic pen, direction at rest) are neutral. | `brush::dynamics::tests::missing_input_is_neutral`, `…::direction_is_undefined_at_rest` |
+
+## Boundaries
+
+| # | Invariant | Protected by |
+|---|---|---|
+| B1 | The brush engine does not depend on input backends, windowing, UI, GPU or the document. | `app/tests/crate_boundaries.rs` (compile-time graph + test) |
+| B2 | The renderer cannot read or modify the document. | same (renderer has no `tela-document` dependency) |
+| B3 | Only `tela-ui` knows egui; only `tela-app`/`tela-ui` know winit; only `tela-tablet` has FFI. | same |
+| B4 | The UI holds no authoritative document or preset state. | Code review: `PanelModel` lends data per frame (docs/architecture/ui.md) |
+| B5 | Golden images change only on explicit request (`TELA_UPDATE_GOLDEN=1` exactly); no orphan references. | `corpus::update_golden_requested`, `golden.rs::golden_directory_matches_the_builtin_presets` |
+
+## Performance
+
+| # | Invariant | Protected by |
+|---|---|---|
+| F1 | No allocation per dab on the stamping hot path (after tiles exist). | `stamp_bench` counting allocator (reports allocs/dab; must stay 0.000) |
+| F2 | No allocation per sample in the stroke processor (owned, reused buffers). | Design + review; `stamp_bench` covers the stamping side |
+| F3 | Composition of a dirty tile does not allocate. | `stamp_bench` composition line (0 allocations) |
+
+F1–F3 are measured by the benchmark, not by `cargo test`; run it after
+touching hot paths (docs/performance.md).
+
+## Hardware
+
+No physical tablet has validated any pen invariant. Pen behaviour is tested
+with synthetic Windows Ink injection (integer pixel positions only); see
+docs/STATUS.md.
