@@ -82,6 +82,15 @@ table above for the parallel path).
 2 layers + stroke overlay: **0.107 ms** per 256×256 tile (phase 3: 0.113 ms),
 0 allocations in 840 tiles.
 
+### Phase 4A
+
+Composition reads layers through the new API and compares the overlay
+target by id. Measured interleaved against the pre-4A commit on the same
+machine state (this machine was slower that day than when 0.107 ms was
+recorded): before 0.111 / 0.112 / 0.123 ms, after 0.114 / 0.116 / 0.123 ms
+per tile, 0 allocations — within run-to-run noise. `commit_into` no longer
+allocates its 1 MiB scratch (row buffer on the stack in `commit_tile`).
+
 ### Phase 3 → 3.5
 
 The phase 3.5 refactors did not touch pixel loops; all differences are

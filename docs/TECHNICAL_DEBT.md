@@ -1,6 +1,6 @@
 # Technical debt
 
-Known, real debt at the end of phase 3.5. Each item: impact, priority,
+Known, real debt (updated at the end of phase 4A). Each item: impact, priority,
 why it is not fixed now, and a possible direction. Priorities: **P1** blocks
 a planned phase or affects users soon; **P2** visible quality issue;
 **P3** latent or cosmetic.
@@ -16,7 +16,6 @@ a planned phase or affects users soon; **P2** visible quality issue;
 | 7 | **No movement prediction.** | Perceived latency ~1 sample + display. | P3 | Correctness first; prediction must be retractable. | Predict into the re-renderable tail only (never committed). |
 | 8 | **UI edits are not persisted**; preset changes are lost on exit. | Users cannot keep customized brushes. | P2 | Needs settings/document I/O (phase 4+). | Save user presets as JSON (format exists) in a user directory; "reset to built-in". |
 | 9 | **Goldens verified on one machine only.** | Different CPUs/compilers might exceed tolerances via float differences. | P3 | No second platform available. | Run the corpus in CI on another OS/CPU; widen tolerances only with evidence. |
-| 10 | **`Document` exposes public fields** (`layers`, `active_layer`); an out-of-range `active_layer` panics. | Easy to break invariants from the app. | P2 (phase 4) | Layer API is phase 4's main design task. | Encapsulate the layer stack behind an API with stable layer ids. |
 | 11 | **Embedded tip images are JSON number arrays.** | Presets with image tips are ~4× larger than necessary. | P3 | No user files exist yet. | Base64 in format v2 with a v1→v2 migration. |
 | 12 | **`missing_docs` not enforced**; ~197 items (measure: `RUSTFLAGS="-W missing_docs" cargo check --workspace --lib`) (mostly self-describing constructors, enum variants, test-support types) lack doc comments. | New public API may go undocumented. | P3 | Enforcing now would add noise docs. | Enable `missing_docs` per crate as each crate's API stabilizes (color, canvas first). |
 | 13 | **Curved interpolation runs one sample behind**; stroke ends use a mirrored phantom neighbour. | ~4 ms extra latency at 240 Hz; slightly flatter last segment. | P3 | Inherent to the chosen spline. | Combine with prediction (item 7). |
@@ -24,6 +23,10 @@ a planned phase or affects users soon; **P2** visible quality issue;
 | 15 | **Mouse samples have no device timestamps** (stamped on arrival). | Velocity-driven effectors are noisier with a mouse. | P3 | winit does not expose them. | Use raw input timestamps on Windows if needed. |
 | 16a | **Parallel stamping allocates inside rayon** (one injector block per 63 batches) and dirty sets reallocate `BTreeSet` nodes per frame. | Negligible today (measured, performance.md), but not literally zero. | P3 | Fixing needs a custom submission path or a non-allocating dirty set. | Keep a persistent bitset/Vec-backed dirty set; submit via a pool-resident task if it ever matters. |
 | 16 | **Large modules**: `brush/src/engine.rs` (~800 lines incl. tests) holds `StrokeProcessor` and `BrushEngine`. | Harder to navigate. | P3 | Cohesive (one pipeline); splitting now is cosmetic. | Split `BrushEngine` into its own module if it grows (e.g. with undo hooks). |
+| 17 | **Layer panel is minimal**: no drag-and-drop reorder, no rename field, no thumbnails, no delete confirmation (the reference asks; Tela has no undo until 4B). | Less familiar than the reference; a deleted layer is lost until 4B. | P2 | 4A scope was the model; undo comes in 4B. | Drag reorder and rename in the panel; revisit confirmation once undo exists. |
+
+Resolved in phase 4A: #10, `Document` public fields (now a layer API with
+stable ids, ADR 0014).
 
 Resolved in phase 3.5 (no longer debt): raw HWND in the Ink API; unit
 conversion functions named after their input; duplicated stroke-override

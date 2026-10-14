@@ -107,7 +107,7 @@ Bash:
 ```sh
 cargo build --release -p tela-app -p tela-tablet --examples
 target/release/tela.exe &          # start the app, wait for its window
-TELA_INJECT_REGION="0.26,0.02,0.99,0.98" target/release/examples/inject_pen.exe "Tela" all
+TELA_INJECT_REGION="0.26,0.02,0.88,0.98" target/release/examples/inject_pen.exe "Tela" all
 ```
 
 PowerShell:
@@ -115,15 +115,15 @@ PowerShell:
 ```powershell
 cargo build --release -p tela-app -p tela-tablet --examples
 $app = Start-Process target\release\tela.exe -PassThru; Start-Sleep 3
-$env:TELA_INJECT_REGION = "0.26,0.02,0.99,0.98"
+$env:TELA_INJECT_REGION = "0.26,0.02,0.88,0.98"
 target\release\examples\inject_pen.exe "Tela" all
 Stop-Process -Id $app.Id
 ```
 
 Patterns: `all`, `pressure`, `fast`, `detail`, `eraser`,
 `drag:x0,y0,x1,y1[,pressure]`, `hold:u,v,seconds[,pressure]` (client-area
-fractions). Set `TELA_INJECT_REGION="0.26,0.02,0.99,0.98"` to keep
-patterns off the left panel. Limits: injection sends integer pixel
+fractions). Set `TELA_INJECT_REGION="0.26,0.02,0.88,0.98"` to keep
+patterns off the side panels. Limits: injection sends integer pixel
 positions (HIMETRIC sub-pixel mapping untested), and tilt/rotation were not
 validated against a real pen. When real hardware is available, record the
 device, driver and results in docs/STATUS.md.

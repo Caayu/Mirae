@@ -46,7 +46,7 @@ paint/
 | `tela-color` | `Rgba` (straight), `PremulRgba`, `over`, RGBA8 quantization, sRGB curves | know about space or devices |
 | `tela-canvas` | `TiledSurface<P>`, `Tile<P>`, `TileCoord`, `DirtyTiles`, `IRect`, `ViewTransform` | know about layers, colors or brushes |
 | `tela-brush` | the whole stroke engine up to the stroke mask | read devices, own documents, know UI/GPU |
-| `tela-document` | authoritative pixels: `Document`, `RasterLayer`, composition, `Overlay` | know brushes, input, view, GPU |
+| `tela-document` | authoritative pixels and the layer stack: `Document` (layer ids, rules, the only pixel-mutation path), `RasterLayer`, composition, `Overlay` | know brushes, input, view, GPU |
 | `tela-renderer` | GPU device/surface, display texture + mips, canvas shader, `FrameOverlay` | see the document |
 | `tela-tablet` | `TabletSample`/`TabletEvent`, unit normalization, input clock, Windows Ink | know brushes or canvas space |
 | `tela-ui` | brush panel, curve editor, egui plumbing | own authoritative state |
@@ -61,7 +61,7 @@ All authoritative state lives in `tela-app`'s `App`:
 
 | State | Owner | Notes |
 |---|---|---|
-| `Document` (layers, pixels) | `App.document` | Only the app writes it: `StrokeBuffer::commit_into` the active layer, clear. |
+| `Document` (layers, pixels) | `App.document` | Changed only through `Document` methods (ADR 0014): layer commands from the panel and shortcuts, `modify_tiles` + `StrokeBuffer::commit_tile` at the end of a stroke, `clear_layer`. Every call returns the tiles it invalidated. |
 | View (`ViewTransform`) | `App.view` | Screen↔canvas mapping. |
 | Presets being edited, selection, eraser mode | `App.tools` (`Tools`) | The UI edits the active preset in place, lent for one frame. |
 | User stroke settings, pressure curve, paint color | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
@@ -141,8 +141,11 @@ or per dab once buffers have grown (measured, see performance.md).
 4. `end_stroke()`: flushes filters, lets the stabilizer catch up to the last
    real sample, emits the final tail and commits it; returns the
    `StrokeBuffer`.
-5. The app calls `commit_into(&mut layer.pixels)` and marks the touched tiles
-   stale.
+5. The app commits into the layer it fixed when the stroke began:
+   `document.modify_tiles(target, stroke.touched(), |c, t| stroke.commit_tile(c, t))`,
+   and marks the returned tiles stale. Strokes do not start on hidden or
+   locked layers (`Document::paint_target`), and layer commands are ignored
+   while a stroke is in progress.
 
 ### Stroke buffer
 
@@ -237,7 +240,9 @@ and a `ViewTransform`; it cannot reach the document.
 `tela-ui::UiLayer` runs egui each frame and implements the renderer's
 `FrameOverlay`, drawing after the canvas pass. The panel edits data lent
 through `PanelModel` and returns a `PanelAction` for things only the app
-can do (select preset, toggle eraser, clear layer). The UI reports the
+can do (select preset, toggle eraser, clear layer). The layer panel on the
+right receives one `LayerRow` per layer and returns a `LayerAction`; it
+never sees the `Document`. The UI reports the
 rectangles it covers; the app forwards them to the Ink backend as
 passthrough regions so pen contacts starting over the panel reach egui as
 mouse input. See [ui.md](ui.md).
@@ -265,12 +270,13 @@ composition cost. See [golden-tests.md](../golden-tests.md) and
 | A preset format change | bump `FORMAT_VERSION`, add a migration, write an ADR | Old files must keep loading. |
 | An input backend | new module in `tela-tablet` producing `TabletEvent` | Fill `SampleCaps` honestly. |
 | A UI panel | `tela-ui`, lent data + `PanelAction` | No authoritative state in the UI. |
+| A layer property | private field on `RasterLayer` + getter + `Document` setter returning `Result<DirtyTiles, LayerError>` | Keep the lock rules in `Document`; extend the property test model. |
 | A DabSink | implement `DabSink` | e.g. a logger, a GPU stamper later. |
 
 ## 12. Architectural limits (today)
 
-- One raster layer in practice; `BlendMode::Normal` only (phase 4).
-- No undo/redo yet; `StrokeBuffer::touched` is the hook for tile diffs.
+- Flat layer stack (no groups); `BlendMode::Normal` only (4C).
+- No undo/redo yet (4B); `Document::modify_tiles` is where tile snapshots will be taken.
 - 8-bit layer storage; display texture limited to the GPU's max texture size.
 - Document I/O does not exist.
 - The UI is functional, not designed; preset edits are not persisted.

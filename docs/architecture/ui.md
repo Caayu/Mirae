@@ -24,7 +24,14 @@ What matters is where it sits in the architecture.
    `BrushPanel` itself only remembers which property's effectors are shown.
 3. **Commands the UI cannot fulfil are returned, not executed.**
    `BrushPanel::show` returns a `PanelAction` (`SelectPreset`,
-   `ToggleEraser`, `ClearLayer`); the app applies it.
+   `ToggleEraser`, `ClearLayer`, `Layer(..)`); the app applies it. The layer
+   panel (`layer_panel`) gets one `LayerRow` per layer (key, name,
+   visibility, lock, opacity, active) and returns a `LayerAction`; keys are
+   mapped back to layers with `Document::find_layer`, so a row that went
+   stale is simply refused. `tela-ui` does not depend on `tela-document`.
+   Controls the document would refuse are greyed out (delete on a locked
+   or last layer, opacity on a locked or hidden layer), mirroring the
+   reference application; the document remains the authority.
 4. **Domain rules stay in the domain crates.** The UI calls the same APIs as
    any other caller, e.g. `StrokeOverrides::edit_resolved` for stroke
    settings (the "editing a setting drops the preset's override" rule lives
@@ -61,3 +68,5 @@ redraw:
 - No visual design, no layout persistence, no theming.
 - Keyboard shortcuts are handled in the app (`App::on_key`), not in the UI
   crate; they call the same domain APIs.
+- The layer panel has no drag-and-drop reordering, no rename field and no
+  delete confirmation yet (undo arrives in 4B).

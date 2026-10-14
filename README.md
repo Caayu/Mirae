@@ -27,7 +27,9 @@ powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # full local gate
 
 Pen (Windows Ink: pressure, tilt, rotation, eraser end) and mouse share one
 input path. The panel on the left edits the active preset, its effectors
-and the pressure curve; the pen works on the panel too.
+and the pressure curve; the layer panel on the right creates, selects,
+hides, locks, reorders and deletes layers and sets their opacity. The pen
+works on the panels too.
 
 | Input | Action |
 |---|---|
@@ -43,7 +45,8 @@ and the pressure curve; the pen works on the panel too.
 | I | Cycle interpolation (linear, Catmull–Rom, Bézier) |
 | T | Toggle start/end tapers |
 | O | Toggle pressure → opacity |
-| C | Clear layer |
+| C | Clear the active layer |
+| Ctrl+Shift+N | New layer above the active one |
 | F3 | Latency summary in the title bar |
 | Home | Fit document |
 

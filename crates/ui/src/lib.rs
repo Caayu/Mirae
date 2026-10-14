@@ -1,7 +1,7 @@
 //! Minimal brush-editing UI built with egui.
 //!
 //! **Responsibility:** the brush panel ([`BrushPanel`]), the layer panel
-//! ([`layer_panel`]), the curve editor ([`curve_editor`]), egui
+//! ([`layer_panel()`]), the curve editor ([`curve_editor`]), egui
 //! input/output plumbing ([`UiLayer`]) and
 //! reporting which screen regions the UI covers (pen passthrough).
 //! **Does not:** own any authoritative state. It edits data it is lent for

@@ -31,8 +31,27 @@ Test names are `crate::module::tests::name` for unit tests and
 | # | Invariant | Protected by |
 |---|---|---|
 | P1 | The live preview (including the end-taper tail) equals the committed stroke. | `brush::engine::tests::end_taper_preview_matches_final_result`, `brush::stroke::tests::tail_is_rebuilt_from_committed_and_can_be_committed` |
-| P2 | Preview composition and commit use the same math (`paint_over_tile`), for paint and erase. | `document::tests::preview_matches_committed_result`, `document::tests::eraser_preview_matches_committed_result` |
-| P3 | A stroke previews under its layer's opacity exactly as after commit. | `document::tests::preview_matches_committed_result` |
+| P2 | Preview composition and commit use the same math (`paint_over`, shared by `paint_over_tile` and `commit_tile`), for paint and erase. | `document::compose::tests::preview_matches_committed_result`, `document::compose::tests::eraser_preview_matches_committed_result`, golden sheets (rendered through `commit_tile`) |
+| P3 | A stroke previews on its own layer (named by id), under that layer's opacity, exactly as after commit; a hidden target shows no preview, as a commit would show nothing. | `document::compose::tests::preview_matches_committed_result`, `document::compose::tests::preview_targets_its_layer_by_id_not_by_position` |
+
+## Document (layer stack)
+
+Added in phase 4A (ADR 0014). The structural ones (L1–L7, L9) are also
+checked after every step of `document::properties::layer_stack_matches_the_reference_model`,
+which runs random operation sequences (live and stale ids) against a
+plain reference model.
+
+| # | Invariant | Protected by |
+|---|---|---|
+| L1 | Layer ids are unique within a document. | Privacy (no public `LayerId` constructor, ids allocated by `Document`); property test |
+| L2 | Ids are never reused, not even after removal; allocation fails (`IdsExhausted`) instead of wrapping. | `document::document::tests::ids_are_never_reused`, `…::ids_run_out_instead_of_wrapping`, property test |
+| L3 | A document always has at least one layer. | `…::removing_the_active_layer_activates_the_one_below_else_above`, property test |
+| L4 | The active layer always exists; removing it activates the layer below, else the one above. | same, `…::removing_another_layer_keeps_the_selection`, property test |
+| L5 | Layer opacity is finite and in `0..=1`. | `…::opacity_is_clamped_and_must_be_finite`, property test |
+| L6 | An operation that returns an error leaves the document unchanged. | `…::unknown_ids_are_errors_and_change_nothing`, `…::lock_blocks_pixels_opacity_blend_and_removal_only`, property test (model unchanged on error) |
+| L7 | Moving, removing or re-inserting layers never copies tile buffers. | `…::moving_keeps_identity_selection_and_tile_memory`, property test (buffer addresses) |
+| L8 | Composition does not depend on id values, only on order and properties. | `document::compose::tests::composition_does_not_depend_on_id_values` |
+| L9 | Pixels change only through `modify_tiles` (exactly the declared tiles; newly allocated tiles left blank are released) and `clear_layer`. | Privacy of `RasterLayer::pixels`; `…::modify_tiles_touches_only_declared_tiles_and_stays_sparse` |
 
 ## Storage and compositing
 
@@ -63,7 +82,7 @@ Test names are `crate::module::tests::name` for unit tests and
 | B1 | The brush engine does not depend on input backends, windowing, UI, GPU or the document. | `app/tests/crate_boundaries.rs` (compile-time graph + test) |
 | B2 | The renderer cannot read or modify the document. | same (renderer has no `tela-document` dependency) |
 | B3 | Only `tela-ui` knows egui; only `tela-app`/`tela-ui` know winit; only `tela-tablet` has FFI. | same |
-| B4 | The UI holds no authoritative document or preset state. | Code review: `PanelModel` lends data per frame (docs/architecture/ui.md) |
+| B4 | The UI holds no authoritative document or preset state. | Code review: `PanelModel` and `LayerRow` lend data per frame (docs/architecture/ui.md) |
 | B5 | Golden images change only on explicit request (`TELA_UPDATE_GOLDEN=1` exactly); no orphan references. | `corpus::update_golden_requested`, `golden.rs::golden_directory_matches_the_builtin_presets` |
 
 ## Performance

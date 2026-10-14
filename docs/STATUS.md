@@ -1,15 +1,15 @@
 # Status
 
-Factual state of the project at the end of **phase 3.5** (architecture
-audit and handoff). Update this file at the end of every phase.
+Factual state of the project at the end of **phase 4A** (document model,
+layer API, stable ids). Update this file at the end of every subphase.
 
 ## Summary
 
 | | |
 |---|---|
-| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A in progress**; 4B–4G await approval |
+| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A complete** (parity gate recorded); 4B–4G await approval |
 | Parity | Tracked in [PARITY.md](PARITY.md); nothing compared with the reference before phase 4 |
-| Tests | **207** passing, 0 failing (phase 3 ended at 188) |
+| Tests | **225** passing, 0 failing (phase 3.5 ended at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -32,7 +32,7 @@ audit and handoff). Update this file at the end of every phase.
 | UI | egui side panel: presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
 | Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile |
-| Document | One raster layer in practice (layer stack exists; `Normal` blend only); no undo; no file I/O |
+| Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. `Normal` blend only; no undo; no file I/O |
 
 ## Hardware validation
 
@@ -58,8 +58,14 @@ rule moved out of app/UI, golden hygiene, property tests, enforced crate
 boundaries, crate/API docs, architecture docs, ADRs, handoff docs, check
 script. Details: [CHANGELOG.md](../CHANGELOG.md).
 
+## Phase 4A outcome
+
+Layer stack with stable ids and one pixel-mutation path (ADR 0014), layer
+panel, parity gate recorded ([PARITY.md](PARITY.md),
+[parity/4A-layers.md](parity/4A-layers.md)). Composition cost unchanged
+within noise; 0 allocations per dab and per composed tile.
+
 ## Next step
 
-Phase 4 (layers, blend modes, undo/redo, masks/clipping/alpha lock, 16-bit
-storage, document I/O) — **only after explicit approval**. See
-[ROADMAP.md](ROADMAP.md).
+4B (undo/redo) — **only after the owner explicitly approves it**. See
+[phase4/PLAN.md](phase4/PLAN.md).

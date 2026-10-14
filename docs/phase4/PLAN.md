@@ -1,7 +1,12 @@
 # Phase 4 plan — layers and document
 
 Approved by the owner on 2026-10-14 (sequence 4A → 4B → 4C → 4D → 4E →
-4F → 4G). **Each subphase needs the owner's explicit approval before it
+4F → 4G).
+
+| Subphase | Status |
+|---|---|
+| 4A | **Complete** (parity gate: [parity/4A-layers.md](../parity/4A-layers.md)) |
+| 4B–4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
 starts**, and each ends with a parity gate ([PARITY.md](../PARITY.md)).
 
 ## Rules for the whole phase

@@ -61,14 +61,37 @@ the layer marked with the pen icon (the editing target).
 
 ## Tela results
 
-Pending: filled in when 4A closes.
+Tela at commit 06ccba9, Windows 11, 2560×1440, maximized window, the same
+mouse/keyboard driving method; one pen check with the synthetic Windows
+Ink pen (`inject_pen … pressure`). Measurements are darkest pixel / count of
+non-white pixels in a screen region, as for the reference. Each behaviour
+is also covered by a unit or property test (named).
+
+| Ref. | Tela behaviour | How verified |
+|---|---|---|
+| O1 | Ctrl+Shift+N / "New" inserts directly above the active layer, activates it, names it "Layer 2"; a layer added between 1 and 2 is "Layer 3". Defaults 100 %, Normal, visible, unlocked. | App; `new_layers_go_where_placed_and_become_active` |
+| O2 | Deleting the active middle layer activates the layer below; the next new layer reuses the freed number. **No confirmation.** | `removing_the_active_layer_activates_the_one_below_else_above`, `default_names_reuse_the_smallest_free_number` |
+| O3 | Default names use the smallest free number. Deleting the active **bottom** layer activates the layer **above** (Tela has no paper layer). | App (deleted active bottom "Layer 2" → "Layer 1" active); same tests |
+| O4 | With one layer left, "Delete" is disabled and `remove_layer` returns `LastLayer`. | App; same test |
+| O5 | Reordering with Up/Down acts on the active layer, which stays active (as after a drag in the reference). No drag-and-drop. | App ("Down" kept "Layer 2" active); `moving_keeps_identity_selection_and_tile_memory` |
+| O6 | Hiding a non-active layer does not change the selection. | App (hiding Layer 1 kept Layer 2 active) |
+| O7 | Hiding the active layer keeps it active; the opacity slider is disabled. | App; `hidden_layers_can_be_active_but_not_painted` |
+| O8 | A stroke on a hidden layer paints nothing (region empty after showing it). | App (strip measured: only the other layer's line); `paint_target` |
+| O9 | A hidden layer can be selected. | App |
+| O10 | A locked layer takes no paint (region measured `min=255 ink=0`); opacity and Delete are disabled; New stays enabled. | App; `lock_blocks_pixels_opacity_blend_and_removal_only` |
+| O11 | A locked layer can be hidden and moved (Up stayed enabled). | Same test; app |
+| O12 | Opacity is edited in whole percent; the stroke preview is shown under the layer's opacity (P3). At 46 % the existing stroke's darkest pixel went 7 → 141. | App; `preview_matches_committed_result` |
+| O13 | Ctrl+Shift+N creates a layer above the active one, without a dialog. | App |
+| O14 | Ctrl+Shift+N pressed **during** a mouse stroke is ignored (still 2 layers after release); the whole stroke is on the starting layer (hiding it leaves `min=255 ink=0`). | App; `preview_targets_its_layer_by_id_not_by_position` |
 
 ## Differences
 
-Pending: filled in when 4A closes. Known by design so far:
-
-- Tela has no paper layer; the paper colour is a document property. When
-  the bottom layer is removed while active, the reference activates the
-  paper layer below; Tela activates the layer above.
-- The reference's last undeletable layer is the paper layer; in Tela it is
-  the last raster layer.
+| # | Difference | Kind | Status |
+|---|---|---|---|
+| D-4A-1 | No paper layer: removing the active bottom layer activates the layer above instead of the paper layer; the last undeletable layer is a raster layer, not the paper. | Behavioural, by design (paper colour is a document property) | Accepted (ADR 0014) |
+| D-4A-2 | No delete confirmation dialog. | Feature/behavioural | Open — revisit after undo (4B); TECHNICAL_DEBT #17 |
+| D-4A-3 | No drag-and-drop reordering in the panel (Up/Down buttons only); in the reference dragging also selects the dragged layer. | Feature (UI) | Open — TECHNICAL_DEBT #17 |
+| D-4A-4 | No rename field in the panel (the API supports renaming). | Feature (UI) | Open — TECHNICAL_DEBT #17 |
+| D-4A-5 | Default name prefix is "Layer" (English UI) where the reference's pt-BR UI shows "Camada"; the numbering rule is the same. | Localization | Accepted |
+| D-4A-6 | Not compared yet: renaming a locked layer (Tela allows it), deleting a hidden layer, layer commands other than "new layer" during a stroke, pen (instead of mouse) strokes in the reference, performance with many layers. | Coverage gap | Open |
+| D-4A-7 | Opacity rendering was not compared numerically between the two applications (different brushes). Numeric comparison of compositing belongs to the 4C gate. | Coverage gap | Deferred to 4C |

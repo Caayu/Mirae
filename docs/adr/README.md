@@ -20,6 +20,7 @@ and both say so.
 | [0011](0011-egui-isolated-in-ui.md) | egui isolated in `tela-ui` | 3 |
 | [0012](0012-golden-visual-corpus.md) | Golden visual corpus for brushes | 3 |
 | [0013](0013-airbrush-time-instants.md) | Airbrush deposition at fixed time instants | 3 |
+| [0014](0014-document-layer-model.md) | Document layer model: stable ids, relative placement, one pixel-mutation path | 4A |
 
 ## Writing a new ADR
 

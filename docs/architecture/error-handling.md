@@ -22,6 +22,7 @@ worth a dependency today.
 | `PresetError` | brush | `Json(serde_json::Error)`, `NotAnObject` | `preset::io::from_json` when the text is not JSON or not an object, or a field has an incompatible type |
 | `RendererError` | renderer | `Surface`, `Adapter`, `Device`, `UnsupportedSurface`, `DocumentTooLarge { width, height, max }` | `Renderer::new`, `set_document_size` (`new_headless` returns `None` without a GPU, so GPU tests skip) |
 | `InkError` | tablet (Windows) | `UnsupportedWindow`, `Subclass` | `InkBackend::attach` |
+| `LayerError` | document | `NotFound(LayerId)`, `LastLayer`, `Locked(LayerId)`, `Hidden(LayerId)`, `InvalidOpacity`, `IdsExhausted` | Every `Document` layer operation; refused operations change nothing. The app logs them (a UI row may name a layer removed a frame earlier). |
 | `std::io::Error` | corpus | — | PNG load/save |
 
 ## Repair instead of failure
@@ -53,7 +54,7 @@ clamps clock jumps).
 | `brush/src/stroke.rs` `stamp_into` | The tile was inserted on the line above. |
 | `brush/src/tip/image.rs` mip build | The level list starts non-empty. |
 | `corpus/src/lib.rs` `flatten` | The coordinate came from `tile_coords()`. |
-| `document` `active_layer_mut` (indexing) | `active_layer` is in range (public field; phase 4 will encapsulate it). |
+| `document` `move_layer` (`expect`) | The anchor was checked to exist and is not the moved layer. |
 
 ## Adding error handling
 

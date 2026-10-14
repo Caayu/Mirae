@@ -25,8 +25,8 @@ measured performance, documented decisions.
 
 Phase 4 (layers and document) is approved as a plan
 ([phase4/PLAN.md](phase4/PLAN.md)) and runs subphase by subphase:
-**4A** (layer API) is the only one authorized so far. Every later subphase
-(4B…4G) needs the owner's explicit approval, and every subphase ends with
+**4A** (layer API) is complete. Every later subphase (4B…4G) needs the
+owner's explicit approval before it starts, and every subphase ends with
 a **parity gate** recorded in [PARITY.md](PARITY.md). Facts:
 [STATUS.md](STATUS.md).
 
@@ -59,7 +59,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 207 tests, ~5 s after build
+cargo test --workspace --release        # 225 tests, ~5 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -87,10 +87,10 @@ synthetic Windows Ink pen (real WM_POINTER path):
 ```sh
 cargo build --release -p tela-app -p tela-tablet --examples
 target/release/tela.exe                                   # start it first
-TELA_INJECT_REGION="0.26,0.02,0.99,0.98" target/release/examples/inject_pen.exe "Tela" all
+TELA_INJECT_REGION="0.26,0.02,0.88,0.98" target/release/examples/inject_pen.exe "Tela" all
 ```
 
-PowerShell: `$env:TELA_INJECT_REGION = "0.26,0.02,0.99,0.98"; target\release\examples\inject_pen.exe "Tela" all`
+PowerShell: `$env:TELA_INJECT_REGION = "0.26,0.02,0.88,0.98"; target\release\examples\inject_pen.exe "Tela" all`
 (full sequence in docs/testing.md#hardware-tests).
 
 Patterns: `all`, `pressure`, `fast`, `detail`, `eraser`,
@@ -117,7 +117,7 @@ never sees the document; the UI owns nothing. Read
 ## 11. Crates
 
 `color` (premultiplied color), `canvas` (sparse tiles, view), `brush`
-(engine), `document` (layers, composition), `renderer` (wgpu), `tablet`
+(engine), `document` (layer stack with stable ids, composition), `renderer` (wgpu), `tablet`
 (input, Windows Ink), `ui` (egui), `corpus` (goldens, benchmark), `app`
 (binary `tela`).
 

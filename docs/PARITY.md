@@ -88,9 +88,9 @@ Nothing built in phases 1–3 has been compared with the reference yet.
 
 | Subsystem | Feature | Behavioural | Quality | Performance | Record |
 |---|---|---|---|---|---|
-| 4A Layer stack: create, select, remove, reorder | NI | NI | — | NI | [4A](parity/4A-layers.md) (reference observed) |
-| 4A Layer properties: visibility, opacity, lock | NI | NI | NI | — | [4A](parity/4A-layers.md) (reference observed) |
-| 4A Layer operations during a stroke | NI | NI | — | — | [4A](parity/4A-layers.md) (reference observed) |
+| 4A Layer stack: create, select, remove, reorder | CDK (no drag reorder, no delete confirmation, no rename field) | CDK (no paper layer: removing the bottom layer activates the one above) | — | INC | [4A](parity/4A-layers.md) |
+| 4A Layer properties: visibility, opacity, lock | CDK (whole-percent opacity, lock rules equal) | CDK (rename on a locked layer not compared) | INC (opacity rendering compared in 4C) | — | [4A](parity/4A-layers.md) |
+| 4A Layer operations during a stroke | PV — scope: new-layer command during a mouse stroke | PV — same scope: command ignored, stroke stays on its layer | — | — | [4A](parity/4A-layers.md) |
 | 4B Undo/redo | NI | NI | — | NI | — |
 | 4C Blend modes | NI (Normal only) | NI | NI | NI | — |
 | 4D Layer masks | NI | NI | NI | NI | — |
@@ -114,4 +114,5 @@ and the remaining differences (details in the linked record).
 
 | Subphase | Date | Summary |
 |---|---|---|
+| **4A gate** | 2026-10-14 | Implemented: layer ids, create (above active, smallest free "Layer N"), select, remove (below else above; last and locked refused), reorder (Up/Down), visibility, whole-percent opacity, lock (pixels, opacity, blend, removal), hidden/locked not paintable, layer commands ignored during a stroke. Compared with the reference in the running app for all 14 recorded observations (mouse; one synthetic-pen check in Tela). Remaining differences: no paper layer (by design), no delete confirmation, no drag reorder, no rename field, a few behaviours not compared yet ([details](parity/4A-layers.md#differences)). |
 | 4A (reference observation, before implementation) | 2026-10-14 | Reference behaviour for layer creation, selection, deletion, reorder, visibility, opacity, lock and mid-stroke commands observed and recorded in [parity/4A-layers.md](parity/4A-layers.md); Tela side pending. |

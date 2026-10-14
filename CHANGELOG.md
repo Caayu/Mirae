@@ -3,6 +3,34 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 4A — document model, layer API, stable ids
+
+### Added
+- `docs/PARITY.md` and `docs/parity/`: parity matrix with the reference
+  application, black-box comparison rules, parity gate per subphase;
+  approved phase 4 plan in `docs/phase4/PLAN.md` (615fea5).
+- Layer stack API with stable `LayerId`s, relative `Placement`,
+  `LayerError`, lock, `paint_target`, default "Layer N" names (19e3b90);
+  ADR 0014.
+- `StrokeBuffer::commit_tile` (allocation-free per-tile commit) (b3837e9).
+- Property test of the stack against a reference model (9213da8).
+- Layer panel (right side) and Ctrl+Shift+N (06ccba9).
+
+### Changed
+- `Document` fields are private; pixels change only through
+  `modify_tiles`/`clear_layer`; every mutation returns the tiles it
+  invalidated (19e3b90).
+- `Overlay::above_layer` (index) became `Overlay::target` (`LayerId`); a
+  hidden target shows no preview (19e3b90).
+- The app fixes a stroke's target layer when it begins, refuses strokes on
+  hidden or locked layers and ignores layer commands during a stroke
+  (19e3b90, 06ccba9).
+- `commit_into` no longer allocates a 1 MiB scratch buffer (b3837e9).
+
+### Parity
+- 4A gate recorded: 14 reference observations compared; remaining
+  differences in `docs/parity/4A-layers.md`.
+
 ## Phase 3.5 — architecture audit and handoff
 
 ### Architecture
