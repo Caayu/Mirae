@@ -256,9 +256,7 @@ impl StrokeProcessor {
                 .scatter
                 .apply(&dab, scatter, dir, rng, index, buf_dabs);
         });
-        for d in &self.buf_dabs {
-            sink.dab(d);
-        }
+        sink.dabs(&self.buf_dabs);
         self.stats.airbrush_dabs += self.buf_dabs.len() as u32;
     }
 
@@ -351,9 +349,7 @@ impl StrokeProcessor {
             |site| place(preset, *scale, rng, site, head, buf_dabs),
             &mut self.buf_sites,
         );
-        for d in &self.buf_dabs {
-            sink.dab(d);
-        }
+        sink.dabs(&self.buf_dabs);
         self.stats.committed_dabs += self.buf_dabs.len() as u32;
     }
 
@@ -379,9 +375,7 @@ impl StrokeProcessor {
             );
         }
         sink.begin_tail();
-        for d in &self.buf_dabs {
-            sink.tail_dab(d);
-        }
+        sink.tail_dabs(&self.buf_dabs);
         self.stats.tail_dabs = self.buf_dabs.len() as u32;
     }
 }
@@ -511,6 +505,7 @@ impl BrushEngine {
             texture: self.preset.texture.as_ref().map(CanvasTexture::new),
             anti_aliasing: self.preset.compositing.anti_aliasing,
             mode: self.preset.compositing.mode,
+            parallel: true,
         };
         let mut stroke = StrokeBuffer::new(self.color, ctx);
         let params = StrokeParams::new(&self.preset, &self.stroke_defaults, scale, seed);

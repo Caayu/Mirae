@@ -12,6 +12,7 @@ tela-canvas.workspace = true
 glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rayon.workspace = true
 
 [lints]
 workspace = true

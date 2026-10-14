@@ -154,6 +154,42 @@ fn main() {
         }
     }
 
+    // Single thread vs per-tile parallel, with realistic batches: a pen at
+    // 2000 px/s sampled at 200 Hz moves 10 px per sample.
+    println!(
+        "\nsingle-thread vs parallel ({} hardware threads), batches of one input sample:\n",
+        std::thread::available_parallelism().map_or(1, |n| n.get())
+    );
+    println!("| brush | size px | dabs/batch | single dabs/s | parallel dabs/s | speed-up |");
+    println!("|---|---:|---:|---:|---:|---:|");
+    for kind in [Kind::Hard, Kind::Soft, Kind::Textured] {
+        for size in [5.0f32, 25.0, 100.0, 250.0, 500.0] {
+            let per_batch = ((10.0 / (0.1 * size)).round() as usize).max(1);
+            let count = ((40_000_000.0 / (size * size)) as usize).clamp(200, 20_000);
+            let batch = dabs(kind, size, count);
+            let run = |parallel: bool| {
+                let ctx = StampContext {
+                    parallel,
+                    ..context(kind)
+                };
+                // Warm: tiles exist, as in the middle of a stroke.
+                let mut buf = StrokeBuffer::new(Rgba::BLACK, ctx);
+                buf.dabs(&batch);
+                let t = Instant::now();
+                for chunk in batch.chunks(per_batch) {
+                    buf.dabs(chunk);
+                }
+                batch.len() as f64 / t.elapsed().as_secs_f64()
+            };
+            let (single, parallel) = (run(false), run(true));
+            println!(
+                "| {} | {size:.0} | {per_batch} | {single:.0} | {parallel:.0} | {:.2}x |",
+                kind.name(),
+                parallel / single
+            );
+        }
+    }
+
     // Composition: one stroke previewed over a two-layer document.
     let mut doc = Document::new(2048, 2048);
     doc.layers.push(tela_document::RasterLayer::new("Layer 2"));

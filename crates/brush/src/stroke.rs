@@ -11,8 +11,20 @@ use crate::tip::{DabShape, PreparedTip};
 /// changes (between `begin_tail` and the next `begin_tail`/`commit_tail`).
 pub trait DabSink {
     fn dab(&mut self, dab: &Dab);
+    /// Several committed dabs, in order. Sinks may process them in bulk.
+    fn dabs(&mut self, dabs: &[Dab]) {
+        for d in dabs {
+            self.dab(d);
+        }
+    }
     fn begin_tail(&mut self);
     fn tail_dab(&mut self, dab: &Dab);
+    /// Several tail dabs, in order.
+    fn tail_dabs(&mut self, dabs: &[Dab]) {
+        for d in dabs {
+            self.tail_dab(d);
+        }
+    }
     /// Makes the current tail final.
     fn commit_tail(&mut self);
 }
@@ -66,6 +78,7 @@ pub struct StrokeBuffer {
     dirty: DirtyTiles,
     /// Every tile the stroke has touched.
     touched: DirtyTiles,
+    scratch: BatchScratch,
 }
 
 /// Everything constant across the dabs of one stroke.
@@ -75,6 +88,56 @@ pub struct StampContext {
     pub texture: Option<CanvasTexture>,
     pub anti_aliasing: bool,
     pub mode: PaintMode,
+    /// Allow large batches to be stamped on several threads.
+    pub parallel: bool,
+}
+
+fn visible(dab: &Dab) -> bool {
+    dab.flow > 0.0 && dab.opacity > 0.0
+}
+
+/// Stamps the part of `dab` that falls inside tile `coord`.
+fn stamp_tile(tile: &mut Tile<f32>, coord: TileCoord, dab: &Dab, ctx: &StampContext) {
+    let flow = dab.flow.clamp(0.0, 1.0);
+    let ceiling = dab.opacity.clamp(0.0, 1.0);
+    let shape = DabShape::new(&ctx.tip, dab, ctx.anti_aliasing);
+    let texture = ctx.texture.as_ref().filter(|_| dab.texture > 0.0);
+    let area = shape.bounds().intersect(&coord.rect());
+    let (ox, oy) = coord.origin();
+    for y in area.y0..area.y1 {
+        let py = y as f32 + 0.5;
+        let row = tile.row_mut((y - oy) as u32);
+        for x in area.x0..area.x1 {
+            let m = &mut row[(x - ox) as usize];
+            if *m >= ceiling {
+                continue;
+            }
+            let px = x as f32 + 0.5;
+            let cov = shape.coverage(px, py);
+            if cov <= 0.0 {
+                continue;
+            }
+            let target = match texture {
+                Some(t) => t.modulate(ceiling, cov, t.height(px, py), dab.texture),
+                None => ceiling,
+            };
+            if target > *m {
+                *m += (target - *m) * flow * cov;
+            }
+        }
+    }
+}
+
+fn take_tile(
+    mask: &mut TiledSurface<f32>,
+    seed: Option<&TiledSurface<f32>>,
+    coord: TileCoord,
+) -> Tile<f32> {
+    mask.remove_tile(coord).unwrap_or_else(|| {
+        seed.and_then(|s| s.tile(coord))
+            .cloned()
+            .unwrap_or_else(Tile::new)
+    })
 }
 
 fn stamp_into(
@@ -84,48 +147,99 @@ fn stamp_into(
     ctx: &StampContext,
     mut on_tile: impl FnMut(TileCoord),
 ) {
-    let flow = dab.flow.clamp(0.0, 1.0);
-    let ceiling = dab.opacity.clamp(0.0, 1.0);
-    if flow <= 0.0 || ceiling <= 0.0 {
+    if !visible(dab) {
         return;
     }
-    let shape = DabShape::new(&ctx.tip, dab, ctx.anti_aliasing);
-    let texture = ctx.texture.as_ref().filter(|_| dab.texture > 0.0);
-    let bounds = shape.bounds();
+    let bounds = DabShape::new(&ctx.tip, dab, ctx.anti_aliasing).bounds();
     for coord in bounds.tiles() {
-        let area = bounds.intersect(&coord.rect());
-        let (ox, oy) = coord.origin();
         if mask.tile(coord).is_none() {
-            let base = seed
-                .and_then(|s| s.tile(coord))
-                .cloned()
-                .unwrap_or_else(Tile::new);
+            let base = take_tile(mask, seed, coord);
             mask.insert_tile(coord, base);
         }
         let tile = mask.tile_mut(coord).expect("inserted above");
-        for y in area.y0..area.y1 {
-            let py = y as f32 + 0.5;
-            let row = tile.row_mut((y - oy) as u32);
-            for x in area.x0..area.x1 {
-                let m = &mut row[(x - ox) as usize];
-                if *m >= ceiling {
-                    continue;
-                }
-                let px = x as f32 + 0.5;
-                let cov = shape.coverage(px, py);
-                if cov <= 0.0 {
-                    continue;
-                }
-                let target = match texture {
-                    Some(t) => t.modulate(ceiling, cov, t.height(px, py), dab.texture),
-                    None => ceiling,
-                };
-                if target > *m {
-                    *m += (target - *m) * flow * cov;
-                }
-            }
-        }
+        stamp_tile(tile, coord, dab, ctx);
         on_tile(coord);
+    }
+}
+
+/// Estimated pixel work below which a batch is stamped on one thread:
+/// spreading a few small dabs over threads costs more than it saves.
+/// Chosen from `stamp_bench` (see docs/phase3).
+pub const PARALLEL_MIN_WORK: f64 = 60_000.0;
+
+/// Reusable buffers for batched stamping.
+#[derive(Clone, Debug, Default)]
+struct BatchScratch {
+    /// `(tile, dab index)`, sorted so each tile's dabs keep stroke order.
+    pairs: Vec<(TileCoord, u32)>,
+    jobs: Vec<TileJob>,
+}
+
+#[derive(Clone, Debug)]
+struct TileJob {
+    coord: TileCoord,
+    tile: Tile<f32>,
+    pairs: std::ops::Range<usize>,
+}
+
+/// Stamps a batch of dabs. Large batches are split by tile and run in
+/// parallel: each tile is moved out of the surface, owned by exactly one
+/// worker, receives its dabs in stroke order, and is moved back. Per-pixel
+/// operation order is the same as sequential stamping, so the result is
+/// bit-identical; no locks are taken.
+fn stamp_batch(
+    mask: &mut TiledSurface<f32>,
+    seed: Option<&TiledSurface<f32>>,
+    batch: &[Dab],
+    ctx: &StampContext,
+    scratch: &mut BatchScratch,
+    mut on_tile: impl FnMut(TileCoord),
+) {
+    let work: f64 = batch
+        .iter()
+        .filter(|d| visible(d))
+        .map(|d| {
+            let b = DabShape::new(&ctx.tip, d, ctx.anti_aliasing).bounds();
+            b.width() as f64 * b.height() as f64
+        })
+        .sum();
+    if !ctx.parallel || work < PARALLEL_MIN_WORK {
+        for d in batch {
+            stamp_into(mask, seed, d, ctx, &mut on_tile);
+        }
+        return;
+    }
+    let BatchScratch { pairs, jobs } = scratch;
+    pairs.clear();
+    for (i, d) in batch.iter().enumerate().filter(|(_, d)| visible(d)) {
+        let bounds = DabShape::new(&ctx.tip, d, ctx.anti_aliasing).bounds();
+        pairs.extend(bounds.tiles().map(|c| (c, i as u32)));
+    }
+    pairs.sort_unstable();
+    jobs.clear();
+    let mut start = 0;
+    while start < pairs.len() {
+        let coord = pairs[start].0;
+        let end = start + pairs[start..].iter().take_while(|p| p.0 == coord).count();
+        jobs.push(TileJob {
+            coord,
+            tile: take_tile(mask, seed, coord),
+            pairs: start..end,
+        });
+        start = end;
+    }
+    let pairs = &*pairs;
+    rayon::iter::ParallelIterator::for_each(
+        rayon::iter::IntoParallelRefMutIterator::par_iter_mut(jobs),
+        |job| {
+            for &(_, i) in &pairs[job.pairs.clone()] {
+                stamp_tile(&mut job.tile, job.coord, &batch[i as usize], ctx);
+            }
+        },
+    );
+    for job in jobs.drain(..) {
+        on_tile(job.coord);
+        mask.insert_tile(job.coord, job.tile);
     }
 }
 
@@ -138,6 +252,7 @@ impl StrokeBuffer {
             ctx,
             dirty: DirtyTiles::new(),
             touched: DirtyTiles::new(),
+            scratch: BatchScratch::default(),
         }
     }
 
@@ -213,6 +328,40 @@ impl StrokeBuffer {
 }
 
 impl DabSink for StrokeBuffer {
+    fn dabs(&mut self, dabs: &[Dab]) {
+        let Self {
+            committed,
+            ctx,
+            scratch,
+            dirty,
+            touched,
+            ..
+        } = self;
+        stamp_batch(committed, None, dabs, ctx, scratch, |c| {
+            dirty.mark(c);
+            touched.mark(c);
+        });
+        if self.tail.tile_count() > 0 {
+            self.begin_tail();
+        }
+    }
+
+    fn tail_dabs(&mut self, dabs: &[Dab]) {
+        let Self {
+            committed,
+            tail,
+            ctx,
+            scratch,
+            dirty,
+            touched,
+            ..
+        } = self;
+        stamp_batch(tail, Some(committed), dabs, ctx, scratch, |c| {
+            dirty.mark(c);
+            touched.mark(c);
+        });
+    }
+
     fn dab(&mut self, dab: &Dab) {
         let (dirty, touched) = (&mut self.dirty, &mut self.touched);
         stamp_into(&mut self.committed, None, dab, &self.ctx, |c| {
@@ -356,6 +505,52 @@ mod tests {
             "half erased, color kept"
         );
         assert_eq!(target.pixel(40, 10), [200, 100, 0, 255], "untouched");
+    }
+
+    #[test]
+    fn parallel_stamping_is_bit_identical_to_sequential() {
+        use crate::texture::{CanvasTexture, TextureMode, TextureSettings};
+        let batch: Vec<Dab> = (0..60)
+            .map(|i| Dab {
+                center: Vec2::new(200.0 + i as f32 * 9.0, 300.0 + (i as f32).sin() * 40.0),
+                radius: 90.0 + (i % 7) as f32 * 10.0,
+                aspect: 0.6,
+                angle: i as f32 * 0.2,
+                opacity: 0.4 + (i % 3) as f32 * 0.2,
+                flow: 0.3,
+                hardness: (i % 5) as f32 * 0.25,
+                texture: 0.8,
+            })
+            .collect();
+        let run = |parallel| {
+            let ctx = StampContext {
+                anti_aliasing: true,
+                texture: Some(CanvasTexture::new(&TextureSettings {
+                    mode: TextureMode::Height,
+                    ..Default::default()
+                })),
+                parallel,
+                ..Default::default()
+            };
+            let mut s = StrokeBuffer::new(Rgba::BLACK, ctx);
+            s.dabs(&batch[..40]);
+            s.begin_tail();
+            s.tail_dabs(&batch[40..]);
+            s
+        };
+        let (seq, par) = (run(false), run(true));
+        assert_eq!(seq.touched().len(), par.touched().len());
+        assert!(seq.touched().len() >= 8, "batch must span many tiles");
+        for c in seq.touched().iter() {
+            let (a, b) = (seq.mask_tile(c).unwrap(), par.mask_tile(c).unwrap());
+            assert!(
+                a.pixels()
+                    .iter()
+                    .zip(b.pixels())
+                    .all(|(x, y)| x.to_bits() == y.to_bits()),
+                "tile {c:?}"
+            );
+        }
     }
 
     #[test]
