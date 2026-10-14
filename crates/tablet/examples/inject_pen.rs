@@ -3,7 +3,7 @@
 //! WM_POINTER path end to end without tablet hardware.
 //!
 //! ```sh
-//! cargo run -p tela-tablet --example inject_pen -- [window title] [pattern]
+//! cargo run -p tela-tablet --example inject_pen -- [window title prefix] [pattern]
 //! ```
 //! Patterns: `all` (default), `pressure`, `fast`, `detail`.
 
@@ -14,7 +14,7 @@ mod inject {
     use std::thread::sleep;
     use std::time::Duration;
 
-    use windows_sys::Win32::Foundation::{GetLastError, HWND, POINT, RECT};
+    use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, POINT, RECT};
     use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
     use windows_sys::Win32::UI::Controls::{
         CreateSyntheticPointerDevice, DestroySyntheticPointerDevice, HSYNTHETICPOINTERDEVICE,
@@ -26,9 +26,10 @@ mod inject {
         POINTER_PEN_INFO,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, GetClientRect, PEN_MASK_PRESSURE, PEN_MASK_ROTATION, PEN_MASK_TILT_X,
-        PEN_MASK_TILT_Y, PT_PEN, SetForegroundWindow,
+        EnumWindows, GetClientRect, GetWindowTextW, IsWindowVisible, PEN_MASK_PRESSURE,
+        PEN_MASK_ROTATION, PEN_MASK_TILT_X, PEN_MASK_TILT_Y, PT_PEN, SetForegroundWindow,
     };
+    use windows_sys::core::BOOL;
 
     /// One pen state in client-relative unit coordinates (`0..1`).
     #[derive(Clone, Copy)]
@@ -125,10 +126,36 @@ mod inject {
         }
     }
 
+    /// First top-level visible window whose title starts with `prefix`.
+    fn find_window(prefix: &str) -> HWND {
+        struct Search {
+            prefix: Vec<u16>,
+            found: HWND,
+        }
+        unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> BOOL {
+            // SAFETY: `data` is the `Search` passed to EnumWindows below.
+            let search = unsafe { &mut *(data as *mut Search) };
+            let mut buf = [0u16; 512];
+            // SAFETY: buffer length matches.
+            let n = unsafe { GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32) } as usize;
+            // SAFETY: plain query.
+            if unsafe { IsWindowVisible(hwnd) } != 0 && buf[..n].starts_with(&search.prefix) {
+                search.found = hwnd;
+                return 0;
+            }
+            1
+        }
+        let mut search = Search {
+            prefix: prefix.encode_utf16().collect(),
+            found: std::ptr::null_mut(),
+        };
+        // SAFETY: `search` outlives the enumeration.
+        unsafe { EnumWindows(Some(visit), &mut search as *mut Search as LPARAM) };
+        search.found
+    }
+
     pub fn run(title: &str, pattern: &str) {
-        let wide: Vec<u16> = title.encode_utf16().chain([0]).collect();
-        // SAFETY: null-terminated UTF-16 title.
-        let hwnd: HWND = unsafe { FindWindowW(std::ptr::null(), wide.as_ptr()) };
+        let hwnd = find_window(title);
         if hwnd.is_null() {
             eprintln!("window {title:?} not found");
             std::process::exit(1);
