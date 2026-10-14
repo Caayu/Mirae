@@ -149,7 +149,10 @@ mod tests {
         let mut target = TiledSurface::new();
         s.commit_into(&mut target);
         let a = target.pixel(10, 10)[3];
-        assert!((127..=128).contains(&a), "alpha {a} should stop at 50% opacity");
+        assert!(
+            (127..=128).contains(&a),
+            "alpha {a} should stop at 50% opacity"
+        );
     }
 
     #[test]
