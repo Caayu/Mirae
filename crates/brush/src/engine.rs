@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use glam::Vec2;
 use tela_color::Rgba;
 
+use crate::airbrush::TimeDeposit;
 use crate::dynamics::{Curve, DynamicsInput, slot};
 use crate::interpolate::{Interpolator, PathInterpolator};
 use crate::pipeline::{JitterFilter, StrokePoint, VelocityEstimator};
@@ -20,7 +21,13 @@ pub struct StrokeStats {
     pub committed_dabs: u32,
     /// Dabs in the most recent tail rebuild.
     pub tail_dabs: u32,
+    /// Time-based (airbrush) dabs.
+    pub airbrush_dabs: u32,
 }
+
+/// Airbrush dabs use their own index range so their random values never
+/// coincide with those of movement dabs.
+const AIRBRUSH_INDEX_BASE: u64 = 1 << 40;
 
 /// Per-stroke parameters that are not part of the brush.
 #[derive(Clone, Debug, PartialEq)]
@@ -70,6 +77,7 @@ pub struct StrokeProcessor {
     stabilizer: Stabilizer,
     interpolator: Interpolator,
     spacer: DabSpacer,
+    airbrush: TimeDeposit,
     /// Path points not yet committed, with their arc length from the start.
     tail: VecDeque<(StrokePoint, f32)>,
     tail_dirty: bool,
@@ -105,6 +113,7 @@ impl StrokeProcessor {
             velocity: VelocityEstimator::default(),
             jitter: JitterFilter::default(),
             spacer: DabSpacer::new(),
+            airbrush: TimeDeposit::default(),
             tail: VecDeque::with_capacity(1024),
             tail_dirty: false,
             head_distance: 0.0,
@@ -176,6 +185,7 @@ impl StrokeProcessor {
         self.stabilizer = stabilizer(s.stabilizer, s.stabilization);
         self.interpolator = Interpolator::new(s.interpolation);
         self.spacer.reset();
+        self.airbrush.reset();
         self.tail.clear();
         self.tail_dirty = false;
         self.head_distance = 0.0;
@@ -207,6 +217,49 @@ impl StrokeProcessor {
             self.interpolator.push(s, step, &mut self.buf_path);
         }
         self.consume_path(sink);
+        if let Some(t) = self.airbrush.last_time() {
+            self.emit_airbrush(t, sink);
+        }
+    }
+
+    /// Advances the airbrush clock while the pen may be resting (no samples
+    /// arriving). `now` uses the same clock as the input timestamps. Call
+    /// once per frame during a stroke; frame rate does not affect the result.
+    pub fn advance_time(&mut self, now: f64, sink: &mut impl DabSink) {
+        if self.active {
+            let horizon = self.airbrush.horizon_at(now);
+            self.emit_airbrush(horizon, sink);
+        }
+    }
+
+    fn emit_airbrush(&mut self, horizon: f64, sink: &mut impl DabSink) {
+        if !self.preset.airbrush.enabled {
+            return;
+        }
+        self.buf_dabs.clear();
+        let Self {
+            preset,
+            scale,
+            rng,
+            buf_dabs,
+            airbrush,
+            ..
+        } = self;
+        airbrush.emit(preset.airbrush.rate, horizon, |k, p, distance| {
+            let index = AIRBRUSH_INDEX_BASE + k;
+            let input = dynamics_at(p, distance, index, *scale, rng);
+            let taper = preset.taper.factor(distance, f32::INFINITY);
+            let dab = resolve_dab(preset, &input, p.pos, taper);
+            let dir = p.velocity.try_normalize().unwrap_or(Vec2::X);
+            let scatter = preset.properties.eval(Param::Scatter, &input);
+            preset
+                .scatter
+                .apply(&dab, scatter, dir, rng, index, buf_dabs);
+        });
+        for d in &self.buf_dabs {
+            sink.dab(d);
+        }
+        self.stats.airbrush_dabs += self.buf_dabs.len() as u32;
     }
 
     /// Rebuilds the provisional tail if it changed. Call once per frame
@@ -240,6 +293,11 @@ impl StrokeProcessor {
         }
         self.interpolator.finish(step, &mut self.buf_path);
         self.consume_path(sink);
+        // Catch-up points carry synthetic times; deposit only up to the last
+        // real sample.
+        if let Some(last) = self.last_filtered_input {
+            self.emit_airbrush(last.time, sink);
+        }
         if !self.tail.is_empty() {
             self.emit_tail(sink);
             sink.commit_tail();
@@ -258,6 +316,9 @@ impl StrokeProcessor {
                 self.head_distance += (p.pos - prev.pos).length();
             }
             self.last_path_point = Some(p);
+            if self.preset.airbrush.enabled {
+                self.airbrush.record(p, self.head_distance);
+            }
             if taper_len <= 0.0 {
                 self.commit_point(p, sink);
             } else {
@@ -470,6 +531,19 @@ impl BrushEngine {
 
     pub fn set_scale(&mut self, scale: f32) {
         self.processor.set_scale(scale);
+    }
+
+    /// Lets airbrush presets keep depositing while the pen rests; call once
+    /// per frame during a stroke with the input clock's current time.
+    pub fn advance_time(&mut self, now: f64) {
+        if let Some(stroke) = self.stroke.as_mut() {
+            self.processor.advance_time(now, stroke);
+        }
+    }
+
+    /// Whether the current preset deposits over time.
+    pub fn is_time_based(&self) -> bool {
+        self.preset.airbrush.enabled
     }
 
     /// Rebuilds the provisional tail; call once per frame before display.

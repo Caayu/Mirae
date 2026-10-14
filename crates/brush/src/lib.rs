@@ -12,6 +12,7 @@
 //! Acquisition, device normalization and timestamp normalization happen
 //! before this crate (see `tela-tablet`).
 
+pub mod airbrush;
 pub mod analysis;
 pub mod dynamics;
 mod engine;
