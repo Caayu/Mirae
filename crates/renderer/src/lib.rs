@@ -1,14 +1,21 @@
-//! Presents composed canvas tiles with wgpu.
+//! Presents the composed canvas with wgpu.
 //!
 //! The renderer never sees the document model: callers hand it finished
-//! premultiplied RGBA8 tiles and a view transform. It keeps one GPU texture per
-//! non-empty tile and draws only the tiles intersecting the viewport.
+//! premultiplied RGBA8 tiles and a view transform.
+//!
+//! On the GPU the whole document lives in one *display texture* with a mip
+//! chain. Sampling a single continuous texture is what makes the canvas
+//! seam-free at every zoom and rotation; per-tile textures cannot filter
+//! across their borders. The CPU side stays sparse, and only dirty tiles
+//! (and their mip levels, computed by [`mip`]) are uploaded.
 
-use std::collections::HashMap;
+pub mod mip;
 
 use glam::{Mat4, Vec2, Vec3};
-use tela_canvas::{IRect, TILE_SIZE, TileCoord, ViewTransform};
+use tela_canvas::{TILE_SIZE, TileCoord, ViewTransform};
 use wgpu::util::DeviceExt;
+
+use crate::mip::{MipChain, TILE_LEVELS};
 
 #[derive(Debug)]
 pub enum RendererError {
@@ -16,6 +23,7 @@ pub enum RendererError {
     Adapter(wgpu::RequestAdapterError),
     Device(wgpu::RequestDeviceError),
     UnsupportedSurface,
+    DocumentTooLarge { width: u32, height: u32, max: u32 },
 }
 
 impl std::fmt::Display for RendererError {
@@ -25,19 +33,37 @@ impl std::fmt::Display for RendererError {
             Self::Adapter(e) => write!(f, "no suitable GPU adapter: {e}"),
             Self::Device(e) => write!(f, "cannot open GPU device: {e}"),
             Self::UnsupportedSurface => write!(f, "surface not supported by adapter"),
+            Self::DocumentTooLarge { width, height, max } => {
+                write!(
+                    f,
+                    "document {width}x{height} exceeds the GPU texture limit {max}"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for RendererError {}
 
-/// What to draw this frame besides the tiles themselves.
+/// What to draw this frame besides the canvas texture itself.
 pub struct Frame<'a> {
     pub view: &'a ViewTransform,
-    pub document_size: Vec2,
     /// Straight-alpha sRGB colors.
     pub paper: [f32; 4],
     pub workspace: [f32; 4],
+}
+
+/// Extra drawing on top of the canvas (e.g. UI). Receives the frame's
+/// encoder and target; the renderer knows nothing about what it draws.
+pub trait FrameOverlay {
+    fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        size: [u32; 2],
+    );
 }
 
 #[repr(C)]
@@ -48,28 +74,41 @@ struct Globals {
     doc_size: [f32; 4],
 }
 
-struct GpuTile {
-    _texture: wgpu::Texture,
-    nearest: wgpu::BindGroup,
-    linear: wgpu::BindGroup,
+enum Target {
+    Surface {
+        surface: wgpu::Surface<'static>,
+        config: wgpu::SurfaceConfiguration,
+    },
+    Offscreen {
+        texture: wgpu::Texture,
+    },
+}
+
+struct Display {
+    texture: wgpu::Texture,
+    bind: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+    levels: u32,
 }
 
 pub struct Renderer {
-    surface: wgpu::Surface<'static>,
+    target: Target,
+    format: wgpu::TextureFormat,
+    size: [u32; 2],
     device: wgpu::Device,
     queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
     globals: wgpu::Buffer,
-    globals_bind: wgpu::BindGroup,
-    tile_layout: wgpu::BindGroupLayout,
-    nearest: wgpu::Sampler,
-    linear: wgpu::Sampler,
-    paper_pipeline: wgpu::RenderPipeline,
-    tile_pipeline: wgpu::RenderPipeline,
-    tiles: HashMap<TileCoord, GpuTile>,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    pipeline: wgpu::RenderPipeline,
+    display: Option<Display>,
+    mips: MipChain,
+    zeros: Vec<[u8; 4]>,
 }
 
 impl Renderer {
+    /// Renderer presenting to a window surface.
     pub async fn new(
         target: impl Into<wgpu::SurfaceTarget<'static>>,
         width: u32,
@@ -88,13 +127,7 @@ impl Renderer {
             .await
             .map_err(RendererError::Adapter)?;
         log::info!("GPU adapter: {:?}", adapter.get_info());
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("tela device"),
-                ..Default::default()
-            })
-            .await
-            .map_err(RendererError::Device)?;
+        let (device, queue) = request_device(&adapter).await?;
 
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
@@ -108,7 +141,57 @@ impl Renderer {
         config.present_mode = wgpu::PresentMode::AutoVsync;
         config.desired_maximum_frame_latency = 1;
         surface.configure(&device, &config);
+        let format = config.format;
+        let size = [config.width, config.height];
+        Ok(Self::with_target(
+            Target::Surface { surface, config },
+            format,
+            size,
+            device,
+            queue,
+        ))
+    }
 
+    /// Renderer drawing into an offscreen texture (tests, export). Returns
+    /// `None` when no GPU adapter is available.
+    pub async fn new_headless(width: u32, height: u32) -> Option<Self> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .ok()?;
+        let (device, queue) = request_device(&adapter).await.ok()?;
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("offscreen target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        Some(Self::with_target(
+            Target::Offscreen { texture },
+            format,
+            [width, height],
+            device,
+            queue,
+        ))
+    }
+
+    fn with_target(
+        target: Target,
+        format: wgpu::TextureFormat,
+        size: [u32; 2],
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+    ) -> Self {
         let globals = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("globals"),
             contents: bytemuck::bytes_of(&Globals {
@@ -118,32 +201,21 @@ impl Renderer {
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("globals"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-        let globals_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globals"),
-            layout: &globals_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: globals.as_entire_binding(),
-            }],
-        });
-        let tile_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("tile"),
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("canvas"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -153,237 +225,225 @@ impl Renderer {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
         });
-        let sampler = |filter| {
-            device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("tile"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                mag_filter: filter,
-                min_filter: filter,
-                ..Default::default()
-            })
-        };
-        let nearest = sampler(wgpu::FilterMode::Nearest);
-        let linear = sampler(wgpu::FilterMode::Linear);
-
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("canvas"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
-        let paper_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("paper"),
-            bind_group_layouts: &[Some(&globals_layout)],
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("canvas"),
+            bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let tile_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("tile"),
-            bind_group_layouts: &[Some(&globals_layout), Some(&tile_layout)],
-            immediate_size: 0,
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("canvas"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_canvas"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_canvas"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
         });
-        let pipeline =
-            |label, layout, vs, fs, buffers: &[Option<wgpu::VertexBufferLayout>], blend| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some(vs),
-                        compilation_options: Default::default(),
-                        buffers,
-                    },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some(fs),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: config.format,
-                            blend,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            };
-        let paper_pipeline = pipeline(
-            "paper",
-            &paper_layout,
-            "vs_paper",
-            "fs_paper",
-            &[],
-            Some(wgpu::BlendState::REPLACE),
-        );
-        let instance_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<[f32; 2]>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x2],
-        };
-        let tile_pipeline = pipeline(
-            "tile",
-            &tile_pipeline_layout,
-            "vs_tile",
-            "fs_tile",
-            &[Some(instance_layout)],
-            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-        );
-
-        Ok(Self {
-            surface,
+        Self {
+            target,
+            format,
+            size,
             device,
             queue,
-            config,
             globals,
-            globals_bind,
-            tile_layout,
-            nearest,
-            linear,
-            paper_pipeline,
-            tile_pipeline,
-            tiles: HashMap::new(),
-        })
+            layout,
+            sampler,
+            pipeline,
+            display: None,
+            mips: MipChain::default(),
+            zeros: vec![[0; 4]; (TILE_SIZE * TILE_SIZE) as usize],
+        }
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.format
     }
 
     pub fn size(&self) -> Vec2 {
-        Vec2::new(self.config.width as f32, self.config.height as f32)
+        Vec2::new(self.size[0] as f32, self.size[1] as f32)
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
-        self.config.width = width;
-        self.config.height = height;
-        self.surface.configure(&self.device, &self.config);
+        self.size = [width, height];
+        if let Target::Surface { surface, config } = &mut self.target {
+            config.width = width;
+            config.height = height;
+            surface.configure(&self.device, config);
+        }
     }
 
-    pub fn tile_count(&self) -> usize {
-        self.tiles.len()
+    /// (Re)creates the display texture for a document. Returns `true` when
+    /// the texture was recreated, in which case every non-empty tile must be
+    /// uploaded again.
+    pub fn set_document_size(&mut self, width: u32, height: u32) -> Result<bool, RendererError> {
+        if self
+            .display
+            .as_ref()
+            .is_some_and(|d| d.width == width && d.height == height)
+        {
+            return Ok(false);
+        }
+        let max = self.device.limits().max_texture_dimension_2d;
+        if width > max || height > max || width == 0 || height == 0 {
+            return Err(RendererError::DocumentTooLarge { width, height, max });
+        }
+        let full = 32 - width.max(height).leading_zeros();
+        let levels = full.min(TILE_LEVELS);
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("document display"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("canvas"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.globals.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        self.display = Some(Display {
+            texture,
+            bind,
+            width,
+            height,
+            levels,
+        });
+        Ok(true)
     }
 
     /// Replaces a tile's pixels (premultiplied RGBA8, 256x256 row-major), or
-    /// frees it when `pixels` is `None`.
+    /// clears it when `pixels` is `None`. Tiles outside the document are
+    /// ignored.
     pub fn upload_tile(&mut self, coord: TileCoord, pixels: Option<&[[u8; 4]]>) {
-        let Some(pixels) = pixels else {
-            self.tiles.remove(&coord);
+        let Some(display) = &self.display else {
             return;
         };
-        let size = wgpu::Extent3d {
-            width: TILE_SIZE,
-            height: TILE_SIZE,
-            depth_or_array_layers: 1,
-        };
-        let tile = self.tiles.entry(coord).or_insert_with(|| {
-            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("tile"),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&Default::default());
-            let bind = |sampler: &wgpu::Sampler| {
-                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("tile"),
-                    layout: &self.tile_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                    ],
-                })
+        let level0 = pixels.unwrap_or(&self.zeros);
+        if display.levels > 1 {
+            self.mips.build(level0);
+        }
+        for k in 0..display.levels {
+            let Some(region) = tile_region(coord, k, display.width, display.height) else {
+                return;
             };
-            GpuTile {
-                nearest: bind(&self.nearest),
-                linear: bind(&self.linear),
-                _texture: texture,
-            }
-        });
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &tile._texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(pixels),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(TILE_SIZE * 4),
-                rows_per_image: Some(TILE_SIZE),
-            },
-            size,
-        );
+            let data = if k == 0 { level0 } else { self.mips.level(k) };
+            let side = TILE_SIZE >> k;
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &display.texture,
+                    mip_level: k,
+                    origin: wgpu::Origin3d {
+                        x: region.0,
+                        y: region.1,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(data),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(side * 4),
+                    rows_per_image: Some(side),
+                },
+                wgpu::Extent3d {
+                    width: region.2,
+                    height: region.3,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
+    /// Draws the frame and presents it.
     pub fn render(&mut self, frame: &Frame) {
-        let surface_texture = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
-                return;
-            }
-            other => {
-                log::warn!("skipping frame: {other:?}");
-                return;
-            }
+        self.render_with(frame, None);
+    }
+
+    pub fn render_with(&mut self, frame: &Frame, overlay: Option<&mut dyn FrameOverlay>) {
+        let (surface_texture, view) = match &self.target {
+            Target::Surface { surface, config } => match surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(t)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(t) => {
+                    let v = t.texture.create_view(&Default::default());
+                    (Some(t), v)
+                }
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                    surface.configure(&self.device, config);
+                    return;
+                }
+                other => {
+                    log::warn!("skipping frame: {other:?}");
+                    return;
+                }
+            },
+            Target::Offscreen { texture } => (None, texture.create_view(&Default::default())),
         };
 
-        self.queue.write_buffer(
-            &self.globals,
-            0,
-            bytemuck::bytes_of(&Globals {
-                canvas_to_clip: canvas_to_clip(frame.view, self.size()).to_cols_array_2d(),
-                paper: frame.paper,
-                doc_size: [frame.document_size.x, frame.document_size.y, 0.0, 0.0],
-            }),
-        );
-
-        let visible = frame
-            .view
-            .visible_canvas_rect(self.size())
-            .intersect(&IRect::new(
-                0,
-                0,
-                frame.document_size.x as i32,
-                frame.document_size.y as i32,
-            ));
-        let drawn: Vec<TileCoord> = visible
-            .tiles()
-            .filter(|c| self.tiles.contains_key(c))
-            .collect();
-        let origins: Vec<[f32; 2]> = drawn
-            .iter()
-            .map(|c| {
-                let (x, y) = c.origin();
-                [x as f32, y as f32]
-            })
-            .collect();
-        let instances = (!origins.is_empty()).then(|| {
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("tile instances"),
-                    contents: bytemuck::cast_slice(&origins),
-                    usage: wgpu::BufferUsages::VERTEX,
-                })
-        });
-
-        let view = surface_texture.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
         {
             let [r, g, b, a] = frame.workspace.map(f64::from);
@@ -400,32 +460,109 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            pass.set_bind_group(0, &self.globals_bind, &[]);
-            pass.set_pipeline(&self.paper_pipeline);
-            pass.draw(0..6, 0..1);
-
-            if let Some(instances) = &instances {
-                // Nearest when magnifying keeps pixels crisp and avoids seams
-                // between independently sampled tiles.
-                let magnified = frame.view.zoom >= 1.0;
-                pass.set_pipeline(&self.tile_pipeline);
-                pass.set_vertex_buffer(0, instances.slice(..));
-                for (i, coord) in drawn.iter().enumerate() {
-                    let tile = &self.tiles[coord];
-                    let bind = if magnified {
-                        &tile.nearest
-                    } else {
-                        &tile.linear
-                    };
-                    pass.set_bind_group(1, bind, &[]);
-                    let i = i as u32;
-                    pass.draw(0..6, i..i + 1);
-                }
+            if let Some(display) = &self.display {
+                self.queue.write_buffer(
+                    &self.globals,
+                    0,
+                    bytemuck::bytes_of(&Globals {
+                        canvas_to_clip: canvas_to_clip(frame.view, self.size()).to_cols_array_2d(),
+                        paper: frame.paper,
+                        doc_size: [display.width as f32, display.height as f32, 0.0, 0.0],
+                    }),
+                );
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &display.bind, &[]);
+                pass.draw(0..6, 0..1);
             }
         }
+        if let Some(overlay) = overlay {
+            overlay.draw(&self.device, &self.queue, &mut encoder, &view, self.size);
+        }
         self.queue.submit([encoder.finish()]);
-        self.queue.present(surface_texture);
+        if let Some(t) = surface_texture {
+            self.queue.present(t);
+        }
     }
+
+    /// Reads back the offscreen target as RGBA8 rows (headless only).
+    pub fn read_pixels(&self) -> Option<Vec<[u8; 4]>> {
+        let Target::Offscreen { texture } = &self.target else {
+            return None;
+        };
+        let [w, h] = self.size;
+        let row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: (row * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit([encoder.finish()]);
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        let data = slice.get_mapped_range().ok()?;
+        let mut out = Vec::with_capacity((w * h) as usize);
+        for y in 0..h {
+            let start = (y * row) as usize;
+            for x in 0..w as usize {
+                let p = &data[start + x * 4..start + x * 4 + 4];
+                out.push([p[0], p[1], p[2], p[3]]);
+            }
+        }
+        Some(out)
+    }
+}
+
+async fn request_device(
+    adapter: &wgpu::Adapter,
+) -> Result<(wgpu::Device, wgpu::Queue), RendererError> {
+    adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("tela device"),
+            ..Default::default()
+        })
+        .await
+        .map_err(RendererError::Device)
+}
+
+/// Destination of tile `coord` in mip level `k` of a `width`x`height`
+/// texture, as `(x, y, w, h)` clipped to the level's extent. `None` when the
+/// tile lies outside.
+pub fn tile_region(
+    coord: TileCoord,
+    k: u32,
+    width: u32,
+    height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    if coord.x < 0 || coord.y < 0 {
+        return None;
+    }
+    let side = TILE_SIZE >> k;
+    let (lw, lh) = ((width >> k).max(1), (height >> k).max(1));
+    let (x, y) = (coord.x as u32 * side, coord.y as u32 * side);
+    if x >= lw || y >= lh {
+        return None;
+    }
+    Some((x, y, side.min(lw - x), side.min(lh - y)))
 }
 
 /// Canvas pixels -> clip space for a surface of `surface` pixels.
@@ -461,5 +598,24 @@ mod tests {
             let clip = m.project_point3(c.extend(0.0)).truncate();
             assert!((clip - expected).length() < 1e-5, "{clip} vs {expected}");
         }
+    }
+
+    #[test]
+    fn tile_regions_are_clipped_per_level() {
+        // 600x300 document: tile (2, 1) is partially outside at level 0.
+        assert_eq!(
+            tile_region(TileCoord { x: 2, y: 1 }, 0, 600, 300),
+            Some((512, 256, 88, 44))
+        );
+        assert_eq!(
+            tile_region(TileCoord { x: 2, y: 1 }, 1, 600, 300),
+            Some((256, 128, 44, 22))
+        );
+        assert_eq!(tile_region(TileCoord { x: 3, y: 0 }, 0, 600, 300), None);
+        assert_eq!(tile_region(TileCoord { x: -1, y: 0 }, 0, 600, 300), None);
+        assert_eq!(
+            tile_region(TileCoord { x: 0, y: 0 }, 8, 600, 300),
+            Some((0, 0, 1, 1))
+        );
     }
 }

@@ -366,7 +366,6 @@ impl App {
         let bg = self.document.background;
         gpu.renderer.render(&Frame {
             view: &self.view,
-            document_size: Vec2::new(self.document.width as f32, self.document.height as f32),
             paper: [bg.r, bg.g, bg.b, bg.a],
             workspace: WORKSPACE_COLOR,
         });
@@ -420,7 +419,19 @@ impl ApplicationHandler<AppEvent> for App {
         };
         let size = window.inner_size();
         match pollster::block_on(Renderer::new(window.clone(), size.width, size.height)) {
-            Ok(renderer) => {
+            Ok(mut renderer) => {
+                if let Err(e) =
+                    renderer.set_document_size(self.document.width, self.document.height)
+                {
+                    log::error!("{e}");
+                    event_loop.exit();
+                    return;
+                }
+                for layer in &self.document.layers {
+                    for c in layer.pixels.tile_coords() {
+                        self.stale.mark(c);
+                    }
+                }
                 self.gpu = Some(Gpu {
                     #[cfg(windows)]
                     ink: attach_ink(&window, self.proxy.clone()),

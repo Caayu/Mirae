@@ -1885,6 +1885,7 @@ dependencies = [
  "bytemuck",
  "glam",
  "log",
+ "pollster",
  "tela-canvas",
  "wgpu",
 ]
