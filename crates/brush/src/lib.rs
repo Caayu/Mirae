@@ -10,6 +10,7 @@
 //!   -> dirty tiles
 //! ```
 
+pub mod dynamics;
 mod engine;
 mod input;
 mod settings;
