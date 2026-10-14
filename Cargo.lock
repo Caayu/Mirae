@@ -1844,6 +1844,7 @@ dependencies = [
  "tela-color",
  "tela-document",
  "tela-renderer",
+ "tela-tablet",
  "winit",
 ]
 
