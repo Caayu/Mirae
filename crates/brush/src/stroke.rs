@@ -298,13 +298,18 @@ impl StrokeBuffer {
 
     /// Composites the stroke over one tile of premultiplied pixels.
     pub fn paint_over_tile(&self, coord: TileCoord, pixels: &mut [PremulRgba]) {
-        let Some(mask) = self.mask_tile(coord) else {
-            return;
-        };
+        if let Some(mask) = self.mask_tile(coord) {
+            self.paint_over(pixels, mask.pixels());
+        }
+    }
+
+    /// The one compositing rule shared by preview and commit: `pixels` and
+    /// `mask` are matching runs of the same tile (whole tile or one row).
+    fn paint_over(&self, pixels: &mut [PremulRgba], mask: &[f32]) {
         match self.ctx.mode {
             // Destination-out: the stroke's alpha removes layer alpha.
             PaintMode::Erase => {
-                for (dst, &m) in pixels.iter_mut().zip(mask.pixels()) {
+                for (dst, &m) in pixels.iter_mut().zip(mask) {
                     if m > 0.0 {
                         *dst = dst.scale(1.0 - m);
                     }
@@ -312,7 +317,7 @@ impl StrokeBuffer {
             }
             PaintMode::Paint | PaintMode::Unknown => {
                 let paint = self.paint();
-                for (dst, &m) in pixels.iter_mut().zip(mask.pixels()) {
+                for (dst, &m) in pixels.iter_mut().zip(mask) {
                     if m > 0.0 {
                         *dst = paint.scale(m).over(*dst);
                     }
@@ -321,20 +326,32 @@ impl StrokeBuffer {
         }
     }
 
-    /// Writes the finished stroke into an 8-bit premultiplied surface.
-    pub fn commit_into(&self, target: &mut TiledSurface<[u8; 4]>) -> DirtyTiles {
-        let mut scratch = vec![PremulRgba::TRANSPARENT; (TILE_SIZE * TILE_SIZE) as usize];
-        for coord in self.touched.iter() {
-            if self.mask_tile(coord).is_none() {
-                continue;
-            }
-            let tile = target.tile_or_insert(coord);
-            for (s, p) in scratch.iter_mut().zip(tile.pixels()) {
+    /// Writes the finished stroke into one tile of an 8-bit premultiplied
+    /// layer (the tile at `coord`). Does nothing where the stroke has no
+    /// mask. Works row by row on the stack: no allocation.
+    pub fn commit_tile(&self, coord: TileCoord, tile: &mut Tile<[u8; 4]>) {
+        let Some(mask) = self.mask_tile(coord) else {
+            return;
+        };
+        let mut row = [PremulRgba::TRANSPARENT; TILE_SIZE as usize];
+        for y in 0..TILE_SIZE {
+            let pixels = tile.row_mut(y);
+            for (s, p) in row.iter_mut().zip(pixels.iter()) {
                 *s = PremulRgba::from_rgba8(*p);
             }
-            self.paint_over_tile(coord, &mut scratch);
-            for (p, s) in tile.pixels_mut().iter_mut().zip(&scratch) {
+            self.paint_over(&mut row, mask.row(y));
+            for (p, s) in pixels.iter_mut().zip(&row) {
                 *p = s.to_rgba8();
+            }
+        }
+    }
+
+    /// Writes the finished stroke into an 8-bit premultiplied surface
+    /// ([`StrokeBuffer::commit_tile`] for every touched tile with paint).
+    pub fn commit_into(&self, target: &mut TiledSurface<[u8; 4]>) -> DirtyTiles {
+        for coord in self.touched.iter() {
+            if self.mask_tile(coord).is_some() {
+                self.commit_tile(coord, target.tile_or_insert(coord));
             }
         }
         self.touched.clone()
