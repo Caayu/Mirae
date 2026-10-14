@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::Dab;
 use crate::rng::{StrokeRng, stream};
 
+/// Direction in which dabs are displaced.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScatterMode {
@@ -18,13 +19,18 @@ pub enum ScatterMode {
     Perpendicular,
     /// Uniformly inside a disc, like a spray.
     Radial,
+    /// Mode from a newer version; behaves as `Perpendicular`.
     #[serde(other)]
     Unknown,
 }
 
+/// Scatter settings of a preset. The displacement amount itself is the
+/// `scatter` brush property (a fraction of the dab diameter), so it can be
+/// driven by effectors.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScatterStyle {
+    /// Direction of displacement.
     pub mode: ScatterMode,
     /// Dabs per placement, `1..=16`.
     pub count: u32,
@@ -46,6 +52,7 @@ impl Default for ScatterStyle {
 }
 
 impl ScatterStyle {
+    /// Upper bound of [`ScatterStyle::count`]; validation clamps to it.
     pub const MAX_COUNT: u32 = 16;
 
     /// Emits the scattered copies of `base`. `amount` is the maximum

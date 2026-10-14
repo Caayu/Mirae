@@ -21,11 +21,15 @@ use crate::tip::{Tip, TipImage, TipImageSource, TipShape};
 /// Current preset format version.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// Descriptive information; never affects rendering.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Metadata {
+    /// Free text.
     pub author: String,
+    /// Free text shown to users.
     pub description: String,
+    /// Lower-case search tags.
     pub tags: Vec<String>,
 }
 
@@ -41,6 +45,8 @@ pub struct Properties {
     pub flow: BrushProperty,
     /// Step between dabs as a fraction of the tip's extent along the path.
     pub spacing: BrushProperty,
+    /// Edge softness of procedural tips, `0..=1` (1 = anti-aliased hard
+    /// edge, 0 = falloff over the whole radius).
     pub hardness: BrushProperty,
     /// Tip rotation, degrees.
     pub angle: BrushProperty,
@@ -48,6 +54,8 @@ pub struct Properties {
     pub aspect: BrushProperty,
     /// Maximum displacement as a fraction of the diameter.
     pub scatter: BrushProperty,
+    /// How strongly the paper texture modulates paint, `0..=1`; ignored
+    /// without a texture.
     pub texture_strength: BrushProperty,
 }
 
@@ -69,6 +77,7 @@ impl Default for Properties {
 
 /// Identity, valid range and storage of each parameter. UIs and validation
 /// iterate over this instead of hard-coding fields.
+#[allow(missing_docs)] // one variant per field of `Properties`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Param {
     Size,
@@ -83,6 +92,7 @@ pub enum Param {
 }
 
 impl Param {
+    /// Every parameter, in UI order.
     pub const ALL: [Self; 9] = [
         Self::Size,
         Self::Opacity,
@@ -95,6 +105,7 @@ impl Param {
         Self::TextureStrength,
     ];
 
+    /// Human-readable name (also used in validation warnings).
     pub fn name(self) -> &'static str {
         match self {
             Self::Size => "size",
@@ -121,6 +132,7 @@ impl Param {
         }
     }
 
+    /// Stable numeric identity seeding this parameter's random streams.
     pub fn slot(self) -> u32 {
         match self {
             Self::Size => slot::SIZE,
@@ -135,6 +147,7 @@ impl Param {
         }
     }
 
+    /// The property this parameter names.
     pub fn get(self, p: &Properties) -> &BrushProperty {
         match self {
             Self::Size => &p.size,
@@ -149,6 +162,7 @@ impl Param {
         }
     }
 
+    /// Mutable access to the property this parameter names.
     pub fn get_mut(self, p: &mut Properties) -> &mut BrushProperty {
         match self {
             Self::Size => &mut p.size,
@@ -182,7 +196,9 @@ pub struct Taper {
     pub end: f32,
     /// Scale at the very tip, `0..=1`.
     pub tip_scale: f32,
+    /// Taper narrows the dabs.
     pub affects_size: bool,
+    /// Taper fades the dabs.
     pub affects_opacity: bool,
 }
 
@@ -222,6 +238,7 @@ impl Taper {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Airbrush {
+    /// Deposit over time while the pen is down, even at rest.
     pub enabled: bool,
     /// Dabs per second at the pen position.
     pub rate: f32,
@@ -236,6 +253,7 @@ impl Default for Airbrush {
     }
 }
 
+/// What a stroke does to the layer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaintMode {
@@ -244,14 +262,18 @@ pub enum PaintMode {
     Paint,
     /// Remove alpha from the layer (destination-out).
     Erase,
+    /// Mode from a newer version; paints.
     #[serde(other)]
     Unknown,
 }
 
+/// How the finished stroke mask is applied.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Compositing {
+    /// Paint or erase.
     pub mode: PaintMode,
+    /// One-pixel analytic edge on dabs; off gives aliased (pixel-art) edges.
     pub anti_aliasing: bool,
 }
 
@@ -269,9 +291,11 @@ impl Default for Compositing {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StrokeSettings {
+    /// Smoothing algorithm.
     pub stabilizer: StabilizerKind,
     /// `0..=100`.
     pub stabilization: f32,
+    /// How samples are connected into a path.
     pub interpolation: InterpolationKind,
     /// Screen pixels of movement ignored as sensor noise.
     pub jitter_threshold: f32,
@@ -293,6 +317,7 @@ impl Default for StrokeSettings {
 /// understand load as `None`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[allow(missing_docs)] // same fields as `StrokeSettings`
 pub struct StrokeOverrides {
     #[serde(
         deserialize_with = "io::lenient",
@@ -349,6 +374,7 @@ impl StrokeOverrides {
         }
     }
 
+    /// The settings a stroke uses: each override, else the user's value.
     pub fn resolve(&self, user: &StrokeSettings) -> StrokeSettings {
         StrokeSettings {
             stabilizer: self.stabilizer.unwrap_or(user.stabilizer),
@@ -359,22 +385,39 @@ impl StrokeOverrides {
     }
 }
 
+/// A complete brush: everything needed to turn input into dabs. Plain data,
+/// serialized as versioned JSON (see [`io`] and `docs/adr/0008-*`).
+/// Load untrusted presets through [`io::from_json`], which migrates and
+/// validates; a preset built in code should go through
+/// [`BrushPreset::validate`] if its values are not known to be valid.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BrushPreset {
+    /// Format the preset was written in; always [`FORMAT_VERSION`] once
+    /// loaded.
     pub format_version: u32,
     /// Stable identifier, e.g. `tela.ink-pen`. Never reused for a
     /// different brush.
     pub id: String,
+    /// Display name.
     pub name: String,
+    /// Descriptive information.
     pub metadata: Metadata,
+    /// Shape of each dab.
     pub tip: Tip,
+    /// Modulatable parameters (base values + effectors).
     pub properties: Properties,
+    /// Paper texture, if any.
     pub texture: Option<TextureSettings>,
+    /// Scatter mode and jitter (the amount is `properties.scatter`).
     pub scatter: ScatterStyle,
+    /// Stroke-end narrowing.
     pub taper: Taper,
+    /// Time-based deposition.
     pub airbrush: Airbrush,
+    /// Paint or erase, anti-aliasing.
     pub compositing: Compositing,
+    /// Overrides of the user's stroke settings.
     pub stroke: StrokeOverrides,
 }
 
@@ -428,11 +471,14 @@ impl BrushPreset {
         }
     }
 
+    /// Dab radius in canvas pixels (half the evaluated size, tapered),
+    /// never below [`Self::MIN_RADIUS`].
     pub fn radius(&self, input: &DynamicsInput, taper: f32) -> f32 {
         let t = if self.taper.affects_size { taper } else { 1.0 };
         (self.properties.eval(Param::Size, input) * 0.5 * t).max(Self::MIN_RADIUS)
     }
 
+    /// Dab opacity ceiling `0..=1`, tapered if the taper affects opacity.
     pub fn opacity(&self, input: &DynamicsInput, taper: f32) -> f32 {
         let t = if self.taper.affects_opacity {
             taper

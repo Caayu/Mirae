@@ -10,6 +10,7 @@ use crate::tip::{DabShape, PreparedTip};
 /// of the provisional *tail*, which is re-emitted from scratch every time it
 /// changes (between `begin_tail` and the next `begin_tail`/`commit_tail`).
 pub trait DabSink {
+    /// One committed (final) dab.
     fn dab(&mut self, dab: &Dab);
     /// Several committed dabs, in order. Sinks may process them in bulk.
     fn dabs(&mut self, dabs: &[Dab]) {
@@ -17,7 +18,9 @@ pub trait DabSink {
             self.dab(d);
         }
     }
+    /// Discards the previous tail; the dabs that follow replace it.
     fn begin_tail(&mut self);
+    /// One provisional dab of the current tail.
     fn tail_dab(&mut self, dab: &Dab);
     /// Several tail dabs, in order.
     fn tail_dabs(&mut self, dabs: &[Dab]) {
@@ -33,11 +36,14 @@ pub trait DabSink {
 /// `tail`. Used by tests and analysis.
 #[derive(Clone, Debug, Default)]
 pub struct DabLog {
+    /// Final dabs, in order.
     pub committed: Vec<Dab>,
+    /// Current provisional tail.
     pub tail: Vec<Dab>,
 }
 
 impl DabLog {
+    /// The stroke as currently displayed: committed then tail.
     pub fn all(&self) -> impl Iterator<Item = &Dab> {
         self.committed.iter().chain(&self.tail)
     }
@@ -84,9 +90,13 @@ pub struct StrokeBuffer {
 /// Everything constant across the dabs of one stroke.
 #[derive(Clone, Debug, Default)]
 pub struct StampContext {
+    /// Tip, prepared once per stroke.
     pub tip: PreparedTip,
+    /// Paper texture, if the preset has one.
     pub texture: Option<CanvasTexture>,
+    /// Analytic one-pixel edge.
     pub anti_aliasing: bool,
+    /// Paint or erase when composited.
     pub mode: PaintMode,
     /// Allow large batches to be stamped on several threads.
     pub parallel: bool,
@@ -244,6 +254,7 @@ fn stamp_batch(
 }
 
 impl StrokeBuffer {
+    /// Empty stroke painting `color` (straight alpha).
     pub fn new(color: Rgba, ctx: StampContext) -> Self {
         Self {
             committed: TiledSurface::new(),
@@ -269,10 +280,13 @@ impl StrokeBuffer {
             .map_or(0.0, |t| t.get((x - ox) as u32, (y - oy) as u32))
     }
 
+    /// Every tile the stroke has touched (exactly the tiles an undo
+    /// snapshot needs).
     pub fn touched(&self) -> &DirtyTiles {
         &self.touched
     }
 
+    /// Tiles changed since the last call; the display recomposes these.
     pub fn take_dirty(&mut self) -> DirtyTiles {
         std::mem::take(&mut self.dirty)
     }

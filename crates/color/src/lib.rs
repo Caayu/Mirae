@@ -1,5 +1,10 @@
 //! Color representation and compositing math.
 //!
+//! **Responsibility:** color value types, alpha conventions, Porter-Duff
+//! `over`, 8-bit quantization, sRGB transfer functions.
+//! **Does not:** know about pixels in space (tiles, layers) or any device.
+//! **Depends on:** nothing. **Used by:** every crate that touches pixels.
+//!
 //! Colors are sRGB-encoded for now (blending happens in encoded space, which is
 //! what most painting software does by default). Linear-light blending can be
 //! added later by converting at the compositing boundary with the transfer
@@ -7,12 +12,17 @@
 //!
 //! Two alpha conventions are kept as distinct types so they cannot be mixed up:
 //! [`Rgba`] is straight (unassociated) alpha, used for user-facing colors;
-//! [`PremulRgba`] is premultiplied alpha, used for all compositing.
+//! [`PremulRgba`] is premultiplied alpha, used for all compositing
+//! (see `docs/adr/0001-premultiplied-alpha.md`).
+//!
+//! Invariants: [`PremulRgba`] holds `rgb <= a` when built through
+//! [`Rgba::premultiply`]; `over` is associative; RGBA8 round trips are exact.
 
 pub mod srgb;
 
 /// Straight-alpha color, components in `0.0..=1.0`.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[allow(missing_docs)] // channels
 pub struct Rgba {
     pub r: f32,
     pub g: f32,
@@ -36,6 +46,7 @@ impl Rgba {
 
 /// Premultiplied-alpha color, components in `0.0..=1.0` with `rgb <= a`.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[allow(missing_docs)] // channels
 pub struct PremulRgba {
     pub r: f32,
     pub g: f32,

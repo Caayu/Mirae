@@ -17,8 +17,11 @@ use crate::{BrushInput, Dab, DabSink, StampContext, StrokeBuffer};
 /// Counters for one stroke, for instrumentation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StrokeStats {
+    /// Input samples received.
     pub samples: u32,
+    /// Points of the flattened path.
     pub path_points: u32,
+    /// Dabs that are final.
     pub committed_dabs: u32,
     /// Dabs in the most recent tail rebuild.
     pub tail_dabs: u32,
@@ -69,6 +72,7 @@ pub struct StrokeParams {
 }
 
 impl StrokeParams {
+    /// Resolves the preset's stroke overrides against the user's settings.
     pub fn new(preset: &BrushPreset, user: &StrokeSettings, scale: f32, seed: u64) -> Self {
         Self {
             scale,
@@ -136,6 +140,7 @@ impl Default for StrokeProcessor {
 }
 
 impl StrokeProcessor {
+    /// An idle processor with buffers preallocated for a typical stroke.
     pub fn new() -> Self {
         let stroke = StrokeSettings::default();
         Self {
@@ -170,14 +175,17 @@ impl StrokeProcessor {
         }
     }
 
+    /// Between `begin*` and `finish`.
     pub fn is_active(&self) -> bool {
         self.active
     }
 
+    /// Counters of the current (or last) stroke.
     pub fn stats(&self) -> StrokeStats {
         self.stats
     }
 
+    /// The preset copied at the start of the current stroke.
     pub fn preset(&self) -> &BrushPreset {
         &self.preset
     }
@@ -208,6 +216,8 @@ impl StrokeProcessor {
         self.begin_with(preset, pressure_curve, &params, first, sink);
     }
 
+    /// Starts a stroke: copies `preset` and `pressure_curve` (later edits
+    /// do not affect it), resets every stage and processes `first`.
     pub fn begin_with(
         &mut self,
         preset: &BrushPreset,
@@ -252,6 +262,9 @@ impl StrokeProcessor {
         self.push(input, sink);
     }
 
+    /// Processes one input sample; ignored outside a stroke. Emits the dabs
+    /// that became final; the provisional tail is rebuilt by
+    /// [`StrokeProcessor::update_preview`].
     pub fn push(&mut self, input: BrushInput, sink: &mut impl DabSink) {
         if !self.active {
             return;
@@ -341,6 +354,8 @@ impl StrokeProcessor {
         self.tail_dirty = false;
     }
 
+    /// Ends the stroke: flushes every stage, lets the stabilizer catch up
+    /// with the last sample and makes the tail final.
     pub fn finish(&mut self, sink: &mut impl DabSink) {
         if !self.active {
             return;
@@ -545,19 +560,26 @@ pub(crate) fn resolve_dab(
 }
 
 /// Drives one stroke at a time into a [`StrokeBuffer`].
+///
+/// The public fields are read when a stroke begins; changing them during a
+/// stroke affects the next one. The engine owns no document state: the
+/// caller commits the buffer returned by [`BrushEngine::end_stroke`].
 #[derive(Debug, Default)]
 pub struct BrushEngine {
+    /// Brush used by the next stroke.
     pub preset: BrushPreset,
     /// The user's stroke settings; the preset may override them.
     pub stroke_defaults: StrokeSettings,
     /// Global pressure calibration applied before brush effectors.
     pub pressure_curve: Curve,
+    /// Paint color (straight alpha) of the next stroke.
     pub color: Rgba,
     processor: StrokeProcessor,
     stroke: Option<StrokeBuffer>,
 }
 
 impl BrushEngine {
+    /// Engine with black paint and default settings.
     pub fn new(preset: BrushPreset) -> Self {
         Self {
             preset,
@@ -566,6 +588,7 @@ impl BrushEngine {
         }
     }
 
+    /// A stroke is in progress.
     pub fn is_stroking(&self) -> bool {
         self.stroke.is_some()
     }
@@ -575,10 +598,12 @@ impl BrushEngine {
         self.stroke.as_ref()
     }
 
+    /// The stroke in progress, e.g. to take its dirty tiles.
     pub fn stroke_mut(&mut self) -> Option<&mut StrokeBuffer> {
         self.stroke.as_mut()
     }
 
+    /// Counters of the current (or last) stroke.
     pub fn stats(&self) -> StrokeStats {
         self.processor.stats()
     }
@@ -610,6 +635,7 @@ impl BrushEngine {
         self.stroke = Some(stroke);
     }
 
+    /// Adds a sample to the stroke in progress (ignored otherwise).
     pub fn add_input(&mut self, input: BrushInput) {
         if let Some(stroke) = self.stroke.as_mut() {
             self.processor.push(input, stroke);
@@ -624,6 +650,7 @@ impl BrushEngine {
         }
     }
 
+    /// Updates the view zoom (screen px per canvas px) mid-stroke.
     pub fn set_scale(&mut self, scale: f32) {
         self.processor.set_scale(scale);
     }

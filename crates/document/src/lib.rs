@@ -1,5 +1,21 @@
-//! The document model. It owns pixel data and layer properties and knows how
-//! to flatten itself; it does not know about brushes, input or rendering.
+//! The document model.
+//!
+//! **Responsibility:** the authoritative pixel data ([`RasterLayer`]s of
+//! premultiplied RGBA8 tiles), layer properties and per-tile composition
+//! ([`Document::compose_tile_into`]), with an optional [`Overlay`] for
+//! content that is not committed yet (the stroke preview).
+//! **Does not:** know about brushes, input, the view or the GPU. Brushes
+//! reach it only through the `Overlay` callbacks and by the app committing
+//! a finished stroke into a layer's tiles.
+//! **Depends on:** color, canvas. **Used by:** app, corpus (benchmark).
+//!
+//! Invariants: composition of a tile is a pure function of the layers and
+//! the overlay (preview and commit share the overlay's paint function);
+//! `compose_tile_into` does not allocate; pixels outside the document are
+//! cleared at composition (they may exist in layers).
+//!
+//! Phase 4 replaces the public fields with an API that keeps
+//! `active_layer` valid; today an out-of-range index panics.
 
 mod layer;
 
@@ -11,24 +27,32 @@ use tela_color::{PremulRgba, Rgba};
 /// Content drawn directly above one layer while compositing, e.g. the
 /// preview of a stroke that has not been committed yet.
 pub struct Overlay<'a> {
+    /// Index of the layer the overlay is drawn on (before that layer's
+    /// opacity is applied, as the committed result would be).
     pub above_layer: usize,
+    /// Draws the overlay into one tile of premultiplied pixels.
     pub paint: &'a dyn Fn(TileCoord, &mut [PremulRgba]),
     /// Tiles the overlay may draw into.
     pub covers: &'a dyn Fn(TileCoord) -> bool,
 }
 
+/// A raster document: size, paper color and a layer stack.
 #[derive(Clone, Debug)]
 pub struct Document {
+    /// Canvas pixels.
     pub width: u32,
+    /// Canvas pixels.
     pub height: u32,
     /// Paper color shown under all layers.
     pub background: Rgba,
     /// Bottom to top.
     pub layers: Vec<RasterLayer>,
+    /// Index into `layers` that painting targets.
     pub active_layer: usize,
 }
 
 impl Document {
+    /// White document with one empty layer.
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             width,
@@ -39,10 +63,13 @@ impl Document {
         }
     }
 
+    /// `(0, 0)..(width, height)` in canvas pixels.
     pub fn bounds(&self) -> IRect {
         IRect::from_size(self.width, self.height)
     }
 
+    /// The layer painting targets. Panics if `active_layer` is out of
+    /// range (an internal bug, see the crate docs).
     pub fn active_layer_mut(&mut self) -> &mut RasterLayer {
         &mut self.layers[self.active_layer]
     }

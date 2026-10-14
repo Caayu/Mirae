@@ -1,9 +1,17 @@
 //! Minimal brush-editing UI built with egui.
 //!
+//! **Responsibility:** the brush panel ([`BrushPanel`]), the curve editor
+//! ([`curve_editor`]), egui input/output plumbing ([`UiLayer`]) and
+//! reporting which screen regions the UI covers (pen passthrough).
+//! **Does not:** own any authoritative state. It edits data it is lent for
+//! one frame ([`PanelModel`]) and returns requests it cannot fulfil
+//! ([`PanelAction`]). **Depends on:** brush, renderer, egui, egui-wgpu,
+//! egui-winit, wgpu, winit. **Used by:** app only.
+//!
 //! This crate is the only place egui appears. It edits plain data from
 //! `tela-brush` (presets, curves, stroke settings) and draws through the
 //! renderer's generic [`FrameOverlay`] hook; the engine crates know nothing
-//! about it.
+//! about it. See docs/architecture/ui.md.
 
 pub mod brush_panel;
 pub mod curve_editor;

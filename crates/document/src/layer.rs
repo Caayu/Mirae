@@ -5,6 +5,7 @@ use tela_color::PremulRgba;
 /// layer phase adds the rest.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BlendMode {
+    /// Porter-Duff source-over.
     #[default]
     Normal,
 }
@@ -27,10 +28,15 @@ impl BlendMode {
 /// Pixel layer stored as premultiplied sRGB RGBA8 tiles.
 #[derive(Clone, Debug)]
 pub struct RasterLayer {
+    /// Display name.
     pub name: String,
+    /// Hidden layers are skipped by composition.
     pub visible: bool,
+    /// `0..=1`, applied at composition.
     pub opacity: f32,
+    /// How the layer combines with what is below.
     pub blend_mode: BlendMode,
+    /// Premultiplied sRGB-encoded RGBA8, sparse.
     pub pixels: TiledSurface<[u8; 4]>,
 }
 

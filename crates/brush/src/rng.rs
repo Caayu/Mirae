@@ -15,6 +15,7 @@ pub(crate) fn mix64(mut z: u64) -> u64 {
 
 /// Independent random sequences used by the engine. Each consumer has its
 /// own stream so values never correlate across uses.
+#[allow(missing_docs)]
 pub mod stream {
     pub const SCATTER_A: u32 = 1;
     pub const SCATTER_B: u32 = 2;
@@ -25,22 +26,28 @@ pub mod stream {
     pub const NOISE: u32 = 1 << 24;
 }
 
+/// Random source of one stroke: a seed, nothing else. Every value is
+/// derived from `(seed, stream, index)` (counter-based, SplitMix64 mixing),
+/// so values do not depend on how many were drawn before or in what order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct StrokeRng {
     seed: u64,
 }
 
 impl StrokeRng {
+    /// Generator for the stroke with this seed.
     pub fn new(seed: u64) -> Self {
         Self {
             seed: mix64(seed ^ 0x7E1A_5EED_0000_0001),
         }
     }
 
+    /// The mixed seed (not the value passed to `new`).
     pub fn seed(&self) -> u64 {
         self.seed
     }
 
+    /// 64 random bits for `(stream, index)`.
     pub fn u64(&self, stream: u32, index: u64) -> u64 {
         mix64(
             self.seed

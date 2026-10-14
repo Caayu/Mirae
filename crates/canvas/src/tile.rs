@@ -102,12 +102,14 @@ pub struct TiledSurface<P> {
 }
 
 impl<P: Copy + Default> TiledSurface<P> {
+    /// Empty plane (no tiles allocated).
     pub fn new() -> Self {
         Self {
             tiles: HashMap::new(),
         }
     }
 
+    /// The tile at `c`, if allocated.
     pub fn tile(&self, c: TileCoord) -> Option<&Tile<P>> {
         self.tiles.get(&c)
     }
@@ -129,6 +131,8 @@ impl<P: Copy + Default> TiledSurface<P> {
         self.tiles.remove(&c)
     }
 
+    /// Allocated tiles, in **unspecified** order (callers that need
+    /// determinism sort or collect into [`DirtyTiles`]).
     pub fn tile_coords(&self) -> impl Iterator<Item = TileCoord> + '_ {
         self.tiles.keys().copied()
     }

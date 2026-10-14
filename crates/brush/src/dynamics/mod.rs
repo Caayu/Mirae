@@ -22,6 +22,7 @@ use crate::rng::{StrokeRng, stream};
 
 /// Stable numeric identity of each property. It seeds the property's random
 /// streams, so it must never change once presets exist.
+#[allow(missing_docs)]
 pub mod slot {
     pub const SIZE: u32 = 0;
     pub const OPACITY: u32 = 1;
@@ -34,20 +35,26 @@ pub mod slot {
     pub const TEXTURE: u32 = 8;
 }
 
-/// Which inputs the device actually reported.
+/// Which inputs the device actually reported. An effector reading an input
+/// that is not reported is skipped (neutral), never fed a fake value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputCaps {
+    /// Pressure is measured (not the 1.0 placeholder).
     pub pressure: bool,
+    /// Tilt is measured.
     pub tilt: bool,
+    /// Barrel rotation is measured.
     pub rotation: bool,
 }
 
 impl InputCaps {
+    /// Position only (mouse).
     pub const NONE: Self = Self {
         pressure: false,
         tilt: false,
         rotation: false,
     };
+    /// Every optional input (full-featured pen).
     pub const ALL: Self = Self {
         pressure: true,
         tilt: true,
@@ -60,6 +67,7 @@ impl InputCaps {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DynamicsSource {
+    /// Pen pressure after the device pressure curve, `0..=1`.
     Pressure,
     /// Screen-space speed, `1.0` at [`DynamicsInput::SPEED_FOR_FULL`].
     Speed,
@@ -74,10 +82,12 @@ pub enum DynamicsSource {
     /// Distance travelled since the stroke start, `1.0` after `length`
     /// canvas pixels (stroke progress over a known length).
     Distance {
+        /// Canvas pixels for the full `0 -> 1` ramp; `<= 0` reads `1`.
         length: f32,
     },
     /// Dab number modulo `period`, as a fraction of the period.
     DabIndex {
+        /// Dabs per cycle; `0` is treated as `1`.
         period: u32,
     },
     /// Independent uniform value per dab.
@@ -85,6 +95,7 @@ pub enum DynamicsSource {
     /// Smooth value noise along the travelled distance; `frequency` is in
     /// lattice points per canvas pixel.
     Noise {
+        /// Lattice points per canvas pixel; negative is treated as `0`.
         frequency: f32,
     },
     /// Placeholder for sources added by newer versions; always neutral.
@@ -120,16 +131,22 @@ impl DynamicsSource {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CombineMode {
+    /// `acc * v` (the usual "pressure scales size").
     #[default]
     Multiply,
+    /// `acc + v`.
     Add,
+    /// `v`.
     Replace,
+    /// `min(acc, v)`.
     Min,
+    /// `max(acc, v)`.
     Max,
     /// Angles only: rotate the running angle toward the source's angle by
     /// the effector value (`0` = ignore, `1` = follow exactly), along the
     /// shortest arc. Linear blending of angles would jump at the 0°/360° wrap.
     Follow,
+    /// Mode from a newer version; leaves the value unchanged.
     #[serde(other)]
     Unknown,
 }
@@ -137,20 +154,27 @@ pub enum CombineMode {
 /// Inputs available when evaluating dynamics for one dab.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DynamicsInput {
+    /// Which of the device inputs below are real.
     pub caps: InputCaps,
+    /// Normalized `0..=1`, after the device pressure curve.
     pub pressure: f32,
     /// Screen pixels per second.
     pub speed: f32,
-    /// Radians from vertical along x/y.
+    /// Radians from vertical along canvas x, `-π/2..=π/2`.
     pub tilt_x: f32,
+    /// Radians from vertical along canvas y, `-π/2..=π/2`.
     pub tilt_y: f32,
-    /// Radians.
+    /// Barrel rotation, radians `0..2π`.
     pub rotation: f32,
-    /// Direction of travel, radians.
+    /// Direction of travel, radians (canvas space, y down); meaningless
+    /// unless [`DynamicsInput::has_direction`].
     pub direction: f32,
     /// Canvas pixels travelled since the stroke started.
     pub distance: f32,
+    /// Sequential number of the dab within the stroke (airbrush dabs use a
+    /// separate high range).
     pub dab_index: u64,
+    /// The stroke's random source; random sources read it at `dab_index`.
     pub rng: StrokeRng,
 }
 
@@ -247,11 +271,18 @@ impl DynamicsInput {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Effector {
+    /// Disabled effectors are kept (for the UI) but not evaluated.
     pub enabled: bool,
+    /// Input read, normalized to `0..=1`.
     pub source: DynamicsSource,
+    /// Response `0..=1 -> 0..=1`.
     pub curve: Curve,
+    /// How the output merges into the running value.
     pub mode: CombineMode,
+    /// Output at curve value 0, in the property's own unit (e.g. degrees
+    /// for angle, a factor for `Multiply`). For `Follow`, unused.
     pub min: f32,
+    /// Output at curve value 1. For `Follow`, the follow amount `0..=1`.
     pub max: f32,
 }
 
@@ -278,6 +309,7 @@ impl Effector {
         }
     }
 
+    /// Same effector with another combine mode and output range.
     pub fn with_mode(mut self, mode: CombineMode, min: f32, max: f32) -> Self {
         self.mode = mode;
         self.min = min;
@@ -321,7 +353,10 @@ pub fn angle_delta(a: f32, b: f32, period: f32) -> f32 {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BrushProperty {
+    /// Value before effectors, in the property's unit (see
+    /// [`crate::preset::Properties`]).
     pub base: f32,
+    /// Applied in order; at most [`BrushProperty::MAX_EFFECTORS`] are read.
     pub effectors: Vec<Effector>,
 }
 
@@ -331,6 +366,7 @@ impl BrushProperty {
     /// streams with the next property. Validation truncates longer lists.
     pub const MAX_EFFECTORS: usize = 64;
 
+    /// A property with no effectors.
     pub fn constant(base: f32) -> Self {
         Self {
             base,
@@ -338,6 +374,7 @@ impl BrushProperty {
         }
     }
 
+    /// Appends an effector (builder style).
     pub fn with(mut self, effector: Effector) -> Self {
         self.effectors.push(effector);
         self

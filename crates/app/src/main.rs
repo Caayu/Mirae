@@ -1,3 +1,13 @@
+//! Tela desktop application: the composition layer.
+//!
+//! **Responsibility:** the window and event loop (winit), wiring input
+//! (Windows Ink + mouse) to the brush engine, committing strokes into the
+//! document, recomposing dirty tiles, presenting through the renderer and
+//! running the UI. It owns the authoritative application state
+//! (document, view, tools/presets, user settings).
+//! **Does not:** implement brush, composition or rendering logic itself.
+//! **Depends on:** every other crate except corpus.
+
 mod app;
 mod stats;
 mod tools;

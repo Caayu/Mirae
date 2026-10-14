@@ -1,5 +1,12 @@
 //! Presents the composed canvas with wgpu.
 //!
+//! **Responsibility:** GPU device/surface, the display texture and its mips,
+//! drawing the canvas under a [`ViewTransform`], an offscreen target with
+//! [`Renderer::read_pixels`] for tests, and the [`FrameOverlay`] hook.
+//! **Does not:** see or modify the document, layers, brushes or UI; it
+//! only receives finished tiles. **Depends on:** canvas, wgpu, glam,
+//! bytemuck, log. **Used by:** app; ui implements `FrameOverlay`.
+//!
 //! The renderer never sees the document model: callers hand it finished
 //! premultiplied RGBA8 tiles and a view transform.
 //!
@@ -17,12 +24,19 @@ use wgpu::util::DeviceExt;
 
 use crate::mip::{MipChain, TILE_LEVELS};
 
+/// Why the renderer could not start or accept a document.
 #[derive(Debug)]
 pub enum RendererError {
+    /// The window surface could not be created.
     Surface(wgpu::CreateSurfaceError),
+    /// No GPU adapter fits.
     Adapter(wgpu::RequestAdapterError),
+    /// The device could not be opened.
     Device(wgpu::RequestDeviceError),
+    /// The adapter cannot present to this surface.
     UnsupportedSurface,
+    /// The document exceeds the GPU's maximum texture size (no paging yet).
+    #[allow(missing_docs)]
     DocumentTooLarge { width: u32, height: u32, max: u32 },
 }
 
@@ -47,15 +61,19 @@ impl std::error::Error for RendererError {}
 
 /// What to draw this frame besides the canvas texture itself.
 pub struct Frame<'a> {
+    /// Canvas -> screen mapping.
     pub view: &'a ViewTransform,
-    /// Straight-alpha sRGB colors.
+    /// Paper color under the layers, straight-alpha sRGB `0..=1`.
     pub paper: [f32; 4],
+    /// Background outside the document, straight-alpha sRGB `0..=1`.
     pub workspace: [f32; 4],
 }
 
 /// Extra drawing on top of the canvas (e.g. UI). Receives the frame's
 /// encoder and target; the renderer knows nothing about what it draws.
 pub trait FrameOverlay {
+    /// Records drawing into `encoder` targeting `target` (`size` in
+    /// physical pixels), after the canvas pass.
     fn draw(
         &mut self,
         device: &wgpu::Device,

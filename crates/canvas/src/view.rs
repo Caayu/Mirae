@@ -55,14 +55,17 @@ impl ViewTransform {
         self.canvas_to_screen().inverse()
     }
 
+    /// Canvas pixels -> screen pixels.
     pub fn to_screen(&self, p: Vec2) -> Vec2 {
         self.canvas_to_screen().transform_point2(p)
     }
 
+    /// Screen pixels -> canvas pixels.
     pub fn to_canvas(&self, p: Vec2) -> Vec2 {
         self.screen_to_canvas().transform_point2(p)
     }
 
+    /// Moves the canvas by a screen-pixel delta.
     pub fn pan_by(&mut self, screen_delta: Vec2) {
         self.pan += screen_delta;
     }
