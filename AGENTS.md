@@ -1,6 +1,8 @@
 # Agent instructions
 
-1. Read `docs/AI_HANDOFF.md` first, then `docs/architecture/ARCHITECTURE.md`.
+1. Read `docs/AI_HANDOFF.md` first, then the documents it lists as
+   mandatory (architecture, invariants, `docs/PARITY.md`, status, roadmap,
+   current phase plan).
 2. Run the baseline before changing anything:
    `powershell -ExecutionPolicy Bypass -File scripts\check.ps1` (or
    `cargo test --workspace --release` + clippy `-D warnings`). Note the test
@@ -24,5 +26,11 @@
 10. Small commits with explanatory messages ending with the repository's
     `Co-Authored-By:` line. Never rewrite history.
 11. Clean-room: no decompiled code, proprietary assets, shaders, presets or
-    formats (`docs/CLEAN_ROOM.md`).
-12. Never advance to the next phase automatically; wait for the owner.
+    formats (`docs/CLEAN_ROOM.md`). The parity reference (Clip Studio
+    Paint) is compared only as a black box.
+12. Never advance to the next phase or subphase automatically; wait for
+    the owner.
+13. Every subphase ends with a parity gate: record what was implemented,
+    compared and still differs in `docs/PARITY.md` and `docs/parity/`.
+    Behaviour the reference defines is observed before it is implemented.
+    No invented percentages.

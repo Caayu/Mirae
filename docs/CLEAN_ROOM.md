@@ -49,6 +49,25 @@ studied from the outside; the implementation is original.
   it — schema, names, values, code, assets — may be used in Tela. Do not
   consult or import it when working on Tela.
 
+## Black-box comparison
+
+Tela's parity reference is Clip Studio Paint ([PARITY.md](PARITY.md)).
+Comparisons with it are behavioural only:
+
+- **Allowed:** running the application and operating its UI as a user
+  (including automated mouse/keyboard/pen input), screen captures and
+  measurements of what it displays, files it exports through its normal
+  UI in open formats (PNG), timing measured from the outside, its public
+  user documentation.
+- **Not allowed:** reading its executable, libraries, memory or traffic;
+  opening its installation or user-data files (presets, brushes,
+  materials, settings, databases); using its proprietary file formats as
+  a source; reusing the earlier binary analysis mentioned above.
+- Each comparison is recorded with version, environment, steps,
+  observation and Tela's result in `docs/parity/`. Tela's implementation
+  of an observed behaviour is derived from that description, public
+  mathematics and our own reasoning.
+
 ## When in doubt
 
 Describe the desired behaviour in your own words, derive the math from

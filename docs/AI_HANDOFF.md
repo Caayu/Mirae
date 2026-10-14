@@ -1,22 +1,34 @@
 # READ THIS FIRST WHEN STARTING A NEW AI SESSION.
 
 This file is enough to continue the project without any previous
-conversation. Read it fully, then `docs/architecture/ARCHITECTURE.md`.
+conversation. Read it fully, then these, all **mandatory**:
+
+1. [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md)
+2. [architecture/invariants.md](architecture/invariants.md)
+3. [PARITY.md](PARITY.md) — parity goal, states, the parity gate every
+   subphase must pass, and the current matrix
+4. [STATUS.md](STATUS.md), [ROADMAP.md](ROADMAP.md) and the current phase
+   plan ([phase4/PLAN.md](phase4/PLAN.md))
 
 ## 1. Mission
 
 Build **Tela**, a professional raster illustration editor in Rust (wgpu +
-winit), aiming over many phases at behaviour comparable to established
-illustration software, developed strictly **clean-room**
-([CLEAN_ROOM.md](CLEAN_ROOM.md)). Quality bar: a Rust codebase that looks
+winit). The long-term goal is very high functional, behavioural,
+qualitative and performance **parity with Clip Studio Paint** for
+professional illustration workflows ([PARITY.md](PARITY.md)), developed
+strictly **clean-room** ([CLEAN_ROOM.md](CLEAN_ROOM.md)): the reference is
+only observed as a black box. Quality bar: a Rust codebase that looks
 maintained by an experienced team — small commits, tests for math,
 measured performance, documented decisions.
 
 ## 2. Current state
 
-Phase 3.5 (architecture audit/handoff) is complete. **Phase 4 has not
-started and must not start without the owner's explicit approval.** 207
-tests pass; fmt/clippy/doc are clean. Facts: [STATUS.md](STATUS.md).
+Phase 4 (layers and document) is approved as a plan
+([phase4/PLAN.md](phase4/PLAN.md)) and runs subphase by subphase:
+**4A** (layer API) is the only one authorized so far. Every later subphase
+(4B…4G) needs the owner's explicit approval, and every subphase ends with
+a **parity gate** recorded in [PARITY.md](PARITY.md). Facts:
+[STATUS.md](STATUS.md).
 
 ## 3. Repository
 
@@ -181,12 +193,29 @@ deliberately: `TELA_UPDATE_GOLDEN=1 cargo test --release -p tela-corpus --test g
 
 ## 21. Next steps
 
-1. Wait for the owner to approve phase 4 (do not start it on your own).
-2. When approved, refine the phase 4 proposal in [ROADMAP.md](ROADMAP.md)
-   into a plan (layer API and undo first, then blend modes, masks/clipping/
-   alpha lock, then 16-bit storage, then I/O), with ADRs for the storage and
-   file-format decisions.
+1. Follow [phase4/PLAN.md](phase4/PLAN.md) one subphase at a time
+   (4A → 4B → 4C → 4D → 4E → 4F → 4G); never start the next subphase
+   without the owner's explicit approval.
+2. Close every subphase with its parity gate ([PARITY.md](PARITY.md)).
+   Where the reference defines a behaviour (clipping, masks, alpha lock,
+   blend results), observe it **before** implementing.
 3. Opportunistically: validate on a real tablet if one becomes available.
+
+## 21a. Comparing with the reference
+
+Clip Studio Paint EX 5.1.5 (trial) is installed on the development machine
+(`C:\Program Files\CELSYS\CLIP STUDIO 1.5\CLIP STUDIO PAINT\CLIPStudioPaint.exe`).
+Drive it as a user: start it, maximize it, click/drag with
+`SetCursorPos` + `mouse_event`, send keys with `keybd_event`, and read the
+result from screen captures (`Graphics.CopyFromScreen`) and pixel
+measurements. Its UI is in Portuguese. Bring it to the front by sending an
+Alt key event before `SetForegroundWindow`, and use `ShowWindow(h, 3)`;
+`SW_RESTORE` un-maximizes it. Layer deletion asks for confirmation (Enter
+confirms); never tick "do not show again" or change its settings. Do not
+right-click the canvas with a drawing tool: it picks the colour. **Never**
+open its install or user-data files (presets, settings, databases); see
+[CLEAN_ROOM.md](CLEAN_ROOM.md#black-box-comparison). Record each comparison
+in `docs/parity/`.
 
 ## 22. Do not change without strong justification (and an ADR)
 
@@ -226,3 +255,6 @@ history. Public math/papers and observed behaviour are fine.
   repository end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
   (use the attribution your own session specifies, if different).
 - Phase boundaries respected: never advance a phase automatically.
+- At the end of a subphase: its parity gate is recorded in
+  [PARITY.md](PARITY.md) and `docs/parity/` (implemented, compared,
+  remaining differences).

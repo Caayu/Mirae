@@ -7,7 +7,8 @@ audit and handoff). Update this file at the end of every phase.
 
 | | |
 |---|---|
-| Current phase | 3.5 complete; phase 4 **not started** (awaiting approval) |
+| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A in progress**; 4B–4G await approval |
+| Parity | Tracked in [PARITY.md](PARITY.md); nothing compared with the reference before phase 4 |
 | Tests | **207** passing, 0 failing (phase 3 ended at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
