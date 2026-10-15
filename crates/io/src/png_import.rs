@@ -54,15 +54,16 @@ impl FromStraight for [u16; 4] {
     }
 }
 
-fn png_err(e: png::DecodingError) -> IoError {
+/// A decoding error; `limits` names the decoder's memory limit if hit.
+fn png_err(e: png::DecodingError, limits: &Limits) -> IoError {
     match e {
         png::DecodingError::IoError(e) if e.kind() != std::io::ErrorKind::UnexpectedEof => {
             IoError::Filesystem(e)
         }
         png::DecodingError::LimitsExceeded => IoError::LimitExceeded {
             what: "bytes to decode the image",
-            limit: Limits::default().max_image_decode_bytes,
-            found: u64::MAX,
+            limit: limits.max_image_decode_bytes,
+            found: None,
         },
         other => IoError::InvalidImage(other.to_string()),
     }
@@ -131,7 +132,9 @@ fn decode<P: FromStraight, R: BufRead + Seek>(
             limits.max_image_decode_bytes,
         )?;
         let mut buf = vec![0; size];
-        let frame = reader.next_frame(&mut buf).map_err(png_err)?;
+        let frame = reader
+            .next_frame(&mut buf)
+            .map_err(|e| png_err(e, limits))?;
         for (y, line) in buf
             .chunks_exact(frame.line_size)
             .take(h as usize)
@@ -142,7 +145,7 @@ fn decode<P: FromStraight, R: BufRead + Seek>(
         }
     } else {
         let mut y = 0;
-        while let Some(line) = reader.next_row().map_err(png_err)? {
+        while let Some(line) = reader.next_row().map_err(|e| png_err(e, limits))? {
             if y >= h {
                 break;
             }
@@ -168,7 +171,7 @@ fn read_unguarded<R: BufRead + Seek>(
     let bytes = usize::try_from(limits.max_image_decode_bytes).unwrap_or(usize::MAX);
     let mut dec = png::Decoder::new_with_limits(r, png::Limits { bytes });
     dec.set_transformations(png::Transformations::EXPAND);
-    let reader = dec.read_info().map_err(png_err)?;
+    let reader = dec.read_info().map_err(|e| png_err(e, limits))?;
     let info = reader.info();
     let (width, height) = info.size();
     let side = u64::from(width.max(height));

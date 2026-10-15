@@ -339,7 +339,13 @@ impl App {
                 ));
             }
             Err(e) => {
+                // The document refused the pixels (it never happens with
+                // a valid image, but must not pass unnoticed).
                 log::error!(target: "tela::io", "import refused: {e}");
+                self.file.notice = Some(format!(
+                    "Could not import \u{201c}{}\u{201d}.\n\n{e}",
+                    file_name(path)
+                ));
                 self.file.status = Some(format!("Could not import: {e}"));
             }
         }

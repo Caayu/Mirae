@@ -14,7 +14,7 @@ Policy:
 - Raw pointers and raw handles do not cross public APIs. Wrappers expose
   safe types (`InkBackend`, `clock::now`).
 
-## Inventory (phase 3.5)
+## Inventory (audited at the end of phase 4, 4G)
 
 | Location | Kind | What | Status |
 |---|---|---|---|
@@ -24,6 +24,9 @@ Policy:
 | `crates/tablet/examples/pointer_devices.rs` | example | Device enumeration | Documented |
 | `crates/corpus/examples/stamp_bench.rs` | benchmark | Counting `GlobalAlloc` forwarding to `System` | Documented |
 | `crates/corpus/examples/blend_bench.rs` | benchmark | Counting `GlobalAlloc` forwarding to `System` (same as stamp_bench) | Documented |
+| `crates/corpus/examples/mask_clip_bench.rs` | benchmark | Counting `GlobalAlloc` forwarding to `System` (phase 4D; row added in the 4G audit) | Documented |
+| `crates/corpus/examples/depth_bench.rs` | benchmark | Counting `GlobalAlloc` forwarding to `System` (phase 4E; row added in the 4G audit) | Documented |
+| `crates/corpus/examples/doc_bench.rs` | benchmark | Counting `GlobalAlloc` (allocations and live bytes) forwarding to `System` | Documented |
 | `crates/io/examples/io_bench.rs` | benchmark | Counting `GlobalAlloc` (live and peak bytes) forwarding to `System` | Documented |
 | `crates/brush/tests/allocation.rs` | test | Counting `GlobalAlloc` (thread-local counters, const-initialized) forwarding to `System` | Documented |
 

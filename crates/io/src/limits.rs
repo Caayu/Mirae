@@ -54,7 +54,11 @@ impl Default for Limits {
 /// `Err(LimitExceeded)` when `found > limit`.
 pub(crate) fn check(what: &'static str, found: u64, limit: u64) -> Result<(), crate::IoError> {
     if found > limit {
-        return Err(crate::IoError::LimitExceeded { what, limit, found });
+        return Err(crate::IoError::LimitExceeded {
+            what,
+            limit,
+            found: Some(found),
+        });
     }
     Ok(())
 }

@@ -30,11 +30,12 @@ pub enum IoError {
     /// A tile's entry is missing, has the wrong size or fails its checksum.
     CorruptTile { entry: String, problem: String },
     /// The file declares more than the configured [`Limits`](crate::Limits)
-    /// allow (checked before the data is read).
+    /// allow (checked before the data is read). `found` is the declared
+    /// amount when known (a decoder's own limit does not say).
     LimitExceeded {
         what: &'static str,
         limit: u64,
-        found: u64,
+        found: Option<u64>,
     },
     /// Valid input this version cannot represent faithfully (e.g. a blend
     /// mode it does not know, a transparent export it cannot compose).
@@ -67,9 +68,10 @@ impl fmt::Display for IoError {
                     "the document's pixel data is damaged ({entry}: {problem})"
                 )
             }
-            IoError::LimitExceeded { what, limit, found } => {
-                write!(f, "too large: {found} {what} (the limit is {limit})")
-            }
+            IoError::LimitExceeded { what, limit, found } => match found {
+                Some(found) => write!(f, "too large: {found} {what} (the limit is {limit})"),
+                None => write!(f, "too large: more {what} than the limit of {limit}"),
+            },
             IoError::Unsupported(m) => write!(f, "not supported: {m}"),
             IoError::InvalidImage(m) => write!(f, "invalid image: {m}"),
             IoError::Internal(m) => write!(f, "internal error while reading the file: {m}"),
