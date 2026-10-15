@@ -1,7 +1,8 @@
 //! Color representation and compositing math.
 //!
 //! **Responsibility:** color value types, alpha conventions, Porter-Duff
-//! `over`, 8-bit quantization, sRGB transfer functions.
+//! `over`, 8- and 16-bit quantization and the stored pixel formats
+//! ([`StoragePixel`], [`PixelDepth`]), sRGB transfer functions.
 //! **Does not:** know about pixels in space (tiles, layers) or any device.
 //! **Depends on:** nothing. **Used by:** every crate that touches pixels.
 //!
@@ -16,9 +17,13 @@
 //! (see `docs/adr/0001-premultiplied-alpha.md`).
 //!
 //! Invariants: [`PremulRgba`] holds `rgb <= a` when built through
-//! [`Rgba::premultiply`]; `over` is associative; RGBA8 round trips are exact.
+//! [`Rgba::premultiply`]; `over` is associative; RGBA8 and RGBA16 round
+//! trips are exact; 8 → 16 → 8 is the identity.
 
 pub mod srgb;
+mod storage;
+
+pub use storage::{PixelDepth, StoragePixel, narrow16, unorm16, widen8};
 
 /// Straight-alpha color, components in `0.0..=1.0`.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -103,6 +108,27 @@ impl PremulRgba {
             p[1] as f32 * INV,
             p[2] as f32 * INV,
             p[3] as f32 * INV,
+        )
+    }
+
+    /// Quantizes to 16 bits per channel (round to nearest, clamped).
+    pub fn to_rgba16(self) -> [u16; 4] {
+        [
+            unorm16(self.r),
+            unorm16(self.g),
+            unorm16(self.b),
+            unorm16(self.a),
+        ]
+    }
+
+    /// Decodes 16-bit channels. A widened 8-bit pixel (`v·257`) decodes to
+    /// exactly the values of [`PremulRgba::from_rgba8`].
+    pub fn from_rgba16(p: [u16; 4]) -> Self {
+        Self::new(
+            storage::decode16(p[0]),
+            storage::decode16(p[1]),
+            storage::decode16(p[2]),
+            storage::decode16(p[3]),
         )
     }
 }
