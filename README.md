@@ -1,4 +1,4 @@
-# Tela
+# Mirae
 
 A professional raster illustration editor written from scratch in Rust
 (wgpu + winit), with a deterministic, tested brush engine. Developed
@@ -7,8 +7,8 @@ is original ([docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md)).
 
 **Status:** phases 1–3 complete (canvas, tablet input, brush engine);
 phase 3.5 (architecture audit and handoff) complete; phase 4 in progress:
-4A (layer stack) and 4B (undo/redo) complete, 4C–4G (blend modes, masks,
-16-bit, I/O) planned. 240 tests passing. Windows is the
+4A (layer stack), 4B (undo/redo) and 4C (blend modes) complete, 4D–4G
+(masks, 16-bit, I/O) planned. 255 tests passing. Windows is the
 primary platform (Windows Ink); no physical tablet has been validated yet.
 Details: [docs/STATUS.md](docs/STATUS.md).
 

@@ -235,8 +235,10 @@ App::redraw (one frame)
   stale += stroke.take_dirty()
   for tile in stale:
      document.compose_tile_into(tile, overlay = stroke preview, scratch)
-        layers bottom->top, premultiplied f32; the stroke is painted onto its
-        target layer before that layer's opacity (preview == commit)
+        backdrop: transparent, or the opaque paper if a non-Normal layer
+        draws in this tile; layers bottom->top in premultiplied f32, each
+        with its blend mode; the stroke is painted onto its target layer
+        before that layer's opacity and blend (preview == commit)
      renderer.upload_tile(tile, rgba8)  -> CPU mip chain -> display texture
   ui.build(...)                      egui panel, returns occupied rects
   renderer.render_with(frame, overlay = UiLayer)
@@ -249,6 +251,14 @@ tiles update independently). The fragment shader uses trilinear sampling
 when minifying and anti-aliased nearest when magnifying, then composites
 over the paper color (ADR 0004). The renderer only receives finished tiles
 and a `ViewTransform`; it cannot reach the document.
+
+Blend modes (ADR 0016) use the W3C *Compositing and Blending Level 1*
+formula and blend functions on the stored **sRGB-encoded** values (chosen
+by measuring the reference: within 1–2/255, linear light 54–196/255 off).
+Because the reference's paper is a layer that blend modes see, a tile in
+which any visible non-Normal layer draws is composed over the opaque paper
+colour; Normal-only tiles keep the transparent backdrop (bit-identical to
+the pre-4C output) and get the paper in the display shader.
 
 ## 9. UI overlay
 
@@ -290,7 +300,7 @@ composition cost. See [golden-tests.md](../golden-tests.md) and
 
 ## 12. Architectural limits (today)
 
-- Flat layer stack (no groups); `BlendMode::Normal` only (4C).
+- Flat layer stack (no groups); 17 blend modes; blending over a translucent backdrop without paper does not match the reference (D-4C-1, unreachable today).
 - Undo history is in memory only, uncompressed, 256 KiB per changed tile per step (ADR 0015).
 - 8-bit layer storage; display texture limited to the GPU's max texture size.
 - Document I/O does not exist.

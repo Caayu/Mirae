@@ -66,6 +66,15 @@ undo and redo) and under tiny limits. Case counts are kept modest
 against planted bugs (undo ignoring the active layer, absent tiles not
 restored, an extra tile copy).
 
+### Parity tests (measured reference data)
+
+`crates/document/tests/blend_parity.rs` composes the 3 400 probe
+combinations through `Document` and compares them with the reference's
+measured results in `crates/document/tests/reference/` (provenance in its
+README, method in docs/parity/4C-blend.md). To re-measure:
+`blend_probe psd`, open and export in the reference as described in the
+parity record, `blend_probe read`.
+
 ### Visual / golden tests
 
 `crates/corpus/tests/golden.rs` compares every built-in preset's sheet
@@ -80,6 +89,8 @@ Not part of `cargo test`; run them when touching hot paths and compare with
 ```sh
 cargo run --release -p tela-corpus --example stamp_bench        # stamping, allocations, composition
 cargo run --release -p tela-corpus --example history_bench      # commit/undo/redo time, history memory per stroke
+cargo run --release -p tela-corpus --example blend_bench        # composition ms/tile per blend mode, 2 and 10 layers
+cargo run --release -p tela-corpus --example blend_fit          # sRGB-encoded vs linear blending against the reference data
 cargo run --release -p tela-brush --example stabilizer_bench     # phase 2 stabilizer table
 cargo run --release -p tela-brush --example interpolation_bench  # phase 2 interpolator table
 ```

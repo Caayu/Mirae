@@ -72,6 +72,16 @@ Add the JSON and its id (see `crates/brush/src/preset/builtin.rs`), run the
 update command once, inspect the new PNG, add a row to
 `crates/corpus/golden/README.md`.
 
+## Blend sheet (phase 4C)
+
+`crates/document/tests/blend_sheet.rs` renders every blend mode at 100 %
+and 60 % opacity over the probe swatches and the white paper (as
+displayed) and compares it with `crates/document/tests/golden/blend_sheet.png`
+(± 1/255). Update only deliberately, after looking at it:
+`TELA_UPDATE_GOLDEN=1 cargo test --release -p tela-document --test blend_sheet`.
+The reference's agreement is checked separately, numerically, by
+`blend_parity.rs` against measured data (`tests/reference/`).
+
 ## Known limitation
 
 The references were produced and verified on one machine (Windows, x86-64,

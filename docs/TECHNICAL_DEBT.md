@@ -1,6 +1,6 @@
 # Technical debt
 
-Known, real debt (updated at the end of phase 4B). Each item: impact, priority,
+Known, real debt (updated at the end of phase 4C). Each item: impact, priority,
 why it is not fixed now, and a possible direction. Priorities: **P1** blocks
 a planned phase or affects users soon; **P2** visible quality issue;
 **P3** latent or cosmetic.
@@ -25,6 +25,8 @@ a planned phase or affects users soon; **P2** visible quality issue;
 | 16 | **Large modules**: `brush/src/engine.rs` (~800 lines incl. tests) holds `StrokeProcessor` and `BrushEngine`. | Harder to navigate. | P3 | Cohesive (one pipeline); splitting now is cosmetic. | Split `BrushEngine` into its own module if it grows (e.g. with undo hooks). |
 | 17 | **Layer panel is minimal**: no drag-and-drop reorder, no rename field, no thumbnails, no delete confirmation (the reference asks; in Tela deletion is undoable since 4B). | Less familiar than the reference. | P2 | 4A/4B scope was the model and history. | Drag reorder and rename in the panel; decide on a confirmation with the owner. |
 | 18 | **`commit_tile` converts whole tiles** (all 256 rows, 8-bit ↔ f32) even where the stroke mask is empty. | ~0.6 ms per touched tile at commit (history_bench); a 74-tile stroke commits in ~50 ms. | P2 | Measured in 4B; pre-existing; not in 4B's scope. | Skip rows (or tiles) whose mask is all zero; re-run history_bench and the goldens. |
+| 20 | **Blending over a translucent backdrop without paper differs from the reference** (parity D-4C-1): Tela follows W3C, the reference does not (additive alpha in some modes, colours up to ~25/255 off). | None today (Tela's paper is always under the stack); wrong results for transparent export, groups and merge down. | P1 before 4F export / groups | Rule unpublished; not reachable yet; measured data kept (`tests/reference/blend_without_paper.csv`). | Dedicated probe of translucent backdrops; fit a model; add a parity test like `blend_parity.rs`. |
+| 21 | **No "merge down"** (and no merge visible / flatten). | Workflow gap vs the reference. | P2 | Deferred in 4C: depends on #20 for translucent lower layers. | Implement after #20, as one undo step (tiles of the lower layer + removal of the upper). |
 | 19 | **Undo history is uncompressed and in memory only.** | 256 KiB per changed tile per step; 1 GiB default holds ~55 strokes of a 500 px brush across a large canvas. | P3 | ADR 0015: no compression in 4B. | Compress old steps (e.g. deflate) or spill to disk if measurements show the need. |
 
 Resolved in phase 4A: #10, `Document` public fields (now a layer API with

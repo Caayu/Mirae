@@ -25,8 +25,9 @@ measured performance, documented decisions.
 
 Phase 4 (layers and document) is approved as a plan
 ([phase4/PLAN.md](phase4/PLAN.md)) and runs subphase by subphase:
-**4A** (layer API) and **4B** (undo/redo) are complete. Every later
-subphase (4C…4G) needs the owner's explicit approval before it starts, and every subphase ends with
+**4A** (layer API), **4B** (undo/redo) and **4C** (blend modes) are
+complete. Every later subphase (4D…4G) needs the owner's explicit
+approval before it starts, and every subphase ends with
 a **parity gate** recorded in [PARITY.md](PARITY.md). Facts:
 [STATUS.md](STATUS.md).
 
@@ -59,7 +60,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 240 tests, ~10 s after build
+cargo test --workspace --release        # 255 tests, ~15 s after build
 ```
 
 ## 7. Clippy and the full gate

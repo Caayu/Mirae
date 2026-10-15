@@ -32,7 +32,7 @@ Test names are `crate::module::tests::name` for unit tests and
 |---|---|---|
 | P1 | The live preview (including the end-taper tail) equals the committed stroke. | `brush::engine::tests::end_taper_preview_matches_final_result`, `brush::stroke::tests::tail_is_rebuilt_from_committed_and_can_be_committed` |
 | P2 | Preview composition and commit use the same math (`paint_over`, shared by `paint_over_tile` and `commit_tile`), for paint and erase. | `document::compose::tests::preview_matches_committed_result`, `document::compose::tests::eraser_preview_matches_committed_result`, golden sheets (rendered through `commit_tile`) |
-| P3 | A stroke previews on its own layer (named by id), under that layer's opacity, exactly as after commit; a hidden target shows no preview, as a commit would show nothing. | `document::compose::tests::preview_matches_committed_result`, `document::compose::tests::preview_targets_its_layer_by_id_not_by_position` |
+| P3 | A stroke previews on its own layer (named by id), under that layer's opacity **and blend mode**, exactly as after commit; a hidden target shows no preview, as a commit would show nothing. | `document::compose::tests::preview_matches_committed_result`, `…::preview_targets_its_layer_by_id_not_by_position`, `…::preview_matches_commit_in_every_mode` |
 
 ## Document (layer stack)
 
@@ -85,6 +85,21 @@ Added in phase 4B (ADR 0015). Unit tests in
 | T4 | A stroke's alpha never exceeds the largest opacity that touched a pixel. | `brush::stroke::tests::opacity_caps_overlapping_dabs`, `…::lighter_dab_never_lightens_existing_paint`, `…::flow_builds_up_gradually` |
 | T5 | The view transform round-trips and zoom/rotate keep the anchor fixed. | `canvas::view::tests::*`, `properties.rs::view_round_trips_and_pins_the_anchor` |
 | T6 | The display is seam-free when minified and rotated; magnified texels are flat squares. | `display_quality.rs::no_seams_when_minified_and_rotated`, `display_quality.rs::magnified_texels_are_flat_squares` |
+
+## Blend modes (phase 4C, ADR 0016)
+
+| # | Invariant | Protected by |
+|---|---|---|
+| C1 | `Normal` composition is bit-identical to the pre-4C compositor (same code path); tiles where only Normal layers draw keep a transparent backdrop. | `document::compose::tests::normal_only_tiles_keep_a_transparent_backdrop`, existing compose tests, brush goldens |
+| C2 | A fully transparent source pixel leaves the destination unchanged in every mode. | `document::blend::tests::transparent_source_is_the_identity_in_every_mode`, property test `transparent_source_never_changes_the_destination` |
+| C3 | Every mode outputs finite, valid premultiplied pixels (components in [0,1], colour ≤ alpha) with the W3C alpha `αs + αb(1 − αs)`. | property test `every_mode_yields_valid_premultiplied_pixels` |
+| C4 | Blending uses the published W3C formula and blend functions on sRGB-encoded values; a tile drawing a non-Normal layer has the paper as opaque bottom backdrop. | `opaque_results_follow_the_published_blend_functions`, `non_separable_modes_keep_the_published_components`, `blend_layers_see_the_paper` |
+| C5 | Over its paper, Tela matches the reference's measured blend results within 1/255 (2/255 Color, Luminosity) for every probed combination. | `crates/document/tests/blend_parity.rs` (3 400 combinations) |
+| C6 | The blend sheet renders deterministically and equal to its reviewed golden (± 1/255). | `crates/document/tests/blend_sheet.rs` |
+| C7 | Composition stays allocation-free in every mode. | `blend_bench` (allocations column), `stamp_bench` |
+
+T3 (`over` is associative) holds for Normal only; the other modes are not
+associative, so the stack order matters.
 
 ## Robustness
 

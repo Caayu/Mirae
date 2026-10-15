@@ -1,13 +1,13 @@
 # Status
 
-Factual state of the project at the end of **phase 4B** (undo/redo).
-Update this file at the end of every subphase.
+Factual state of the project at the end of **phase 4C** (blend modes and
+compositor). Update this file at the end of every subphase.
 
 ## Summary
 
 | | |
 |---|---|
-| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A and 4B complete** (parity gates recorded); 4C–4G await approval |
+| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A, 4B and 4C complete** (parity gates recorded); 4D–4G await approval |
 | Parity | Tracked in [PARITY.md](PARITY.md); nothing compared with the reference before phase 4 |
 | Tests | **240** passing, 0 failing (4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
@@ -32,7 +32,8 @@ Update this file at the end of every subphase.
 | UI | egui side panel: presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
 | Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile |
-| Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. `Normal` blend only; no file I/O |
+| Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. no file I/O |
+| Blend modes (4C) | Normal + 16 modes (multiply, screen, overlay, darken, lighten, color dodge/burn, hard/soft light, difference, exclusion, hue, saturation, color, luminosity, add); W3C formulas on sRGB-encoded values, paper as backdrop for blend tiles (ADR 0016); matches the reference's measured results within 1–2/255; selector in the layer panel; undoable |
 | Undo/redo (4B) | Linear, swap-based history inside `Document` (ADR 0015): strokes, clear, create/delete/reorder layers, lock, rename, blend mode, opacity (consecutive edits merge); selection and visibility not recorded; add/remove undos restore the active layer; ignored during a stroke; 200 steps / 1 GiB by default; Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Undo/Redo buttons |
 
 ## Hardware validation
@@ -59,6 +60,14 @@ rule moved out of app/UI, golden hygiene, property tests, enforced crate
 boundaries, crate/API docs, architecture docs, ADRs, handoff docs, check
 script. Details: [CHANGELOG.md](../CHANGELOG.md).
 
+## Phase 4C outcome
+
+Blend modes with the compositing space chosen by measurement against the
+reference (sRGB-encoded, not linear light) and the paper taking part in
+blending as in the reference; parity gate recorded
+([parity/4C-blend.md](parity/4C-blend.md)) with the reference's data
+kept as a test. Merge down deferred (TECHNICAL_DEBT #21).
+
 ## Phase 4B outcome
 
 Undo/redo with the reference's observed semantics, bit-exact and copy-free
@@ -76,6 +85,7 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-4C (blend modes and compositor) — **only after the owner explicitly
-approves it**. See
+4D (masks, clipping, alpha lock) — **only after the owner explicitly
+approves it**; its reference behaviours (clipping, mask painting, eraser
+with alpha lock) must be observed before implementing. See
 [phase4/PLAN.md](phase4/PLAN.md).

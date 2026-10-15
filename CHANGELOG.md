@@ -3,6 +3,30 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 4C — blend modes and compositor
+
+### Added
+- `blend_probe` (PSD test document from the public spec; reads the
+  reference's PNG export) and the reference's measured results with and
+  without its paper, `crates/document/tests/reference/` (04491cd).
+- 16 blend modes besides Normal, W3C formulas on sRGB-encoded values;
+  paper as blending backdrop for blend tiles; `blend_parity` (3 400
+  measured combinations) and the blend-sheet golden (4573db1); ADR 0016.
+- Blend-mode selector in the layer panel (b3f9a60).
+- `blend_bench` (a4d5afa, 45b37c0) and `blend_fit` (e18bc71).
+
+### Changed
+- `BlendMode` moved to its own module and gained `ALL` and `name()`;
+  `BlendMode::composite` dispatches once per mode (4573db1).
+
+### Deferred
+- Merge down (TECHNICAL_DEBT #21), behind the translucent-backdrop
+  difference D-4C-1 (#20).
+
+### Parity
+- 4C gate recorded: compositing space and paper behaviour chosen by
+  measurement; 17 modes within 1–2/255 of the reference over its paper.
+
 ## Phase 4B — undo/redo
 
 ### Added

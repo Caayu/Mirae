@@ -7,7 +7,8 @@ Approved by the owner on 2026-10-14 (sequence 4A → 4B → 4C → 4D → 4E →
 |---|---|
 | 4A | **Complete** (parity gate: [parity/4A-layers.md](../parity/4A-layers.md)) |
 | 4B | **Complete** (parity gate: [parity/4B-undo-redo.md](../parity/4B-undo-redo.md); ADR 0015) |
-| 4C–4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
+| 4C | **Complete** (parity gate: [parity/4C-blend.md](../parity/4C-blend.md); ADR 0016; merge down deferred) |
+| 4D–4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
 starts**, and each ends with a parity gate ([PARITY.md](../PARITY.md)).
 
 ## Rules for the whole phase
@@ -141,6 +142,12 @@ mutation. ADR 0015. Parity gate: undo granularity and what is undoable,
 compared with the reference.
 
 ## 4C — Blend modes and compositor
+
+**As built** (ADR 0016): measured first; sRGB-encoded blending chosen by
+evidence; the paper is a blending backdrop as in the reference;
+`plus-lighter` replaced by an additive blend function (it did not match);
+merge down deferred (depends on the translucent-backdrop difference D-4C-1).
+Original plan text follows.
 
 W3C Compositing and Blending Level 1 modes (separable and non-separable)
 plus `plus-lighter`; mode dispatch outside the per-pixel loop; **Normal

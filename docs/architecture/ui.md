@@ -70,6 +70,9 @@ redraw:
   crate; they call the same domain APIs.
 - The layer panel has no drag-and-drop reordering and no rename field; it
   asks no confirmation before deleting (the deletion is undoable).
+- The blend-mode selector receives labels and an index (`LayerRow::blend`)
+  and returns `LayerAction::SetBlendMode(index)`; the app maps it to
+  `BlendMode::ALL`.
 - Undo/Redo buttons (`history_bar`) receive only labels (`HistoryButtons`)
   and return a `HistoryCommand`; the app maps document `HistoryAction`s to
   text.

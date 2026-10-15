@@ -91,6 +91,44 @@ recorded): before 0.111 / 0.112 / 0.123 ms, after 0.114 / 0.116 / 0.123 ms
 per tile, 0 allocations — within run-to-run noise. `commit_into` no longer
 allocates its 1 MiB scratch (row buffer on the stack in `commit_tile`).
 
+### Phase 4C — blend modes
+
+`blend_bench` (2048² document, every tile filled with mixed opaque and
+translucent pixels; bottom layer Normal, the others at 80 % in the mode;
+ms per composed 256×256 tile):
+
+| mode | 2 layers ms/tile | × Normal | 10 layers ms/tile | × Normal | allocations |
+|---|---:|---:|---:|---:|---:|
+| normal | 0.507 | 1.00 | 2.006 | 1.02 | 0 |
+| multiply | 0.750 | 1.48 | 3.794 | 1.93 | 0 |
+| screen | 0.734 | 1.45 | 3.800 | 1.94 | 0 |
+| overlay | 0.806 | 1.59 | 4.340 | 2.21 | 0 |
+| darken | 0.670 | 1.32 | 3.365 | 1.71 | 0 |
+| lighten | 0.691 | 1.36 | 3.307 | 1.69 | 0 |
+| color-dodge | 0.832 | 1.64 | 4.681 | 2.39 | 0 |
+| color-burn | 0.905 | 1.78 | 5.339 | 2.72 | 0 |
+| hard-light | 0.789 | 1.55 | 4.181 | 2.13 | 0 |
+| soft-light | 0.887 | 1.75 | 5.270 | 2.69 | 0 |
+| difference | 0.713 | 1.40 | 3.365 | 1.71 | 0 |
+| exclusion | 0.735 | 1.45 | 3.881 | 1.98 | 0 |
+| hue | 1.625 | 3.20 | 11.487 | 5.85 | 0 |
+| saturation | 1.712 | 3.37 | 12.482 | 6.36 | 0 |
+| color | 1.048 | 2.06 | 6.724 | 3.43 | 0 |
+| luminosity | 1.044 | 2.06 | 6.504 | 3.31 | 0 |
+| add | 0.712 | 1.40 | 3.452 | 1.76 | 0 |
+
+- Normal is unchanged (same code); the per-tile cost here is higher than
+  `stamp_bench`'s composition line because every tile of every layer is
+  full.
+- Separable modes cost 1.3–1.8× Normal per layer pair; the non-separable
+  Hue/Saturation ~3.3× (luminosity/saturation math per pixel), Color and
+  Luminosity ~2×. A tile with a blend layer also composes over the paper
+  (no extra pass).
+- `set_sat` sorts the three channels with three comparisons instead of a
+  general sort (Hue/Saturation ~15 % faster, measured).
+- `stamp_bench` after 4C: composition 0.106–0.116 ms per tile (Normal path,
+  within the run-to-run range), allocations per dab 0.000.
+
 ### Phase 4B — undo history
 
 `history_bench` (4096² document, real brush-engine strokes, medians of 9):
