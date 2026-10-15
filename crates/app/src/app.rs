@@ -72,11 +72,37 @@ pub struct App {
     last_device: Option<DeviceKind>,
     /// Seed of the next stroke; recorded strokes replay identically.
     stroke_seed: u64,
-    /// Layer the stroke in progress paints on, fixed when it began.
-    stroke_layer: Option<LayerId>,
+    /// What the stroke in progress edits, fixed when it began.
+    stroke_target: Option<StrokeTarget>,
     tools: Tools,
     panel: BrushPanel,
     last_title: String,
+}
+
+/// What a stroke edits, captured when it begins so that nothing changed
+/// during the stroke (selection, edit target, transparency lock) can move
+/// it: the layer, its pixels or its mask, and whether paint keeps the
+/// pixels' alpha.
+#[derive(Clone, Copy, Debug)]
+struct StrokeTarget {
+    layer: LayerId,
+    part: LayerPart,
+    alpha: PixelAlpha,
+}
+
+impl StrokeTarget {
+    /// The document's current edit target.
+    fn active(doc: &Document) -> Self {
+        let layer = doc.active_layer();
+        let part = doc.active_part();
+        let locked = doc.layer(layer).is_some_and(|l| l.alpha_locked());
+        let alpha = if part == LayerPart::Pixels && locked {
+            PixelAlpha::Preserved
+        } else {
+            PixelAlpha::Free
+        };
+        Self { layer, part, alpha }
+    }
 }
 
 impl App {
@@ -101,7 +127,7 @@ impl App {
             show_stats: false,
             last_device: None,
             stroke_seed: 0,
-            stroke_layer: None,
+            stroke_target: None,
             tools: Tools::new(),
             panel: BrushPanel::default(),
             last_title: String::new(),
@@ -209,15 +235,15 @@ impl App {
         match (ev.phase, self.drag) {
             (Phase::Down, Drag::None) if self.space_held => self.drag = Drag::Pan,
             (Phase::Down, Drag::None) => {
-                let target = self.document.active_layer();
-                if let Err(e) = self.document.paint_target(target, LayerPart::Pixels) {
-                    // Like the reference, hidden and locked layers take no
-                    // paint; the press does nothing.
+                let target = StrokeTarget::active(&self.document);
+                if let Err(e) = self.document.paint_target(target.layer, target.part) {
+                    // Like the reference, hidden and locked layers (and
+                    // disabled masks) take no paint; the press does nothing.
                     log::info!(target: "tela::stroke", "not painting: {e}");
                     return;
                 }
                 self.drag = Drag::Paint;
-                self.stroke_layer = Some(target);
+                self.stroke_target = Some(target);
                 self.timestamps.reset();
                 let input = self.brush_input(&ev.sample);
                 let t = Instant::now();
@@ -248,14 +274,19 @@ impl App {
 
     fn finish_stroke(&mut self) {
         self.drag = Drag::None;
-        let target = self.stroke_layer.take();
+        let target = self.stroke_target.take();
         if let Some(stroke) = self.engine.end_stroke() {
             // The preview disappears either way, so its tiles recompose.
             self.stale.extend(stroke.touched());
-            let committed = target.map(|id| {
-                self.document.modify_tiles(id, stroke.touched(), |c, t| {
-                    stroke.commit_tile(c, t, PixelAlpha::Free)
-                })
+            let tiles = stroke.touched();
+            let doc = &mut self.document;
+            let committed = target.map(|t| match t.part {
+                LayerPart::Pixels => doc.modify_tiles(t.layer, tiles, |c, tile| {
+                    stroke.commit_tile(c, tile, t.alpha)
+                }),
+                LayerPart::Mask => {
+                    doc.modify_mask(t.layer, tiles, |c, tile| stroke.commit_alpha_tile(c, tile))
+                }
             });
             if let Some(Err(e)) = committed {
                 log::warn!(target: "tela::stroke", "stroke discarded: {e}");
@@ -454,6 +485,21 @@ impl App {
             LayerAction::Select(_) => doc.set_active_layer(target).map(|()| DirtyTiles::new()),
             LayerAction::SetVisible(_, v) => doc.set_visible(target, v),
             LayerAction::SetLocked(_, v) => doc.set_locked(target, v).map(|()| DirtyTiles::new()),
+            LayerAction::SetClipped(v) => doc.set_clipped(active, v),
+            LayerAction::SetAlphaLocked(v) => {
+                doc.set_alpha_locked(active, v).map(|()| DirtyTiles::new())
+            }
+            LayerAction::AddMask => doc.add_mask(active),
+            LayerAction::RemoveMask => doc.remove_mask(active),
+            LayerAction::SetMaskEnabled(v) => doc.set_mask_enabled(active, v),
+            LayerAction::EditMask(mask) => {
+                let part = if mask {
+                    LayerPart::Mask
+                } else {
+                    LayerPart::Pixels
+                };
+                doc.set_active_part(part).map(|()| DirtyTiles::new())
+            }
         };
         match result {
             Ok(dirty) => self.stale.extend(&dirty),
@@ -474,17 +520,29 @@ impl App {
             return 0;
         }
         let stroke = self.engine.stroke();
-        let paint = |c: TileCoord, px: &mut [PremulRgba]| {
+        let target = self
+            .stroke_target
+            .unwrap_or_else(|| StrokeTarget::active(&self.document));
+        // Preview and commit share the stroke's compositing rules
+        // (paint_over_tile / commit_tile, paint_alpha_tile /
+        // commit_alpha_tile), with the target fixed at stroke start.
+        let pixels = |c: TileCoord, px: &mut [PremulRgba]| {
             if let Some(s) = stroke {
-                s.paint_over_tile(c, px, PixelAlpha::Free);
+                s.paint_over_tile(c, px, target.alpha);
+            }
+        };
+        let mask = |c: TileCoord, values: &mut [f32]| {
+            if let Some(s) = stroke {
+                s.paint_alpha_tile(c, values);
             }
         };
         let covers = |c: TileCoord| stroke.is_some_and(|s| s.touched().contains(c));
         let overlay = Overlay {
-            target: self
-                .stroke_layer
-                .unwrap_or_else(|| self.document.active_layer()),
-            paint: OverlayPaint::Pixels(&paint),
+            target: target.layer,
+            paint: match target.part {
+                LayerPart::Pixels => OverlayPaint::Pixels(&pixels),
+                LayerPart::Mask => OverlayPaint::Mask(&mask),
+            },
             covers: &covers,
         };
         let tiles = self.stale.take();
@@ -511,6 +569,7 @@ impl App {
         };
         let eraser_mode = self.tools.eraser_mode;
         let active = self.document.active_layer();
+        let editing_mask = self.document.active_part() == LayerPart::Mask;
         let rows: Vec<LayerRow> = self
             .document
             .layers()
@@ -525,6 +584,10 @@ impl App {
                     .position(|&m| m == l.blend_mode())
                     .unwrap_or(0),
                 active: l.id() == active,
+                clipped: l.clipped(),
+                alpha_locked: l.alpha_locked(),
+                mask: l.mask().map(|m| m.enabled()),
+                editing_mask: l.id() == active && editing_mask,
             })
             .collect();
         let history = HistoryButtons {

@@ -1,5 +1,7 @@
 //! The layer panel: the stack (top first), visibility and lock per layer,
-//! and new/delete/move/blend mode/opacity for the active layer. It never sees the
+//! and new/delete/move/blend mode/opacity, clipping, transparency lock and
+//! the layer mask (add, delete, enable, edit pixels or mask) for the active
+//! layer. It never sees the
 //! document: the app lends one [`LayerRow`] per layer and applies the
 //! [`LayerAction`] the panel returns. Controls the document would refuse
 //! are greyed out (as the reference application does); the document still
@@ -21,6 +23,14 @@ pub struct LayerRow<'a> {
     /// default mode.
     pub blend: usize,
     pub active: bool,
+    /// Clipped to the layer below.
+    pub clipped: bool,
+    /// "Lock transparent pixels".
+    pub alpha_locked: bool,
+    /// `Some(enabled)` when the layer has a mask.
+    pub mask: Option<bool>,
+    /// Strokes edit the mask rather than the pixels (active row only).
+    pub editing_mask: bool,
 }
 
 /// What the layer panel asks the app to do. Commands without a key act on
@@ -38,6 +48,13 @@ pub enum LayerAction {
     SetOpacity(f32),
     /// Index into the blend-mode names.
     SetBlendMode(usize),
+    SetClipped(bool),
+    SetAlphaLocked(bool),
+    AddMask,
+    RemoveMask,
+    SetMaskEnabled(bool),
+    /// `true`: strokes edit the mask; `false`: the pixels.
+    EditMask(bool),
 }
 
 /// Draws the panel for `rows` (bottom to top, as the document stores
@@ -97,6 +114,68 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow], blend_names: &[&str]) -> Opti
         if ui.add_enabled(editable, slider).changed() {
             action = Some(LayerAction::SetOpacity(percent as f32 / 100.0));
         }
+        // Clipping and transparency lock: refused on locked layers.
+        ui.horizontal(|ui| {
+            let toggle = |ui: &mut Ui, on: bool, text: &str, tip: &str| {
+                ui.add_enabled(!row.locked, egui::Button::selectable(on, text))
+                    .on_hover_text(tip)
+                    .clicked()
+            };
+            if toggle(ui, row.clipped, "Clip", "Clip to the layer below") {
+                action = Some(LayerAction::SetClipped(!row.clipped));
+            }
+            if toggle(
+                ui,
+                row.alpha_locked,
+                "Lock alpha",
+                "Lock transparent pixels: paint changes colour only (the eraser still erases)",
+            ) {
+                action = Some(LayerAction::SetAlphaLocked(!row.alpha_locked));
+            }
+        });
+        // The mask: add/delete (refused on locked layers), enable (allowed
+        // there, like the reference), and which part strokes edit.
+        ui.horizontal(|ui| match row.mask {
+            None => {
+                if ui
+                    .add_enabled(!row.locked, egui::Button::new("Add mask"))
+                    .on_hover_text("A mask that shows everything; paint reveals, erase hides")
+                    .clicked()
+                {
+                    action = Some(LayerAction::AddMask);
+                }
+            }
+            Some(enabled) => {
+                if ui
+                    .selectable_label(!row.editing_mask, "Pixels")
+                    .on_hover_text("Strokes paint the layer")
+                    .clicked()
+                {
+                    action = Some(LayerAction::EditMask(false));
+                }
+                if ui
+                    .selectable_label(row.editing_mask, "Mask")
+                    .on_hover_text("Strokes paint the mask: paint reveals, erase hides")
+                    .clicked()
+                {
+                    action = Some(LayerAction::EditMask(true));
+                }
+                let mut on = enabled;
+                if ui
+                    .checkbox(&mut on, "on")
+                    .on_hover_text("Apply the mask")
+                    .changed()
+                {
+                    action = Some(LayerAction::SetMaskEnabled(on));
+                }
+                if ui
+                    .add_enabled(!row.locked, egui::Button::new("Delete mask"))
+                    .clicked()
+                {
+                    action = Some(LayerAction::RemoveMask);
+                }
+            }
+        });
     }
     ui.separator();
 
@@ -118,10 +197,21 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow], blend_names: &[&str]) -> Opti
                 {
                     action = Some(LayerAction::SetLocked(row.key, !row.locked));
                 }
-                let mut label = format!("{}  {:.0} %", row.name, row.opacity * 100.0);
+                // Clipped layers are indented under their base.
+                let indent = if row.clipped { "   > " } else { "" };
+                let mut label = format!("{indent}{}  {:.0} %", row.name, row.opacity * 100.0);
                 if row.blend != 0 {
                     label.push_str("  ");
                     label.push_str(blend_names.get(row.blend).copied().unwrap_or("?"));
+                }
+                if row.alpha_locked {
+                    label.push_str("  \u{3b1}");
+                }
+                match (row.mask, row.active && row.editing_mask) {
+                    (Some(true), false) => label.push_str("  [mask]"),
+                    (Some(true), true) => label.push_str("  [editing mask]"),
+                    (Some(false), _) => label.push_str("  [mask off]"),
+                    (None, _) => {}
                 }
                 if ui.selectable_label(row.active, label).clicked() {
                     action = Some(LayerAction::Select(row.key));
