@@ -19,6 +19,8 @@ use tela_document::{BlendMode, ComposeScratch, Document, Placement};
 struct Counting;
 static ALLOCS: AtomicU64 = AtomicU64::new(0);
 
+// SAFETY: every method forwards unchanged to the system allocator; the
+// counter is a relaxed atomic increment with no other effect.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCS.fetch_add(1, Ordering::Relaxed);
@@ -54,7 +56,11 @@ fn document(layers: usize, mode: BlendMode) -> Document {
                 for x in 0..TILE_SIZE {
                     let v = (x * 7 + y * 13 + seed) % 256;
                     // Mostly opaque, some translucent pixels.
-                    let a = if (x + y + seed) % 5 == 0 { 128 } else { 255 };
+                    let a = if (x + y + seed).is_multiple_of(5) {
+                        128
+                    } else {
+                        255
+                    };
                     let p = |c: u32| (c * a / 255) as u8;
                     *t.get_mut(x, y) = [p(v), p(255 - v), p((v * 3) % 256), a as u8];
                 }
