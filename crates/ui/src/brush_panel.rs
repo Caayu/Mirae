@@ -33,6 +33,8 @@ pub enum PanelAction {
     Layer(crate::LayerAction),
     /// From the undo/redo buttons.
     History(crate::HistoryCommand),
+    /// From the document bar.
+    Document(crate::DocumentCommand),
 }
 
 /// Persistent panel state.

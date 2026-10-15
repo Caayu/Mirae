@@ -5,7 +5,7 @@ use glam::Vec2;
 use tela_brush::dynamics::{DynamicsSource, InputCaps};
 use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha};
 use tela_canvas::{DirtyTiles, Tile, TileCoord, ViewTransform};
-use tela_color::{PremulRgba, with_pixel_type};
+use tela_color::{PixelDepth, PremulRgba, with_pixel_type};
 use tela_document::{
     BlendMode, ComposeScratch, Document, HistoryAction, LayerId, LayerPart, Overlay, OverlayPaint,
     Placement,
@@ -21,8 +21,8 @@ use winit::window::{Window, WindowId};
 use crate::stats::LatencyStats;
 use crate::tools::Tools;
 use tela_ui::{
-    BrushPanel, HistoryButtons, HistoryCommand, LayerAction, LayerRow, PanelAction, PanelModel,
-    UiLayer, egui,
+    BrushPanel, DocumentCommand, DocumentInfo, HistoryButtons, HistoryCommand, LayerAction,
+    LayerRow, PanelAction, PanelModel, UiLayer, egui,
 };
 
 const DOCUMENT_SIZE: (u32, u32) = (4000, 3000);
@@ -179,7 +179,8 @@ impl App {
             .iter()
             .any(|e| e.enabled && e.source == DynamicsSource::Pressure);
         let mut title = format!(
-            "Tela — {} {:.0}px | stab {} {:.0} | {} | taper {taper} | opacity×pressure {} | {}",
+            "Tela — {}-bit | {} {:.0}px | stab {} {:.0} | {} | taper {taper} | opacity×pressure {} | {}",
+            self.document.depth().bits(),
             s.name,
             s.properties.size.base,
             st.stabilizer.name(),
@@ -450,6 +451,34 @@ impl App {
         }
     }
 
+    /// Replaces the document with an empty one of either depth, or converts
+    /// its depth (one undoable step). Ignored while a stroke is in
+    /// progress, like layer commands.
+    fn apply_document(&mut self, command: DocumentCommand) {
+        if self.engine.is_stroking() {
+            return;
+        }
+        let depth = |bits| match bits {
+            16 => PixelDepth::Rgba16,
+            _ => PixelDepth::Rgba8,
+        };
+        match command {
+            DocumentCommand::New(bits) => {
+                // What the old document showed must be cleared on screen.
+                self.stale.extend(&self.document.content_tiles());
+                let (w, h) = (self.document.width(), self.document.height());
+                self.document = Document::with_depth(w, h, depth(bits));
+                log::info!("new {bits}-bit document");
+            }
+            DocumentCommand::Convert(bits) => {
+                let dirty = self.document.convert_depth(depth(bits));
+                self.stale.extend(&dirty);
+                log::info!("converted to {bits}-bit");
+            }
+        }
+        self.update_title();
+    }
+
     /// Applies a layer command to the document. Ignored while a stroke is
     /// in progress, like the reference (docs/parity/4A-layers.md, O14):
     /// the stroke always finishes on the layer it started on.
@@ -598,14 +627,22 @@ impl App {
             undo: self.document.next_undo().map(history_label),
             redo: self.document.next_redo().map(history_label),
         };
+        let info = DocumentInfo {
+            width: self.document.width(),
+            height: self.document.height(),
+            bits: self.document.depth().bits(),
+        };
         let mut action = PanelAction::None;
         let mut layer_action = None;
         let mut history_command = None;
+        let mut document_command = None;
         let (tools, engine, panel) = (&mut self.tools, &mut self.engine, &mut self.panel);
         let repaint = gpu.ui.build(&gpu.window, |ui| {
             let layers = egui::Panel::right("layer-panel")
                 .default_size(230.0)
                 .show(ui, |ui| {
+                    document_command = tela_ui::document_bar(ui, &info);
+                    ui.separator();
                     history_command = tela_ui::history_bar(ui, &history);
                     ui.separator();
                     layer_action = tela_ui::layer_panel(ui, &rows, &BLEND_LABELS);
@@ -634,10 +671,11 @@ impl App {
         if repaint {
             gpu.window.request_redraw();
         }
-        match (history_command, layer_action) {
-            (Some(c), _) => PanelAction::History(c),
-            (None, Some(a)) => PanelAction::Layer(a),
-            (None, None) => action,
+        match (document_command, history_command, layer_action) {
+            (Some(c), _, _) => PanelAction::Document(c),
+            (None, Some(c), _) => PanelAction::History(c),
+            (None, None, Some(a)) => PanelAction::Layer(a),
+            (None, None, None) => action,
         }
     }
 
@@ -649,6 +687,7 @@ impl App {
             PanelAction::ClearLayer => self.clear_canvas(),
             PanelAction::Layer(a) => self.apply_layer(a),
             PanelAction::History(c) => self.apply_history(c),
+            PanelAction::Document(c) => self.apply_document(c),
         }
         self.request_redraw();
     }
