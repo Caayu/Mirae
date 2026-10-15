@@ -25,6 +25,8 @@ and both say so.
 | [0016](0016-blend-modes-and-compositing-space.md) | Blend modes: W3C formulas on sRGB-encoded values (chosen by measurement), paper as backdrop for blend tiles | 4C |
 | [0017](0017-masks-clipping-alpha-lock.md) | Layer masks (inverted sparse 8-bit), isolated clipping groups with opaque-blend source-atop, alpha lock as source-atop (all measured) | 4D |
 | [0018](0018-16-bit-storage.md) | 16-bit storage: per-document depth, premultiplied sRGB-encoded `u16`, exact 8 → 16, nearest 16 → 8, 8-bit masks and display, 8-bit default (measured) | 4E |
+| [0019](0019-mirae-document-format-v1.md) | `.mirae` v1: ZIP + JSON manifest + raw premultiplied tiles, explicit sparsity, exact numbers, strict versioning, validated loading, limits, atomic save, no history, fixtures as contract | 4F |
+| [0020](0020-io-crate-and-file-workflow.md) | `tela-io` crate and dependencies (zip deflate-only, png), errors/warnings, revision-based save point, app-owned workflow with egui prompts and native file dialogs | 4F |
 
 ## Writing a new ADR
 

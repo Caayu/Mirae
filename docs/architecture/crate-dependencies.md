@@ -42,12 +42,13 @@ graph BT
     app --> renderer
     app --> tablet
     app --> ui
+    app --> io
 ```
 
 ASCII version (each line: crate -> what it may use):
 
 ```
-layer 3   app       -> ui, document, renderer, tablet, brush, canvas, color
+layer 3   app       -> ui, io, document, renderer, tablet, brush, canvas, color
 layer 2   ui        -> brush, renderer
           io        -> document, canvas, color         (files: .mirae, PNG)
           corpus    -> brush, canvas, color            (test support only)
@@ -76,7 +77,7 @@ depends only on `glam`.
 | `tela-tablet` | `glam`, `log`; Windows: `windows-sys`, `raw-window-handle` | Device input; FFI isolated here. |
 | `tela-ui` | brush, renderer, `egui`, `egui-wgpu`, `egui-winit`, `wgpu`, `winit` | The only egui user. |
 | `tela-corpus` | color, canvas, brush, `glam`, `png` (dev: document) | Golden sheets and benchmark. |
-| `tela-app` | all workspace crates except corpus, `winit`, `glam`, `pollster`, `log`, `env_logger` | Composition layer. |
+| `tela-app` | all workspace crates except corpus, `winit`, `glam`, `pollster`, `log`, `env_logger`, `rfd` | Composition layer; the file workflow (native dialogs). |
 
 Dev-dependencies are unrestricted but should stay minimal: `proptest`
 (brush, canvas, document, io), `pollster` (renderer GPU tests), `tela-brush`+`glam`
@@ -95,6 +96,7 @@ Dev-dependencies are unrestricted but should stay minimal: `proptest`
 | Only `ui` depends on `egui*` | Swapping or removing the UI toolkit touches one crate. |
 | Only `app` and `ui` depend on `winit` | Core crates know no windowing; `ui` needs winit only to feed egui. |
 | Only `tablet` depends on `windows-sys` | `unsafe` FFI stays in one crate (docs/architecture/unsafe.md). |
+| Only `app` depends on `rfd` | Dialogs and paths are the app's business; the model and the file format never see them. |
 | Nothing depends on `app` or `corpus` | `app` is the top; `corpus` is test support. |
 
 ## External dependencies
@@ -110,6 +112,7 @@ Dev-dependencies are unrestricted but should stay minimal: `proptest`
 | `egui`, `egui-wgpu`, `egui-winit` | ui | Immediate-mode UI; isolated in one crate. |
 | `windows-sys` | tablet | Windows Ink (WM_POINTER) and QPC FFI bindings. |
 | `raw-window-handle` | tablet | Takes the window by safe handle, not raw HWND. |
+| `rfd` | app | Native file dialogs (open, save, import, export); only the app knows dialogs and paths (ADR 0020). |
 | `pollster` | app (+ renderer tests) | Blocks on wgpu's async setup once at startup. |
 | `log`, `env_logger` | renderer, tablet, app | Diagnostics (`RUST_LOG`). |
 | `png` | corpus, io | Golden image I/O; PNG import/export. |

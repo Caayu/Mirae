@@ -51,7 +51,8 @@ plain reference model.
 | L6 | An operation that returns an error leaves the document unchanged. | `…::unknown_ids_are_errors_and_change_nothing`, `…::lock_blocks_pixels_opacity_blend_and_removal_only`, property test (model unchanged on error) |
 | L7 | Moving, removing or re-inserting layers never copies tile buffers. | `…::moving_keeps_identity_selection_and_tile_memory`, property test (buffer addresses) |
 | L8 | Composition does not depend on id values, only on order and properties. | `document::compose::tests::composition_does_not_depend_on_id_values` |
-| L9 | Pixels change only through `modify_tiles` (exactly the declared tiles; newly allocated tiles left blank are released), `clear_layer` and `convert_depth`. | Privacy of `RasterLayer::pixels`; `…::modify_tiles_touches_only_declared_tiles_and_stays_sparse` |
+| L9 | Pixels change only through `modify_tiles` (exactly the declared tiles; newly allocated tiles left blank are released), `clear_layer`, `convert_depth` and `add_layer_with_pixels` (a new layer). | Privacy of `RasterLayer::pixels`; `…::modify_tiles_touches_only_declared_tiles_and_stays_sparse` |
+| L10 | `Document::from_parts` refuses parts that would break L1–L5, DP1, M3 or the edit-target rule (zero size, non-opaque paper, stale next id, out-of-range tiles), and keeps accepted parts exactly (nothing repaired or clamped); the result has an empty history. | `document::document::parts::tests::*` (every refusal, round trip at both depths) |
 
 ## History (undo/redo)
 
@@ -74,6 +75,7 @@ Added in phase 4B (ADR 0015). Unit tests in
 | H9 | A tile absent before a step is absent again after undoing it. | `stroke_undo_redo_is_bit_exact_and_restores_absent_tiles`, property test (digests list tiles) |
 | H10 | A removed layer restored by undo has exactly its old `LayerId`, position, properties and pixels. | `removed_layers_come_back_with_their_id_position_and_pixels`, property test |
 | H11 | Undo/redo of add/remove steps restores the active layer recorded with the step; other undo/redo keep the current selection. | `active_layer_after_undo_follows_the_reference`, property test |
+| H12 | `Document::revision` identifies the persistent content: equal revisions mean equal content; undo or redo back to a state returns its revision (serials are never reused; dropped steps move the base); merged opacity edits and non-recorded persistent changes (visibility) give new revisions; selecting a layer or the edit target does not (reference F2, F3). | `…::history::tests::undo_and_redo_return_to_the_saved_revision`, `…::merged_opacity_edits_are_new_revisions`, `…::visibility_is_a_modification_and_selection_is_not`, `…::dropped_steps_never_make_an_older_revision_reappear`, `history_matches_a_stack_of_snapshots` (equal revisions ⇒ equal content) |
 
 ## Storage and compositing
 
@@ -144,6 +146,24 @@ and property tests, `brush/tests/properties.rs::preserved_alpha_never_changes_al
 `clip_parity.rs::masks_and_clipping_match_the_reference_in_16_bit_documents`
 and `depth_properties.rs::sixteen_bit_composites_stay_valid_premultiplied`
 run them in 16-bit documents.
+
+## Document files (phase 4F, ADR 0019, 0020)
+
+Tests in `crates/io` (unit tests and `tests/*.rs`); the format is
+specified in [../formats/mirae-v1.md](../formats/mirae-v1.md).
+
+| # | Invariant | Protected by |
+|---|---|---|
+| IO1 | Save → load is the identity on everything the format stores: depth, size, paper bits, ids and order, next id, active layer and part, every property (opacity bits), every stored tile bit for bit at both depths, masks, and the sparse layout (absent tiles absent, present blank tiles present, negative and off-canvas tiles kept). History is not stored. | `round_trip.rs::save_then_load_is_bit_exact_at_both_depths`, `…::the_composite_is_unchanged_by_a_round_trip`, `properties.rs::random_documents_round_trip_exactly` |
+| IO2 | Saving is deterministic: the same document gives the same bytes; save ∘ load ∘ save = save. | `round_trip.rs::saving_is_deterministic_and_idempotent`, property test |
+| IO3 | Any input gives a valid document or an error, never a panic; documents are built only through `Document::from_parts` (L10). | `corrupt.rs::*`, `properties.rs::random_bytes_are_errors`, `…::damaged_documents_never_load_as_something_else` (the panic guard's `Internal` error fails these tests) |
+| IO4 | A damaged file never loads as a different document: every entry's checksum is verified, every listed tile must exist with its exact size, every entry under `layers/` must be listed, duplicate and unsafe names are refused. | `corrupt.rs::missing_extra_and_damaged_tiles_are_errors`, `…::checksums_sizes_and_methods_are_enforced`, `…::duplicate_and_hostile_entry_names_are_refused`, `properties.rs::damaged_documents_never_load_as_something_else` |
+| IO5 | `Limits` are checked before the data they govern is read (ZIP end records before opening, declared sizes before decompressing, no entry read past its expected size); saving refuses what loading would refuse. | `corrupt.rs::limits_are_checked_before_the_data_is_read`, `…::a_million_layers_or_absurd_sizes_are_refused_cheaply`, `zipcheck::tests::*`, `round_trip.rs::files_on_disk_round_trip_and_failed_saves_keep_the_old_file` |
+| IO6 | A newer format version is refused as a whole, checked before any other field; unknown blend modes and depths are errors, never a fallback; unknown fields and entries load with a warning each. | `corrupt.rs::versions_newer_than_this_build_are_refused_whole`, `…::values_that_would_change_the_picture_are_errors_not_fallbacks`, `…::unknown_fields_and_entries_load_with_warnings` |
+| IO7 | A failed save leaves the previous file byte-identical and no temporary file behind. | `atomic::tests::*`, `round_trip.rs::files_on_disk_round_trip_and_failed_saves_keep_the_old_file` |
+| IO8 | The committed v1 fixtures load, forever, exactly as pinned (they are never regenerated). | `fixture.rs::*` |
+| IO9 | PNG export is the document's composite quantized once: over the paper (opaque) or un-premultiplied (transparent), within 1/255 of the screen; a transparent export where a non-Normal layer blends with the stack is refused (D-4C-1). | `png.rs::export_with_paper_is_the_composite_over_the_paper`, `…::transparent_export_is_the_unpremultiplied_composite`, `…::sixteen_bit_export_keeps_a_16_bit_composite`, `…::transparent_export_refuses_what_it_cannot_compose_honestly` |
+| IO10 | PNG import premultiplies once, at the document's depth: 16 bits kept in 16-bit documents, nearest level in 8-bit ones; an 8-bit image survives import and transparent export exactly in a 16-bit document; fully transparent tiles are not stored. | `png.rs::import_premultiplies_once_at_the_document_depth`, `…::sixteen_bit_images_keep_16_bits_or_round_to_the_nearest_level`, `…::eight_bit_images_survive_import_and_export_exactly_in_16_bit_documents` |
 
 ## Robustness
 

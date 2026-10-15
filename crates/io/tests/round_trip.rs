@@ -157,3 +157,13 @@ fn write_the_sample_when_asked() {
         save_document(&d, std::path::Path::new(&path), &SaveOptions::default()).unwrap();
     }
 }
+
+#[test]
+fn files_identify_themselves_in_their_first_57_bytes() {
+    // docs/formats/mirae-v1.md: `mimetype` first and stored.
+    let bytes = save(&Document::new(10, 10));
+    assert_eq!(&bytes[..4], b"PK\x03\x04");
+    assert_eq!(&bytes[8..10], &[0, 0], "stored");
+    assert_eq!(&bytes[30..38], b"mimetype");
+    assert_eq!(&bytes[38..57], tela_io::MIMETYPE.as_bytes());
+}
