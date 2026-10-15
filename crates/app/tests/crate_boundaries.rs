@@ -23,6 +23,18 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ),
     ("document", &["tela-color", "tela-canvas"]),
     (
+        "io",
+        &[
+            "tela-color",
+            "tela-canvas",
+            "tela-document",
+            "serde",
+            "serde_json",
+            "png",
+            "zip",
+        ],
+    ),
+    (
         "renderer",
         &["tela-canvas", "wgpu", "glam", "bytemuck", "log"],
     ),

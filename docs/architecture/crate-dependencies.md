@@ -15,6 +15,7 @@ graph BT
     canvas[tela-canvas]
     brush[tela-brush]
     document[tela-document]
+    io[tela-io]
     renderer[tela-renderer]
     tablet[tela-tablet]
     ui[tela-ui]
@@ -25,6 +26,9 @@ graph BT
     brush --> canvas
     document --> color
     document --> canvas
+    io --> document
+    io --> canvas
+    io --> color
     renderer --> canvas
     ui --> brush
     ui --> renderer
@@ -45,6 +49,7 @@ ASCII version (each line: crate -> what it may use):
 ```
 layer 3   app       -> ui, document, renderer, tablet, brush, canvas, color
 layer 2   ui        -> brush, renderer
+          io        -> document, canvas, color         (files: .mirae, PNG)
           corpus    -> brush, canvas, color            (test support only)
 layer 1   brush     -> canvas, color
           document  -> canvas, color
@@ -66,6 +71,7 @@ depends only on `glam`.
 | `tela-canvas` | `glam` | Tiles, rectangles, view transform. |
 | `tela-brush` | color, canvas, `glam`, `serde`, `serde_json`, `rayon` | Engine; JSON presets; per-tile parallel stamping. |
 | `tela-document` | color, canvas | Layers and composition; brush-agnostic. |
+| `tela-io` | document, canvas, color, `serde`, `serde_json`, `png`, `zip` | `.mirae` documents (ZIP + JSON manifest + raw tiles) and PNG import/export; builds documents only through `Document::from_parts`. |
 | `tela-renderer` | canvas, `wgpu`, `glam`, `bytemuck`, `log` | GPU presentation of finished tiles. |
 | `tela-tablet` | `glam`, `log`; Windows: `windows-sys`, `raw-window-handle` | Device input; FFI isolated here. |
 | `tela-ui` | brush, renderer, `egui`, `egui-wgpu`, `egui-winit`, `wgpu`, `winit` | The only egui user. |
@@ -73,7 +79,7 @@ depends only on `glam`.
 | `tela-app` | all workspace crates except corpus, `winit`, `glam`, `pollster`, `log`, `env_logger` | Composition layer. |
 
 Dev-dependencies are unrestricted but should stay minimal: `proptest`
-(brush, canvas, document), `pollster` (renderer GPU tests), `tela-brush`+`glam`
+(brush, canvas, document, io), `pollster` (renderer GPU tests), `tela-brush`+`glam`
 (document tests), `tela-document` (corpus benchmark).
 
 ## Forbidden dependencies (and why)
@@ -84,6 +90,8 @@ Dev-dependencies are unrestricted but should stay minimal: `proptest`
 | `brush` must not depend on `document` | The engine produces a stroke mask; committing it is the app's decision (undo, layers, selection later). |
 | `renderer` must not depend on `document` or `brush` | It draws finished tiles; it can never read or mutate document state. |
 | `document` must not depend on `brush` or `renderer` | The model must not know how pixels were produced or shown; the stroke preview enters through the `Overlay` callbacks. |
+| `document` must not depend on `io` | The domain model does not know files: the persisted model (manifest DTOs) lives in `io`, which reaches the model through its public API and `from_parts` (ADR 0020). |
+| Only `io` depends on `zip` | One crate owns the container format and its untrusted-input handling. |
 | Only `ui` depends on `egui*` | Swapping or removing the UI toolkit touches one crate. |
 | Only `app` and `ui` depend on `winit` | Core crates know no windowing; `ui` needs winit only to feed egui. |
 | Only `tablet` depends on `windows-sys` | `unsafe` FFI stays in one crate (docs/architecture/unsafe.md). |
@@ -94,7 +102,7 @@ Dev-dependencies are unrestricted but should stay minimal: `proptest`
 | Dependency | Used by | Why it exists |
 |---|---|---|
 | `glam` | canvas, brush, renderer, tablet, ui (via egui), app | Small SIMD vector math (`Vec2`, `Affine2`). |
-| `serde`, `serde_json` | brush | Versioned JSON presets with lenient loading. |
+| `serde`, `serde_json` | brush, io | Versioned JSON presets with lenient loading; the `.mirae` manifest. |
 | `rayon` | brush | Work-stealing pool for per-tile parallel stamping. |
 | `wgpu` | renderer, ui | Portable GPU API (Vulkan/DX12/Metal). |
 | `bytemuck` | renderer | Safe casts of uniform structs to bytes. |
@@ -104,7 +112,8 @@ Dev-dependencies are unrestricted but should stay minimal: `proptest`
 | `raw-window-handle` | tablet | Takes the window by safe handle, not raw HWND. |
 | `pollster` | app (+ renderer tests) | Blocks on wgpu's async setup once at startup. |
 | `log`, `env_logger` | renderer, tablet, app | Diagnostics (`RUST_LOG`). |
-| `png` | corpus | Golden image I/O. |
+| `png` | corpus, io | Golden image I/O; PNG import/export. |
+| `zip` | io | The `.mirae` container: stored and deflate entries only (`deflate-flate2-zlib-rs`, pure Rust), no encryption, other codecs or timestamps (ADR 0020). |
 | `proptest` | brush, canvas, document (dev) | Property tests. |
 
 Rule: do not add a dependency for convenience. A new dependency needs a

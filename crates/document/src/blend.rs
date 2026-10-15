@@ -97,6 +97,13 @@ impl BlendMode {
         }
     }
 
+    /// The mode whose [`BlendMode::name`] is `name`, if any. Files store
+    /// the name; an unknown one is not mapped to a default (it would change
+    /// how the document looks without anyone noticing).
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
     /// Blends a **clipped** layer onto its clipping group in place:
     /// source-atop (the group keeps its alpha) with the blend function's
     /// result replacing the source colour as if the group were opaque,
@@ -566,6 +573,12 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), BlendMode::ALL.len());
+        for m in BlendMode::ALL {
+            assert_eq!(BlendMode::from_name(m.name()), Some(m), "names parse back");
+        }
+        for unknown in ["", "Normal", "linear-dodge", "multiply "] {
+            assert_eq!(BlendMode::from_name(unknown), None, "{unknown:?}");
+        }
     }
 
     #[test]
