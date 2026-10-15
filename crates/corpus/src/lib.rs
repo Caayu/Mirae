@@ -4,11 +4,13 @@
 //!
 //! **Responsibility:** test and benchmark support only: [`trajectories`],
 //! [`render_sheet`], [`Image`] and [`Diff`]/[`Thresholds`], the golden
-//! directory and update switch, the `stamp_bench` example, and [`psd`], a
-//! writer for the layered test documents of the black-box parity probes.
+//! directory and update switch, the `stamp_bench` example, [`psd`], a
+//! writer for the layered test documents of the black-box parity probes,
+//! and [`banding`], the precision measurements of phase 4E.
 //! **Does not:** ship in the app. **Depends on:** brush, canvas, color, glam,
 //! png (document only for the benchmark). See docs/golden-tests.md.
 
+pub mod banding;
 pub mod image;
 pub mod psd;
 pub mod trajectory;
