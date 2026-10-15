@@ -17,8 +17,9 @@
     Only fmt, clippy and tests (skips doc and release build).
 
 .PARAMETER Bench
-    Also runs the stamping benchmark and prints its tables
-    (compare with docs/performance.md).
+    Also runs the stamping benchmark and the quick document benchmark
+    (composition gate: fails if composition allocates) and prints their
+    tables (compare with docs/performance.md).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\check.ps1
@@ -53,6 +54,9 @@ if (-not $Quick) {
 }
 if ($Bench) {
     $steps += @{ Name = 'bench'; Args = @('run', '--release', '-p', 'tela-corpus', '--example', 'stamp_bench') }
+    # Composition across layer counts, features and a realistic document;
+    # exits non-zero if composition allocates (invariant F3).
+    $steps += @{ Name = 'doc bench'; Args = @('run', '--release', '-p', 'tela-corpus', '--example', 'doc_bench', '--', '--quick') }
 }
 
 $failed = $null
