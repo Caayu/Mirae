@@ -1,5 +1,5 @@
 use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
-use tela_color::{PremulRgba, Rgba, unorm8};
+use tela_color::{PremulRgba, Rgba, StoragePixel, unorm8};
 
 use crate::Dab;
 use crate::preset::PaintMode;
@@ -358,10 +358,17 @@ impl StrokeBuffer {
         }
     }
 
-    /// Writes the finished stroke into one tile of an 8-bit premultiplied
-    /// layer (the tile at `coord`). Does nothing where the stroke has no
-    /// mask. Works row by row on the stack: no allocation.
-    pub fn commit_tile(&self, coord: TileCoord, tile: &mut Tile<[u8; 4]>, alpha: PixelAlpha) {
+    /// Writes the finished stroke into one tile of a premultiplied layer
+    /// of either depth (the tile at `coord`): the same rule as the
+    /// preview ([`StrokeBuffer::paint_over_tile`]), quantized once to the
+    /// tile's storage. Does nothing where the stroke has no mask. Works
+    /// row by row on the stack: no allocation.
+    pub fn commit_tile<P: StoragePixel>(
+        &self,
+        coord: TileCoord,
+        tile: &mut Tile<P>,
+        alpha: PixelAlpha,
+    ) {
         let Some(mask) = self.mask_tile(coord) else {
             return;
         };
@@ -369,19 +376,19 @@ impl StrokeBuffer {
         for y in 0..TILE_SIZE {
             let pixels = tile.row_mut(y);
             for (s, p) in row.iter_mut().zip(pixels.iter()) {
-                *s = PremulRgba::from_rgba8(*p);
+                *s = p.to_premul();
             }
             self.paint_over(&mut row, mask.row(y), alpha);
             for (p, s) in pixels.iter_mut().zip(&row) {
-                *p = s.to_rgba8();
+                *p = P::from_premul(*s);
             }
         }
     }
 
-    /// Writes the finished stroke into an 8-bit premultiplied surface
+    /// Writes the finished stroke into a premultiplied surface
     /// ([`StrokeBuffer::commit_tile`] for every touched tile with paint,
     /// alpha free).
-    pub fn commit_into(&self, target: &mut TiledSurface<[u8; 4]>) -> DirtyTiles {
+    pub fn commit_into<P: StoragePixel>(&self, target: &mut TiledSurface<P>) -> DirtyTiles {
         for coord in self.touched.iter() {
             if self.mask_tile(coord).is_some() {
                 self.commit_tile(coord, target.tile_or_insert(coord), PixelAlpha::Free);
@@ -547,7 +554,7 @@ mod tests {
         for _ in 0..50 {
             s.dab(&dab(10.0, 10.0, 5.0, 0.5, 0.3));
         }
-        let mut target = TiledSurface::new();
+        let mut target = TiledSurface::<[u8; 4]>::new();
         s.commit_into(&mut target);
         let a = target.pixel(10, 10)[3];
         assert!(
@@ -586,7 +593,7 @@ mod tests {
 
     #[test]
     fn commit_composites_over_existing_pixels() {
-        let mut target = TiledSurface::new();
+        let mut target = TiledSurface::<[u8; 4]>::new();
         target.set_pixel(10, 10, [0, 0, 255, 255]);
         let mut s = StrokeBuffer::new(
             Rgba::new(1.0, 0.0, 0.0, 1.0),
@@ -602,7 +609,7 @@ mod tests {
 
     #[test]
     fn erase_mode_removes_alpha_through_the_same_engine() {
-        let mut target = TiledSurface::new();
+        let mut target = TiledSurface::<[u8; 4]>::new();
         target.set_pixel(10, 10, [200, 100, 0, 255]);
         target.set_pixel(40, 10, [200, 100, 0, 255]);
         let ctx = StampContext {
@@ -815,6 +822,107 @@ mod tests {
         s.commit_tail();
         s.begin_tail();
         assert!(s.alpha(80, 10) > 0.99, "committed tail survives a new tail");
+    }
+
+    /// A stroke over a tile of varied premultiplied pixels (alpha ramp,
+    /// colour below alpha, values between 8-bit levels where the format
+    /// allows).
+    fn varied_tile<P: StoragePixel>() -> Tile<P> {
+        let mut t: Tile<P> = Tile::new();
+        for (i, p) in t.pixels_mut().iter_mut().enumerate() {
+            let a = (i % 997) as f32 / 996.0;
+            *p = P::from_premul(Rgba::new(0.9, 0.45, 0.2, a).premultiply());
+        }
+        t
+    }
+
+    fn varied_stroke(mode: PaintMode) -> StrokeBuffer {
+        let ctx = StampContext {
+            anti_aliasing: true,
+            mode,
+            ..Default::default()
+        };
+        let mut s = StrokeBuffer::new(Rgba::new(0.2, 0.6, 0.9, 1.0), ctx);
+        for i in 0..14 {
+            let i = i as f32;
+            s.dab(&dab(12.0 + i * 4.3, 20.0 + i * 2.1, 9.0, 0.35, 0.3));
+        }
+        s
+    }
+
+    /// P2 at both depths: the commit is the preview quantized once to the
+    /// tile's storage (within half a level of that storage), for paint,
+    /// erase and alpha-preserving paint.
+    #[test]
+    fn commit_is_the_preview_quantized_once_at_both_depths() {
+        fn check<P: StoragePixel>(level: f32) {
+            let c = TileCoord { x: 0, y: 0 };
+            for (mode, alpha) in [
+                (PaintMode::Paint, PixelAlpha::Free),
+                (PaintMode::Paint, PixelAlpha::Preserved),
+                (PaintMode::Erase, PixelAlpha::Free),
+            ] {
+                let s = varied_stroke(mode);
+                let mut tile = varied_tile::<P>();
+                let mut preview: Vec<PremulRgba> =
+                    tile.pixels().iter().map(|p| p.to_premul()).collect();
+                s.paint_over_tile(c, &mut preview, alpha);
+                s.commit_tile(c, &mut tile, alpha);
+                let worst = tile
+                    .pixels()
+                    .iter()
+                    .zip(&preview)
+                    .map(|(p, q)| {
+                        let p = p.to_premul();
+                        [p.r - q.r, p.g - q.g, p.b - q.b, p.a - q.a]
+                            .into_iter()
+                            .fold(0.0f32, |m, d| m.max(d.abs()))
+                    })
+                    .fold(0.0f32, f32::max);
+                assert!(
+                    worst <= level * 0.5 + 1e-6,
+                    "{:?} {mode:?} {alpha:?}: {worst}",
+                    P::DEPTH
+                );
+            }
+        }
+        check::<[u8; 4]>(1.0 / 255.0);
+        check::<[u16; 4]>(1.0 / 65535.0);
+    }
+
+    #[test]
+    fn sixteen_bits_keep_a_stroke_that_8_bits_round_away() {
+        let c = TileCoord { x: 0, y: 0 };
+        let mut s = buffer();
+        // Opacity 0.001 is a quarter of an 8-bit level.
+        s.dab(&dab(10.5, 10.5, 3.0, 0.001, 1.0));
+        let mut eight: Tile<[u8; 4]> = Tile::new();
+        let mut sixteen: Tile<[u16; 4]> = Tile::new();
+        s.commit_tile(c, &mut eight, PixelAlpha::Free);
+        s.commit_tile(c, &mut sixteen, PixelAlpha::Free);
+        assert_eq!(eight.get(10, 10), [0; 4], "below half a level: lost");
+        assert_eq!(sixteen.get(10, 10)[3], 66, "0.001 · 65535 = 65.5");
+    }
+
+    #[test]
+    fn widened_8_bit_content_commits_like_8_bit_within_one_level() {
+        let c = TileCoord { x: 0, y: 0 };
+        for mode in [PaintMode::Paint, PaintMode::Erase] {
+            let s = varied_stroke(mode);
+            let mut eight = varied_tile::<[u8; 4]>();
+            let mut sixteen: Tile<[u16; 4]> = Tile::new();
+            for (w, p) in sixteen.pixels_mut().iter_mut().zip(eight.pixels()) {
+                *w = <[u16; 4]>::from_rgba8(*p);
+            }
+            s.commit_tile(c, &mut eight, PixelAlpha::Free);
+            s.commit_tile(c, &mut sixteen, PixelAlpha::Free);
+            // Same f32 result, quantized once (8-bit) or twice (16 → 8).
+            for (a, b) in eight.pixels().iter().zip(sixteen.pixels()) {
+                for (x, y) in a.iter().zip(b.to_rgba8()) {
+                    assert!(x.abs_diff(y) <= 1, "{mode:?}: {a:?} vs {b:?}");
+                }
+            }
+        }
     }
 
     #[test]

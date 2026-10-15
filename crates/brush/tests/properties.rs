@@ -231,28 +231,95 @@ proptest! {
         x in 0.0f32..8.0,
         y in 0.0f32..8.0,
     ) {
-        use tela_brush::{DabSink, PixelAlpha, StampContext, StrokeBuffer};
-        use tela_canvas::{Tile, TileCoord};
-        use tela_color::Rgba;
-        let [r, g, b] = color.map(|v| f32::from(v) / 255.0);
-        let mut s = StrokeBuffer::new(
-            Rgba::new(r, g, b, 1.0),
-            StampContext { anti_aliasing: true, ..Default::default() },
-        );
-        s.dab(&Dab { center: Vec2::new(x, y), radius: 3.0, opacity, flow, ..Dab::default() });
-        let mut tile: Tile<[u8; 4]> = Tile::new();
-        for (i, p) in pixels.iter().enumerate() {
-            // Valid premultiplied input: colour never above alpha.
-            *tile.get_mut(i as u32 % 8, i as u32 / 8) = [p[0].min(p[3]), p[1].min(p[3]), p[2].min(p[3]), p[3]];
+        preserved_alpha_holds(&pixels, color, opacity, flow, x, y)?;
+    }
+
+    /// A1 / A2 at 16 bits per channel (phase 4E): the same stroke rule,
+    /// quantized to the finer storage.
+    #[test]
+    fn preserved_alpha_never_changes_alpha_at_16_bits(
+        pixels in prop::collection::vec(any::<[u16; 4]>(), 64),
+        color in any::<[u8; 3]>(),
+        opacity in 0.0f32..=1.0,
+        flow in 0.01f32..=1.0,
+        x in 0.0f32..8.0,
+        y in 0.0f32..8.0,
+    ) {
+        preserved_alpha_holds(&pixels, color, opacity, flow, x, y)?;
+    }
+}
+
+/// Paints one dab with alpha preserved over an 8 × 8 corner of a tile of
+/// valid premultiplied pixels and checks A1, A2 and validity.
+fn preserved_alpha_holds<P>(
+    pixels: &[P],
+    color: [u8; 3],
+    opacity: f32,
+    flow: f32,
+    x: f32,
+    y: f32,
+) -> Result<(), TestCaseError>
+where
+    P: Channels,
+{
+    use tela_brush::{DabSink, PixelAlpha, StampContext, StrokeBuffer};
+    use tela_canvas::{Tile, TileCoord};
+    use tela_color::Rgba;
+    let [r, g, b] = color.map(|v| f32::from(v) / 255.0);
+    let mut s = StrokeBuffer::new(
+        Rgba::new(r, g, b, 1.0),
+        StampContext {
+            anti_aliasing: true,
+            ..Default::default()
+        },
+    );
+    s.dab(&Dab {
+        center: Vec2::new(x, y),
+        radius: 3.0,
+        opacity,
+        flow,
+        ..Dab::default()
+    });
+    let mut tile: Tile<P> = Tile::new();
+    for (i, p) in pixels.iter().enumerate() {
+        // Valid premultiplied input: colour never above alpha.
+        let [r, g, b, a] = p.channels();
+        *tile.get_mut(i as u32 % 8, i as u32 / 8) =
+            P::from_channels([r.min(a), g.min(a), b.min(a), a]);
+    }
+    let before = tile.clone();
+    s.commit_tile(TileCoord { x: 0, y: 0 }, &mut tile, PixelAlpha::Preserved);
+    for (a, b) in tile.pixels().iter().zip(before.pixels()) {
+        let (a, b) = (a.channels(), b.channels());
+        prop_assert_eq!(a[3], b[3], "A1");
+        if b[3] == 0 {
+            prop_assert_eq!(a, [0; 4], "A2");
         }
-        let before = tile.clone();
-        s.commit_tile(TileCoord { x: 0, y: 0 }, &mut tile, PixelAlpha::Preserved);
-        for (a, b) in tile.pixels().iter().zip(before.pixels()) {
-            prop_assert_eq!(a[3], b[3], "A1");
-            if b[3] == 0 {
-                prop_assert_eq!(*a, [0; 4], "A2");
-            }
-            prop_assert!(a[0] <= a[3] && a[1] <= a[3] && a[2] <= a[3]);
-        }
+        prop_assert!(a[0] <= a[3] && a[1] <= a[3] && a[2] <= a[3]);
+    }
+    Ok(())
+}
+
+/// Channel access for the stored formats under test.
+trait Channels: tela_color::StoragePixel {
+    fn channels(self) -> [u32; 4];
+    fn from_channels(c: [u32; 4]) -> Self;
+}
+
+impl Channels for [u8; 4] {
+    fn channels(self) -> [u32; 4] {
+        self.map(u32::from)
+    }
+    fn from_channels(c: [u32; 4]) -> Self {
+        c.map(|v| v as u8)
+    }
+}
+
+impl Channels for [u16; 4] {
+    fn channels(self) -> [u32; 4] {
+        self.map(u32::from)
+    }
+    fn from_channels(c: [u32; 4]) -> Self {
+        c.map(|v| v as u16)
     }
 }
