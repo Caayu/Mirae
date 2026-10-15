@@ -36,10 +36,12 @@ pub enum Compression {
 }
 
 impl Default for Compression {
-    /// Deflate level 1, chosen by measurement (docs/performance.md, 4F):
-    /// within a few percent of the smallest size at a fraction of the time.
+    /// Deflate level 2, chosen by measurement (`io_bench`,
+    /// docs/performance.md, 4F): within 2–6 % of the smallest file at
+    /// 40–70 % of level 6's time; level 1 doubles 8-bit files, higher
+    /// levels cost up to 7× the time for a few percent.
     fn default() -> Self {
-        Compression::Deflate { level: 1 }
+        Compression::Deflate { level: 2 }
     }
 }
 
