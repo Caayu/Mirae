@@ -1,7 +1,7 @@
 use tela_canvas::{DirtyTiles, TileCoord};
 
 use super::*;
-use crate::{LayerError, Placement};
+use crate::{LayerError, LayerPart, Placement};
 
 const A: TileCoord = TileCoord { x: 0, y: 0 };
 const B: TileCoord = TileCoord { x: 1, y: 0 };
@@ -382,4 +382,122 @@ fn memory_accounting_counts_held_tiles() {
     d.undo().unwrap(); // now the history holds the two tiles
     assert!(d.history_bytes() >= 2 * TILE_BYTES);
     assert!(d.history_bytes() <= d.history_reserved_bytes());
+}
+
+/// One mask "stroke": sets mask value (k, k) of every declared tile to `v`
+/// (reveal units).
+fn mask_stroke(d: &mut Document, id: LayerId, coords: &[TileCoord], k: u32, v: u8) {
+    d.modify_mask(id, &tiles(coords), |_, t| *t.get_mut(k, k) = v)
+        .unwrap();
+}
+
+fn mask_tile_ptr(d: &Document, id: LayerId, c: TileCoord) -> Option<*const u8> {
+    d.layer(id)?
+        .mask()?
+        .hidden_tile(c)
+        .map(|t| t.pixels().as_ptr())
+}
+
+#[test]
+fn mask_clip_and_alpha_lock_edits_are_one_step_each() {
+    let mut d = Document::new(512, 512);
+    let l = d.active_layer();
+    let mut n = 0;
+    let mut step = |d: &Document, recorded: bool, action: Option<HistoryAction>| {
+        n += usize::from(recorded);
+        assert_eq!(d.history_len(), n, "H6: {action:?}");
+        if recorded {
+            assert_eq!(d.next_undo(), action);
+        }
+    };
+    d.add_mask(l).unwrap();
+    step(&d, true, Some(HistoryAction::AddMask));
+    mask_stroke(&mut d, l, &[A], 1, 0);
+    step(&d, true, Some(HistoryAction::PaintMask));
+    d.set_mask_enabled(l, false).unwrap();
+    step(&d, true, Some(HistoryAction::MaskEnabled));
+    d.set_mask_enabled(l, false).unwrap();
+    step(&d, false, None);
+    d.set_active_part(LayerPart::Pixels).unwrap();
+    step(&d, false, None);
+    d.set_clipped(l, true).unwrap();
+    step(&d, true, Some(HistoryAction::Clip));
+    d.set_clipped(l, true).unwrap();
+    step(&d, false, None);
+    d.set_alpha_locked(l, true).unwrap();
+    step(&d, true, Some(HistoryAction::AlphaLock));
+    d.set_alpha_locked(l, true).unwrap();
+    step(&d, false, None);
+    assert_eq!(d.add_mask(l).err(), Some(LayerError::HasMask(l)));
+    step(&d, false, None);
+    d.remove_mask(l).unwrap();
+    step(&d, true, Some(HistoryAction::RemoveMask));
+    assert_eq!(d.remove_mask(l).err(), Some(LayerError::NoMask(l)));
+    step(&d, false, None);
+}
+
+#[test]
+fn mask_edits_undo_and_redo_bit_exactly() {
+    let mut d = Document::new(1024, 1024);
+    let l = d.active_layer();
+    stroke(&mut d, l, &[A, B], 2, 200);
+    let mut states = vec![d.digest()];
+    d.add_mask(l).unwrap();
+    states.push(d.digest());
+    mask_stroke(&mut d, l, &[A], 2, 10);
+    states.push(d.digest());
+    mask_stroke(&mut d, l, &[A, B], 3, 90);
+    states.push(d.digest());
+    d.set_mask_enabled(l, false).unwrap();
+    states.push(d.digest());
+    d.set_clipped(l, true).unwrap();
+    states.push(d.digest());
+    d.set_alpha_locked(l, true).unwrap();
+    states.push(d.digest());
+    d.remove_mask(l).unwrap();
+    states.push(d.digest());
+    for want in states.iter().rev().skip(1) {
+        d.undo().unwrap();
+        assert_eq!(&d.digest(), want, "M5 / CL4: undo");
+        d.check_invariants();
+    }
+    for want in states.iter().skip(1) {
+        d.redo().unwrap();
+        assert_eq!(&d.digest(), want, "M5 / CL4: redo");
+        d.check_invariants();
+    }
+}
+
+#[test]
+fn mask_undo_swaps_tiles_and_restores_absent_ones() {
+    let mut d = Document::new(1024, 1024);
+    let l = d.active_layer();
+    d.add_mask(l).unwrap();
+    mask_stroke(&mut d, l, &[A], 1, 50);
+    mask_stroke(&mut d, l, &[A, B], 2, 90);
+    let live = mask_tile_ptr(&d, l, A).unwrap();
+    d.undo().unwrap();
+    assert!(mask_tile_ptr(&d, l, B).is_none(), "absent again (M3)");
+    let restored = mask_tile_ptr(&d, l, A).unwrap();
+    assert_ne!(live, restored);
+    d.redo().unwrap();
+    assert_eq!(mask_tile_ptr(&d, l, A), Some(live), "H5: swapped back");
+    // A removed mask comes back with its tiles (no copy).
+    d.remove_mask(l).unwrap();
+    d.undo().unwrap();
+    assert_eq!(mask_tile_ptr(&d, l, A), Some(live));
+    assert_eq!(d.layer(l).unwrap().mask().unwrap().value(2, 2), 90);
+}
+
+#[test]
+fn undoing_a_mask_away_targets_the_pixels() {
+    let mut d = Document::new(64, 64);
+    let l = d.active_layer();
+    d.add_mask(l).unwrap();
+    assert_eq!(d.active_part(), LayerPart::Mask);
+    d.undo().unwrap();
+    assert!(d.layer(l).unwrap().mask().is_none());
+    assert_eq!(d.active_part(), LayerPart::Pixels);
+    d.redo().unwrap();
+    d.check_invariants();
 }

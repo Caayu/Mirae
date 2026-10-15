@@ -5,12 +5,21 @@ use std::num::NonZeroU32;
 use tela_canvas::{DirtyTiles, IRect, Tile, TileCoord};
 use tela_color::Rgba;
 
-use self::history::{Change, History, layer_bytes};
+use self::history::{Change, History, layer_bytes, mask_bytes};
 pub use self::history::{HistoryAction, HistoryLimits};
+use crate::layer::LayerMask;
 use crate::{BlendMode, LayerError, LayerId, RasterLayer};
 
 /// Prefix of the names the document gives new layers ("Layer 3").
 const DEFAULT_NAME: &str = "Layer";
+
+/// Which part of a layer strokes edit: its pixels or its mask.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LayerPart {
+    #[default]
+    Pixels,
+    Mask,
+}
 
 /// Where a layer goes in the stack, relative to another layer or to the
 /// ends. Relative placement (rather than an index) stays meaningful when
@@ -53,6 +62,8 @@ pub struct Document {
     layers: Vec<RasterLayer>,
     /// Always the id of a layer in `layers`.
     active: LayerId,
+    /// `Mask` only while the active layer has a mask.
+    active_part: LayerPart,
     /// Next id to hand out; greater than every id allocated so far.
     /// `None` once `u32::MAX` has been used.
     next_id: Option<NonZeroU32>,
@@ -69,6 +80,7 @@ impl Document {
             background: Rgba::WHITE,
             layers: vec![RasterLayer::new(first, format!("{DEFAULT_NAME} 1"))],
             active: first,
+            active_part: LayerPart::Pixels,
             next_id: NonZeroU32::MIN.checked_add(1),
             history: History::default(),
         }
@@ -97,6 +109,11 @@ impl Document {
     /// Number of layers (at least 1).
     pub fn layer_count(&self) -> usize {
         self.layers.len()
+    }
+
+    /// Layers from bottom to top, as a slice (composition).
+    pub(crate) fn layer_slice(&self) -> &[RasterLayer] {
+        &self.layers
     }
 
     /// Layers from bottom to top.
@@ -140,29 +157,52 @@ impl Document {
         self.active
     }
 
-    /// Makes `id` the active layer. Hidden and locked layers can be active.
-    /// Not recorded in history; a change of selection ends opacity merging.
+    /// Makes `id` the active layer, with its pixels as the edit target (as
+    /// selecting a layer does in the reference, parity record 4D M11).
+    /// Hidden and locked layers can be active. Not recorded in history; a
+    /// change of selection ends opacity merging.
     pub fn set_active_layer(&mut self, id: LayerId) -> Result<(), LayerError> {
         self.require(id)?;
         if self.active != id {
             self.history.opacity_chain = None;
         }
         self.active = id;
+        self.active_part = LayerPart::Pixels;
+        Ok(())
+    }
+
+    /// What strokes on the active layer edit. Always `Pixels` unless the
+    /// active layer has a mask.
+    pub fn active_part(&self) -> LayerPart {
+        self.active_part
+    }
+
+    /// Chooses whether strokes edit the active layer's pixels or its mask.
+    /// Not recorded in history (reference M8).
+    pub fn set_active_part(&mut self, part: LayerPart) -> Result<(), LayerError> {
+        if part == LayerPart::Mask && self.layers[self.active_index()].mask.is_none() {
+            return Err(LayerError::NoMask(self.active));
+        }
+        self.active_part = part;
         Ok(())
     }
 
     /// Adds an empty layer at `at` and makes it active. It is named
-    /// "Layer N" with the smallest N no other layer's name uses.
-    /// Adding never changes the composite, so nothing is invalidated.
+    /// "Layer N" with the smallest N no other layer's name uses. It is
+    /// clipped when the layer directly above it is clipped, so a clipping
+    /// group stays whole (reference C4, C5). Adding never changes the
+    /// composite, so nothing is invalidated.
     pub fn add_layer(&mut self, at: Placement) -> Result<LayerId, LayerError> {
         let index = self.placement_index(at)?;
         let raw = self.next_id.ok_or(LayerError::IdsExhausted)?;
         let id = LayerId::new(raw);
-        let layer = RasterLayer::new(id, self.default_name());
+        let mut layer = RasterLayer::new(id, self.default_name());
+        layer.clipped = self.layers.get(index).is_some_and(|l| l.clipped);
         let cost = layer_bytes(&layer);
         self.next_id = raw.checked_add(1);
         self.layers.insert(index, layer);
         let before = std::mem::replace(&mut self.active, id);
+        self.active_part = LayerPart::Pixels;
         let change = Change::Presence { index, layer: None };
         self.record(HistoryAction::AddLayer, vec![change], before, cost);
         Ok(id)
@@ -179,11 +219,13 @@ impl Document {
         if self.layers.len() == 1 {
             return Err(LayerError::LastLayer);
         }
-        let dirty = self.layers[i].shown_tiles();
+        // Clipped layers above it join another group (or none).
+        let dirty = self.group_tiles(i);
         let removed = self.layers.remove(i);
         let before = self.active;
         if self.active == id {
             self.active = self.layers[i.saturating_sub(1)].id();
+            self.active_part = LayerPart::Pixels;
         }
         let cost = layer_bytes(&removed);
         let change = Change::Presence {
@@ -205,6 +247,7 @@ impl Document {
                 return Ok(DirtyTiles::new());
             }
         }
+        let mut dirty = self.group_tiles(from);
         let layer = self.layers.remove(from);
         let to_index = self
             .placement_index(to)
@@ -219,7 +262,8 @@ impl Document {
             other: from,
         };
         self.record(HistoryAction::MoveLayer, vec![change], self.active, 0);
-        Ok(self.layers[to_index].shown_tiles())
+        dirty.extend(&self.group_tiles(to_index));
+        Ok(dirty)
     }
 
     /// Shows or hides a layer. Allowed on locked layers. Not recorded in
@@ -316,15 +360,167 @@ impl Document {
         Ok(())
     }
 
-    /// Whether a stroke may paint on `id`: it must exist, be visible and
-    /// not be locked.
-    pub fn paint_target(&self, id: LayerId) -> Result<(), LayerError> {
+    /// "Lock transparent pixels". Refused on locked layers (reference A6).
+    pub fn set_alpha_locked(&mut self, id: LayerId, locked: bool) -> Result<(), LayerError> {
+        let i = self.require_unlocked(id)?;
+        if self.layers[i].alpha_locked == locked {
+            return Ok(());
+        }
+        self.layers[i].alpha_locked = locked;
+        let change = Change::AlphaLocked {
+            layer: id,
+            other: !locked,
+        };
+        self.record(HistoryAction::AlphaLock, vec![change], self.active, 0);
+        Ok(())
+    }
+
+    /// Clips the layer to the one below (or releases it). Refused on
+    /// locked layers (reference A6). The clipped layers above it change
+    /// group too, so their tiles are invalidated as well.
+    pub fn set_clipped(&mut self, id: LayerId, clipped: bool) -> Result<DirtyTiles, LayerError> {
+        let i = self.require_unlocked(id)?;
+        if self.layers[i].clipped == clipped {
+            return Ok(DirtyTiles::new());
+        }
+        self.layers[i].clipped = clipped;
+        let change = Change::Clipped {
+            layer: id,
+            other: !clipped,
+        };
+        self.record(HistoryAction::Clip, vec![change], self.active, 0);
+        Ok(self.group_tiles(i))
+    }
+
+    /// Gives the layer a mask that reveals everything (no tile allocated)
+    /// and, when the layer is the active one, makes the mask the edit
+    /// target (reference M1). One mask per layer; refused on locked
+    /// layers. Nothing changes on screen, so nothing is invalidated.
+    pub fn add_mask(&mut self, id: LayerId) -> Result<DirtyTiles, LayerError> {
+        let i = self.require_unlocked(id)?;
+        if self.layers[i].mask.is_some() {
+            return Err(LayerError::HasMask(id));
+        }
+        self.layers[i].mask = Some(LayerMask::new());
+        if self.active == id {
+            self.active_part = LayerPart::Mask;
+        }
+        let change = Change::MaskPresence {
+            layer: id,
+            mask: None,
+        };
+        self.record(HistoryAction::AddMask, vec![change], self.active, 0);
+        Ok(DirtyTiles::new())
+    }
+
+    /// Deletes the layer's mask (it moves into history as is). Refused on
+    /// locked layers (reference A6). If the mask was the edit target, the
+    /// pixels become the target.
+    pub fn remove_mask(&mut self, id: LayerId) -> Result<DirtyTiles, LayerError> {
+        let i = self.require_unlocked(id)?;
+        let mask = self.layers[i].mask.take().ok_or(LayerError::NoMask(id))?;
+        let dirty = self.layers[i].shown_tiles();
+        if self.active == id {
+            self.active_part = LayerPart::Pixels;
+        }
+        let cost = mask_bytes(&mask);
+        let change = Change::MaskPresence {
+            layer: id,
+            mask: Some(Box::new(mask)),
+        };
+        self.record(HistoryAction::RemoveMask, vec![change], self.active, cost);
+        Ok(dirty)
+    }
+
+    /// Applies or stops applying the mask without deleting it. Allowed on
+    /// locked layers, like visibility, but recorded (reference A6, M6).
+    pub fn set_mask_enabled(
+        &mut self,
+        id: LayerId,
+        enabled: bool,
+    ) -> Result<DirtyTiles, LayerError> {
+        let i = self.require(id)?;
+        let layer = &mut self.layers[i];
+        let mask = layer.mask.as_mut().ok_or(LayerError::NoMask(id))?;
+        if mask.enabled == enabled {
+            return Ok(DirtyTiles::new());
+        }
+        mask.enabled = enabled;
+        let dirty = layer.shown_tiles();
+        let change = Change::MaskEnabled {
+            layer: id,
+            other: !enabled,
+        };
+        self.record(HistoryAction::MaskEnabled, vec![change], self.active, 0);
+        Ok(dirty)
+    }
+
+    /// The only way to change a mask: calls `f` once for each tile in
+    /// `tiles` with that tile's mask values **as the user sees them**
+    /// (255 shows the layer, 0 hides it; a tile the mask does not store
+    /// arrives as all 255) and for no other tile. Afterwards tiles that
+    /// reveal everything are released, so the mask stays sparse. Refused
+    /// on locked layers and layers without a mask. One call is one history
+    /// step (one stroke = one undo), like [`Document::modify_tiles`].
+    pub fn modify_mask(
+        &mut self,
+        id: LayerId,
+        tiles: &DirtyTiles,
+        mut f: impl FnMut(TileCoord, &mut Tile<u8>),
+    ) -> Result<DirtyTiles, LayerError> {
+        let i = self.require_unlocked(id)?;
+        let layer = &mut self.layers[i];
+        let mask = layer.mask.as_mut().ok_or(LayerError::NoMask(id))?;
+        let mut previous = Vec::with_capacity(tiles.len());
+        let (mut before, mut after) = (0, 0);
+        for coord in tiles.iter() {
+            let old = mask.hidden.tile(coord).cloned();
+            let tile = mask.hidden.tile_or_insert(coord);
+            // Stored inverted (hidden amount); `f` sees reveal values.
+            invert(tile);
+            f(coord, tile);
+            invert(tile);
+            if tile.is_blank() {
+                mask.hidden.remove_tile(coord);
+            }
+            let new = mask.hidden.tile(coord);
+            if old.as_ref() != new {
+                before += usize::from(old.is_some());
+                after += usize::from(new.is_some());
+                previous.push((coord, old));
+            }
+        }
+        let dirty = if layer.visible && mask.enabled {
+            tiles.clone()
+        } else {
+            DirtyTiles::new()
+        };
+        let cost = before.max(after) * history::MASK_TILE_BYTES
+            + previous.len() * std::mem::size_of::<(TileCoord, Option<Tile<u8>>)>();
+        let change = Change::MaskTiles {
+            layer: id,
+            tiles: previous,
+        };
+        self.record(HistoryAction::PaintMask, vec![change], self.active, cost);
+        Ok(dirty)
+    }
+
+    /// Whether a stroke may edit `part` of `id`: the layer must exist, be
+    /// visible and not be locked; a mask must exist and be enabled
+    /// (reference O8, O10, M9, M10).
+    pub fn paint_target(&self, id: LayerId, part: LayerPart) -> Result<(), LayerError> {
         let layer = &self.layers[self.require(id)?];
         if !layer.visible {
             return Err(LayerError::Hidden(id));
         }
         if layer.locked {
             return Err(LayerError::Locked(id));
+        }
+        if part == LayerPart::Mask {
+            let mask = layer.mask.as_ref().ok_or(LayerError::NoMask(id))?;
+            if !mask.enabled {
+                return Err(LayerError::MaskDisabled(id));
+            }
         }
         Ok(())
     }
@@ -407,6 +603,22 @@ impl Document {
         self.index_of(id).ok_or(LayerError::NotFound(id))
     }
 
+    fn active_index(&self) -> usize {
+        self.index_of(self.active)
+            .expect("the active layer always exists")
+    }
+
+    /// Shown tiles of the layer at `index` and of the clipped layers
+    /// directly above it: what changes on screen when that layer enters or
+    /// leaves a place in the stack (the clipped layers change base).
+    fn group_tiles(&self, index: usize) -> DirtyTiles {
+        let mut dirty = self.layers[index].shown_tiles();
+        for l in self.layers[index + 1..].iter().take_while(|l| l.clipped) {
+            dirty.extend(&l.shown_tiles());
+        }
+        dirty
+    }
+
     fn require_unlocked(&self, id: LayerId) -> Result<usize, LayerError> {
         let i = self.require(id)?;
         if self.layers[i].locked {
@@ -470,6 +682,19 @@ impl Document {
                     })
                     .collect();
                 tiles.sort_unstable();
+                let mask = l.mask.as_ref().map(|m| {
+                    let mut tiles: Vec<(TileCoord, u64)> = m
+                        .hidden
+                        .tile_coords()
+                        .map(|c| {
+                            let mut h = DefaultHasher::new();
+                            m.hidden.tile(c).unwrap().pixels().hash(&mut h);
+                            (c, h.finish())
+                        })
+                        .collect();
+                    tiles.sort_unstable();
+                    (m.enabled, tiles)
+                });
                 LayerDigest {
                     id: l.id().get(),
                     name: l.name.clone(),
@@ -477,7 +702,10 @@ impl Document {
                     opacity_bits: l.opacity.to_bits(),
                     blend_mode: l.blend_mode,
                     locked: l.locked,
+                    alpha_locked: l.alpha_locked,
+                    clipped: l.clipped,
                     tiles,
+                    mask,
                 }
             })
             .collect();
@@ -502,7 +730,20 @@ impl Document {
         assert!(self.index_of(self.active).is_some(), "L4: active exists");
         for l in &self.layers {
             assert!((0.0..=1.0).contains(&l.opacity), "L5: opacity in range");
+            if let Some(m) = &l.mask {
+                for c in m.hidden.tile_coords() {
+                    assert!(
+                        !m.hidden.tile(c).unwrap().is_blank(),
+                        "M3: masks keep no tile that reveals everything"
+                    );
+                }
+            }
         }
+        assert!(
+            self.active_part == LayerPart::Pixels
+                || self.layers[self.active_index()].mask.is_some(),
+            "the mask target needs a mask"
+        );
     }
 }
 
@@ -523,8 +764,19 @@ pub(crate) struct LayerDigest {
     pub opacity_bits: u32,
     pub blend_mode: BlendMode,
     pub locked: bool,
+    pub alpha_locked: bool,
+    pub clipped: bool,
     /// Sorted by coordinate; absent tiles are absent here too.
     pub tiles: Vec<(TileCoord, u64)>,
+    /// Enabled flag and stored (hidden-amount) tiles, sorted.
+    pub mask: Option<(bool, Vec<(TileCoord, u64)>)>,
+}
+
+/// Turns stored hidden amounts into reveal values and back.
+fn invert(tile: &mut Tile<u8>) {
+    for v in tile.pixels_mut() {
+        *v = 255 - *v;
+    }
 }
 
 /// `N` if `name` is exactly a default name "Layer N" (N ≥ 1, no leading
@@ -734,7 +986,7 @@ mod tests {
         assert_eq!(d.set_visible(gone, false).err(), err);
         assert_eq!(d.set_opacity(gone, 0.5).err(), err);
         assert_eq!(d.set_name(gone, "x").err(), err);
-        assert_eq!(d.paint_target(gone).err(), err);
+        assert_eq!(d.paint_target(gone, LayerPart::Pixels).err(), err);
         assert_eq!(d.clear_layer(gone).err(), err);
         assert_eq!(
             d.modify_tiles(gone, &tile_with_pixel(), |_, _| ()).err(),
@@ -753,7 +1005,7 @@ mod tests {
         paint(&mut d, l2);
         d.set_locked(l2, true).unwrap();
         let locked = Some(LayerError::Locked(l2));
-        assert_eq!(d.paint_target(l2).err(), locked);
+        assert_eq!(d.paint_target(l2, LayerPart::Pixels).err(), locked);
         assert_eq!(
             d.modify_tiles(l2, &tile_with_pixel(), |_, _| ()).err(),
             locked
@@ -780,9 +1032,12 @@ mod tests {
         let l1 = d.active_layer();
         d.set_visible(l1, false).unwrap();
         assert_eq!(d.active_layer(), l1);
-        assert_eq!(d.paint_target(l1).err(), Some(LayerError::Hidden(l1)));
+        assert_eq!(
+            d.paint_target(l1, LayerPart::Pixels).err(),
+            Some(LayerError::Hidden(l1))
+        );
         d.set_visible(l1, true).unwrap();
-        assert_eq!(d.paint_target(l1), Ok(()));
+        assert_eq!(d.paint_target(l1, LayerPart::Pixels), Ok(()));
     }
 
     #[test]
@@ -839,5 +1094,168 @@ mod tests {
         let px = d.layer(l1).unwrap().pixels();
         assert_eq!(px.tile_count(), 1, "the untouched new tile was released");
         assert_eq!(px.pixel(0, 0), [9; 4]);
+    }
+
+    #[test]
+    fn masks_start_revealing_everything_and_become_the_target() {
+        let mut d = Document::new(64, 64);
+        let l1 = d.active_layer();
+        let l2 = d.add_layer(Placement::Top).unwrap();
+        assert_eq!(d.active_part(), LayerPart::Pixels);
+        assert!(
+            d.add_mask(l2).unwrap().is_empty(),
+            "nothing changes on screen"
+        );
+        let mask = d.layer(l2).unwrap().mask().unwrap();
+        assert!(mask.enabled());
+        assert_eq!(mask.tile_count(), 0, "M3: no tile allocated");
+        assert_eq!(mask.value(5, 5), 255);
+        assert_eq!(d.active_part(), LayerPart::Mask, "reference M1");
+        assert_eq!(d.add_mask(l2).err(), Some(LayerError::HasMask(l2)));
+        // Another layer's mask does not take the target.
+        d.add_mask(l1).unwrap();
+        assert_eq!(d.active_part(), LayerPart::Mask);
+        // Selecting a layer targets its pixels (reference M11).
+        d.set_active_layer(l2).unwrap();
+        assert_eq!(d.active_part(), LayerPart::Pixels);
+        d.set_active_part(LayerPart::Mask).unwrap();
+        d.remove_mask(l2).unwrap();
+        assert_eq!(d.active_part(), LayerPart::Pixels);
+        assert_eq!(
+            d.set_active_part(LayerPart::Mask).err(),
+            Some(LayerError::NoMask(l2))
+        );
+        d.check_invariants();
+    }
+
+    #[test]
+    fn modify_mask_shows_reveal_values_and_keeps_the_mask_sparse() {
+        let mut d = Document::new(1024, 1024);
+        let l = d.active_layer();
+        assert_eq!(
+            d.modify_mask(l, &tile_with_pixel(), |_, _| ()).err(),
+            Some(LayerError::NoMask(l))
+        );
+        d.add_mask(l).unwrap();
+        let mut declared = tile_with_pixel();
+        declared.mark(TileCoord { x: 1, y: 0 });
+        d.modify_mask(l, &declared, |c, t| {
+            assert!(t.pixels().iter().all(|&v| v == 255), "absent = reveal");
+            if c.x == 0 {
+                *t.get_mut(3, 3) = 40;
+            }
+        })
+        .unwrap();
+        let m = d.layer(l).unwrap().mask().unwrap();
+        assert_eq!(m.value(3, 3), 40);
+        assert_eq!(m.value(4, 3), 255);
+        assert_eq!(m.tile_count(), 1, "untouched tile released");
+        // Revealing everything again releases the tile.
+        d.modify_mask(l, &tile_with_pixel(), |_, t| *t.get_mut(3, 3) = 255)
+            .unwrap();
+        assert_eq!(d.layer(l).unwrap().mask().unwrap().tile_count(), 0, "M3");
+        d.check_invariants();
+    }
+
+    #[test]
+    fn lock_refuses_mask_clip_and_alpha_lock_edits_but_not_mask_enable() {
+        let mut d = Document::new(64, 64);
+        let l = d.active_layer();
+        d.add_mask(l).unwrap();
+        d.set_locked(l, true).unwrap();
+        let locked = Some(LayerError::Locked(l));
+        assert_eq!(d.remove_mask(l).err(), locked);
+        assert_eq!(
+            d.modify_mask(l, &tile_with_pixel(), |_, _| ()).err(),
+            locked
+        );
+        assert_eq!(d.set_clipped(l, true).err(), locked);
+        assert_eq!(d.set_alpha_locked(l, true).err(), locked);
+        assert_eq!(
+            d.paint_target(l, LayerPart::Mask).err(),
+            locked,
+            "reference A6"
+        );
+        d.set_mask_enabled(l, false).unwrap();
+        assert!(!d.layer(l).unwrap().mask().unwrap().enabled());
+        let l2 = d.add_layer(Placement::Top).unwrap();
+        d.set_locked(l2, true).unwrap();
+        assert_eq!(d.add_mask(l2).err(), Some(LayerError::Locked(l2)));
+        d.check_invariants();
+    }
+
+    #[test]
+    fn mask_strokes_need_a_visible_layer_and_an_enabled_mask() {
+        let mut d = Document::new(64, 64);
+        let l = d.active_layer();
+        assert_eq!(
+            d.paint_target(l, LayerPart::Mask).err(),
+            Some(LayerError::NoMask(l))
+        );
+        d.add_mask(l).unwrap();
+        assert_eq!(d.paint_target(l, LayerPart::Mask), Ok(()));
+        d.set_mask_enabled(l, false).unwrap();
+        assert_eq!(
+            d.paint_target(l, LayerPart::Mask).err(),
+            Some(LayerError::MaskDisabled(l)),
+            "reference M10"
+        );
+        assert_eq!(d.paint_target(l, LayerPart::Pixels), Ok(()));
+        d.set_mask_enabled(l, true).unwrap();
+        d.set_visible(l, false).unwrap();
+        assert_eq!(
+            d.paint_target(l, LayerPart::Mask).err(),
+            Some(LayerError::Hidden(l)),
+            "reference M9"
+        );
+    }
+
+    #[test]
+    fn new_layers_inside_a_clipping_group_are_clipped() {
+        let mut d = Document::new(64, 64);
+        let base = d.active_layer();
+        let clip = d.add_layer(Placement::Top).unwrap();
+        d.set_clipped(clip, true).unwrap();
+        // Reference C4: between the base and a clipped layer.
+        let inside = d.add_layer(Placement::Above(base)).unwrap();
+        assert!(d.layer(inside).unwrap().clipped());
+        // Reference C5: above the topmost clipped layer.
+        let above = d.add_layer(Placement::Top).unwrap();
+        assert!(!d.layer(above).unwrap().clipped());
+    }
+
+    #[test]
+    fn group_changes_invalidate_the_clipped_layers_too() {
+        let mut d = Document::new(1024, 256);
+        let base = d.active_layer();
+        let a = TileCoord { x: 0, y: 0 };
+        let b = TileCoord { x: 1, y: 0 };
+        let c = TileCoord { x: 2, y: 0 };
+        let paint_at = |d: &mut Document, id: LayerId, coord: TileCoord| {
+            let mut t = DirtyTiles::new();
+            t.mark(coord);
+            d.modify_tiles(id, &t, |_, t| *t.get_mut(1, 1) = [255; 4])
+                .unwrap();
+        };
+        paint_at(&mut d, base, a);
+        let mid = d.add_layer(Placement::Top).unwrap();
+        paint_at(&mut d, mid, b);
+        let top = d.add_layer(Placement::Top).unwrap();
+        paint_at(&mut d, top, c);
+        d.set_clipped(top, true).unwrap();
+        // Clipping `mid` moves `top` into the base's group.
+        let dirty = d.set_clipped(mid, true).unwrap();
+        assert!(dirty.contains(b) && dirty.contains(c));
+        d.set_clipped(mid, false).unwrap();
+        // Removing `mid` leaves `top` clipped to the base.
+        let dirty = d.remove_layer(mid).unwrap();
+        assert!(dirty.contains(b) && dirty.contains(c));
+        let dirty = d.undo().unwrap();
+        assert!(dirty.contains(b) && dirty.contains(c));
+        // Moving `mid` away re-parents `top` as well.
+        let dirty = d.move_layer(mid, Placement::Bottom).unwrap();
+        assert!(dirty.contains(b) && dirty.contains(c));
+        let dirty = d.move_layer(mid, Placement::Above(base)).unwrap();
+        assert!(dirty.contains(b) && dirty.contains(c));
     }
 }

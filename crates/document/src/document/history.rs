@@ -19,10 +19,14 @@ use std::mem::size_of;
 use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
 
 use super::Document;
+use crate::layer::LayerMask;
 use crate::{BlendMode, LayerId, RasterLayer};
 
 /// Bytes of one tile's pixel buffer (premultiplied RGBA8).
 pub(super) const TILE_BYTES: usize = (TILE_SIZE * TILE_SIZE) as usize * 4;
+
+/// Bytes of one mask tile (8-bit).
+pub(super) const MASK_TILE_BYTES: usize = (TILE_SIZE * TILE_SIZE) as usize;
 
 /// How much history a document keeps. A policy, not an invariant: the
 /// defaults (200 steps, like the reference's default; 1 GiB) can be changed
@@ -59,6 +63,16 @@ pub enum HistoryAction {
     BlendMode,
     Rename,
     Lock,
+    /// "Lock transparent pixels" toggled.
+    AlphaLock,
+    /// Clipping toggled.
+    Clip,
+    AddMask,
+    RemoveMask,
+    /// Mask enabled or disabled.
+    MaskEnabled,
+    /// A mask changed through [`Document::modify_mask`] (a stroke).
+    PaintMask,
 }
 
 impl HistoryAction {
@@ -113,6 +127,29 @@ pub(super) enum Change {
         layer: LayerId,
         other: bool,
     },
+    AlphaLocked {
+        layer: LayerId,
+        other: bool,
+    },
+    Clipped {
+        layer: LayerId,
+        other: bool,
+    },
+    /// A layer's mask: in the document when `mask` is `None`, held here
+    /// otherwise (add/remove mask).
+    MaskPresence {
+        layer: LayerId,
+        mask: Option<Box<LayerMask>>,
+    },
+    MaskEnabled {
+        layer: LayerId,
+        other: bool,
+    },
+    /// The other state of some stored mask tiles (`None` = absent).
+    MaskTiles {
+        layer: LayerId,
+        tiles: Vec<(TileCoord, Option<Tile<u8>>)>,
+    },
 }
 
 impl Change {
@@ -126,17 +163,34 @@ impl Change {
             Change::Surface { pixels, .. } => pixels.tile_count() * TILE_BYTES,
             Change::Presence { layer, .. } => layer.as_deref().map_or(0, layer_bytes),
             Change::Name { other, .. } => other.len(),
+            Change::MaskTiles { tiles, .. } => {
+                tiles.len() * size_of::<(TileCoord, Option<Tile<u8>>)>()
+                    + tiles.iter().filter(|(_, t)| t.is_some()).count() * MASK_TILE_BYTES
+            }
+            Change::MaskPresence { mask, .. } => mask.as_deref().map_or(0, mask_bytes),
             Change::Move { .. }
             | Change::Opacity { .. }
             | Change::Blend { .. }
-            | Change::Locked { .. } => 0,
+            | Change::Locked { .. }
+            | Change::AlphaLocked { .. }
+            | Change::Clipped { .. }
+            | Change::MaskEnabled { .. } => 0,
         }
     }
 }
 
-/// Pixel buffers plus name of a layer (container overhead not counted).
+/// Pixel and mask buffers plus name of a layer (container overhead not
+/// counted).
 pub(super) fn layer_bytes(layer: &RasterLayer) -> usize {
-    size_of::<RasterLayer>() + layer.name.len() + layer.pixels.tile_count() * TILE_BYTES
+    size_of::<RasterLayer>()
+        + layer.name.len()
+        + layer.pixels.tile_count() * TILE_BYTES
+        + layer.mask.as_ref().map_or(0, mask_bytes)
+}
+
+/// Tile buffers of a mask.
+pub(super) fn mask_bytes(mask: &LayerMask) -> usize {
+    mask.hidden.tile_count() * MASK_TILE_BYTES
 }
 
 #[derive(Clone, Debug)]
@@ -207,6 +261,7 @@ impl Document {
         if step.action.restores_active() {
             self.active = step.active_before;
         }
+        self.keep_target_valid();
         self.history.opacity_chain = None;
         self.history.redo.push(step);
         Some(dirty)
@@ -223,6 +278,7 @@ impl Document {
         if step.action.restores_active() {
             self.active = step.active_after;
         }
+        self.keep_target_valid();
         self.history.opacity_chain = None;
         self.history.undo.push_back(step);
         Some(dirty)
@@ -354,22 +410,22 @@ impl Document {
             }
             Change::Presence { index, layer } => match layer.take() {
                 Some(held) => {
-                    let dirty = held.shown_tiles();
                     self.layers.insert(*index, *held);
-                    dirty
+                    self.group_tiles(*index)
                 }
                 None => {
+                    let dirty = self.group_tiles(*index);
                     let removed = self.layers.remove(*index);
-                    let dirty = removed.shown_tiles();
                     *layer = Some(Box::new(removed));
                     dirty
                 }
             },
             Change::Move { id, at, other } => {
+                let mut dirty = self.group_tiles(*at);
                 let moved = self.layers.remove(*at);
                 debug_assert_eq!(moved.id(), *id, "history replays on the state it recorded");
-                let dirty = moved.shown_tiles();
                 self.layers.insert(*other, moved);
+                dirty.extend(&self.group_tiles(*other));
                 std::mem::swap(at, other);
                 dirty
             }
@@ -391,6 +447,66 @@ impl Document {
                 std::mem::swap(&mut self.layer_mut_for_history(*layer).locked, other);
                 DirtyTiles::new()
             }
+            Change::AlphaLocked { layer, other } => {
+                std::mem::swap(&mut self.layer_mut_for_history(*layer).alpha_locked, other);
+                DirtyTiles::new()
+            }
+            Change::Clipped { layer, other } => {
+                let i = self
+                    .index_of(*layer)
+                    .expect("history replays on the state it recorded");
+                std::mem::swap(&mut self.layers[i].clipped, other);
+                self.group_tiles(i)
+            }
+            Change::MaskPresence { layer, mask } => {
+                let layer = self.layer_mut_for_history(*layer);
+                let dirty = layer.shown_tiles();
+                match mask.take() {
+                    Some(held) => layer.mask = Some(*held),
+                    None => *mask = layer.mask.take().map(Box::new),
+                }
+                dirty
+            }
+            Change::MaskEnabled { layer, other } => {
+                let layer = self.layer_mut_for_history(*layer);
+                let mask = layer
+                    .mask
+                    .as_mut()
+                    .expect("history replays on the state it recorded");
+                std::mem::swap(&mut mask.enabled, other);
+                layer.shown_tiles()
+            }
+            Change::MaskTiles { layer, tiles } => {
+                let layer = self.layer_mut_for_history(*layer);
+                let visible = layer.visible;
+                let mask = layer
+                    .mask
+                    .as_mut()
+                    .expect("history replays on the state it recorded");
+                let mut dirty = DirtyTiles::new();
+                for (coord, held) in tiles.iter_mut() {
+                    let current = mask.hidden.remove_tile(*coord);
+                    if let Some(tile) = held.take() {
+                        mask.hidden.insert_tile(*coord, tile);
+                    }
+                    *held = current;
+                    dirty.mark(*coord);
+                }
+                if visible && mask.enabled {
+                    dirty
+                } else {
+                    DirtyTiles::new()
+                }
+            }
+        }
+    }
+
+    /// After undo/redo: the mask stays the edit target only if the active
+    /// layer still has a mask.
+    fn keep_target_valid(&mut self) {
+        let i = self.active_index();
+        if self.layers[i].mask.is_none() {
+            self.active_part = super::LayerPart::Pixels;
         }
     }
 

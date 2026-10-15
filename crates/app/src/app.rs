@@ -7,7 +7,8 @@ use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha};
 use tela_canvas::{DirtyTiles, TileCoord, ViewTransform};
 use tela_color::PremulRgba;
 use tela_document::{
-    BlendMode, ComposeScratch, Document, HistoryAction, LayerId, Overlay, Placement,
+    BlendMode, ComposeScratch, Document, HistoryAction, LayerId, LayerPart, Overlay, OverlayPaint,
+    Placement,
 };
 use tela_renderer::{Frame, Renderer};
 use tela_tablet::{DeviceKind, Phase, TabletEvent, TabletSample, TimestampNormalizer, clock};
@@ -209,7 +210,7 @@ impl App {
             (Phase::Down, Drag::None) if self.space_held => self.drag = Drag::Pan,
             (Phase::Down, Drag::None) => {
                 let target = self.document.active_layer();
-                if let Err(e) = self.document.paint_target(target) {
+                if let Err(e) = self.document.paint_target(target, LayerPart::Pixels) {
                     // Like the reference, hidden and locked layers take no
                     // paint; the press does nothing.
                     log::info!(target: "tela::stroke", "not painting: {e}");
@@ -483,7 +484,7 @@ impl App {
             target: self
                 .stroke_layer
                 .unwrap_or_else(|| self.document.active_layer()),
-            paint: &paint,
+            paint: OverlayPaint::Pixels(&paint),
             covers: &covers,
         };
         let tiles = self.stale.take();
@@ -652,6 +653,12 @@ fn history_label(action: HistoryAction) -> &'static str {
         HistoryAction::BlendMode => "blend mode",
         HistoryAction::Rename => "rename",
         HistoryAction::Lock => "lock",
+        HistoryAction::AlphaLock => "lock transparent pixels",
+        HistoryAction::Clip => "clipping",
+        HistoryAction::AddMask => "new mask",
+        HistoryAction::RemoveMask => "delete mask",
+        HistoryAction::MaskEnabled => "enable mask",
+        HistoryAction::PaintMask => "paint mask",
     }
 }
 

@@ -17,7 +17,7 @@ use tela_brush::tip::Tip;
 use tela_brush::{Dab, DabSink, PixelAlpha, StampContext, StrokeBuffer};
 use tela_canvas::{DirtyTiles, IRect, TILE_SIZE, TileCoord};
 use tela_color::{PremulRgba, Rgba};
-use tela_document::{ComposeScratch, Document, Overlay, Placement};
+use tela_document::{ComposeScratch, Document, Overlay, OverlayPaint, Placement};
 
 /// Counts allocations so "no allocation per dab" is measured, not assumed.
 struct Counting;
@@ -219,7 +219,7 @@ fn main() {
     let covers = |c: TileCoord| stroke.touched().contains(c);
     let overlay = Overlay {
         target: top,
-        paint: &paint,
+        paint: OverlayPaint::Pixels(&paint),
         covers: &covers,
     };
     let coords: Vec<TileCoord> = stroke.touched().iter().collect();

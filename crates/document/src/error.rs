@@ -18,6 +18,12 @@ pub enum LayerError {
     InvalidOpacity,
     /// Every layer id has been used once (ids are never reused).
     IdsExhausted,
+    /// The operation needs a layer mask and the layer has none.
+    NoMask(LayerId),
+    /// The layer already has a mask (one per layer).
+    HasMask(LayerId),
+    /// A disabled mask cannot be painted on (reference behaviour).
+    MaskDisabled(LayerId),
 }
 
 impl fmt::Display for LayerError {
@@ -29,6 +35,9 @@ impl fmt::Display for LayerError {
             LayerError::Hidden(id) => write!(f, "{id} is hidden"),
             LayerError::InvalidOpacity => f.write_str("opacity must be a finite number"),
             LayerError::IdsExhausted => f.write_str("no layer ids left in this document"),
+            LayerError::NoMask(id) => write!(f, "{id} has no mask"),
+            LayerError::HasMask(id) => write!(f, "{id} already has a mask"),
+            LayerError::MaskDisabled(id) => write!(f, "the mask of {id} is disabled"),
         }
     }
 }

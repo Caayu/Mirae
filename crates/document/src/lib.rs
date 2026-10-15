@@ -31,7 +31,7 @@ mod layer;
 mod properties;
 
 pub use blend::BlendMode;
-pub use compose::{ComposeScratch, Overlay};
-pub use document::{Document, HistoryAction, HistoryLimits, Placement};
+pub use compose::{ComposeScratch, Overlay, OverlayPaint};
+pub use document::{Document, HistoryAction, HistoryLimits, LayerPart, Placement};
 pub use error::LayerError;
-pub use layer::{LayerId, RasterLayer};
+pub use layer::{LayerId, LayerMask, RasterLayer};
