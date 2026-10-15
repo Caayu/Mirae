@@ -53,6 +53,28 @@ plain reference model.
 | L8 | Composition does not depend on id values, only on order and properties. | `document::compose::tests::composition_does_not_depend_on_id_values` |
 | L9 | Pixels change only through `modify_tiles` (exactly the declared tiles; newly allocated tiles left blank are released) and `clear_layer`. | Privacy of `RasterLayer::pixels`; `…::modify_tiles_touches_only_declared_tiles_and_stays_sparse` |
 
+## History (undo/redo)
+
+Added in phase 4B (ADR 0015). Unit tests in
+`document::document::history::tests`; the property tests
+`document::history_properties::history_matches_a_stack_of_snapshots`
+(random edits, undo and redo against a stack of full-content digests,
+300 sequences) and `…::history_stays_within_small_limits`.
+
+| # | Invariant | Protected by |
+|---|---|---|
+| H1 | Undo followed by redo restores the document bit-exactly (ids, order, properties, every tile). | `stroke_undo_redo_is_bit_exact_and_restores_absent_tiles`, `undoing_everything_and_redoing_it_walks_the_same_states`, property test |
+| H2 | N undos restore exactly the state N steps ago (active layer per H11). | same, property test |
+| H3 | Recording a step after an undo discards the redoable steps. | `new_edits_discard_redo`, property test |
+| H4 | The history respects `HistoryLimits`: at most `max_steps` steps; reserved bytes ≤ `max_bytes` unless a single step is kept alone; held bytes ≤ reserved bytes. | `step_limit_drops_the_oldest_steps`, `byte_limit_keeps_an_oversized_step_alone`, `history_stays_within_small_limits` |
+| H5 | Undo and redo copy no tile: buffers, surfaces and layers are swapped. | `undo_and_redo_swap_tiles_instead_of_copying_them`, `clearing_moves_the_surface_into_history`, `removed_layers_come_back_with_their_id_position_and_pixels` (buffer addresses) |
+| H6 | Every public mutation is recorded, except the documented non-historical `set_active_layer` and `set_visible`; no-ops and refused calls record nothing. | Privacy (history is a private submodule of `document`); `every_recorded_mutation_is_one_step_and_the_others_none` |
+| H7 | One `modify_tiles` call (one stroke) is one step. | `stroke_undo_redo_is_bit_exact_and_restores_absent_tiles`, property test |
+| H8 | Consecutive opacity edits of one layer form one step until something else is recorded, undone/redone, or the active layer changes (reference behaviour). | `opacity_edits_merge_until_something_interrupts_them`, property test |
+| H9 | A tile absent before a step is absent again after undoing it. | `stroke_undo_redo_is_bit_exact_and_restores_absent_tiles`, property test (digests list tiles) |
+| H10 | A removed layer restored by undo has exactly its old `LayerId`, position, properties and pixels. | `removed_layers_come_back_with_their_id_position_and_pixels`, property test |
+| H11 | Undo/redo of add/remove steps restores the active layer recorded with the step; other undo/redo keep the current selection. | `active_layer_after_undo_follows_the_reference`, property test |
+
 ## Storage and compositing
 
 | # | Invariant | Protected by |

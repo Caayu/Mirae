@@ -3,6 +3,29 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 4B — undo/redo
+
+### Added
+- `docs/parity/4B-undo-redo.md`: 20 black-box observations of the
+  reference's undo/redo, recorded before implementing (d0aabed).
+- Linear undo/redo inside `Document`: `undo`, `redo`, `can_undo`,
+  `can_redo`, `history_len`, `redo_len`, `next_undo`/`next_redo`
+  (`HistoryAction`), `history_bytes`, `history_reserved_bytes`,
+  `HistoryLimits` (200 steps / 1 GiB) (7d61c3e); ADR 0015.
+- Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z and Undo/Redo buttons (9b7358e).
+- `history_bench` (2f22cc7).
+
+### Changed
+- Every `Document` mutation records a step, except `set_active_layer` and
+  `set_visible` (as in the reference); no-op calls (same name, same lock,
+  clearing an empty layer) record nothing (7d61c3e).
+- Consecutive opacity edits of one layer merge into one step (7d61c3e).
+- Ctrl chords no longer fall through to single-letter shortcuts (9b7358e).
+
+### Parity
+- 4B gate recorded; the brief changed in two points to follow the
+  reference (visibility not recorded; opacity merging by chain).
+
 ## Phase 4A — document model, layer API, stable ids
 
 ### Added

@@ -89,9 +89,9 @@ is also covered by a unit or property test (named).
 | # | Difference | Kind | Status |
 |---|---|---|---|
 | D-4A-1 | No paper layer: removing the active bottom layer activates the layer above instead of the paper layer; the last undeletable layer is a raster layer, not the paper. | Behavioural, by design (paper colour is a document property) | Accepted (ADR 0014) |
-| D-4A-2 | No delete confirmation dialog. | Feature/behavioural | Open — revisit after undo (4B); TECHNICAL_DEBT #17 |
+| D-4A-2 | No delete confirmation dialog. | Feature/behavioural | Open; since 4B a deletion is undoable (TECHNICAL_DEBT #17) |
 | D-4A-3 | No drag-and-drop reordering in the panel (Up/Down buttons only); in the reference dragging also selects the dragged layer. | Feature (UI) | Open — TECHNICAL_DEBT #17 |
 | D-4A-4 | No rename field in the panel (the API supports renaming). | Feature (UI) | Open — TECHNICAL_DEBT #17 |
 | D-4A-5 | Default name prefix is "Layer" (English UI) where the reference's pt-BR UI shows "Camada"; the numbering rule is the same. | Localization | Accepted |
-| D-4A-6 | Not compared yet: renaming a locked layer (Tela allows it), deleting a hidden layer, layer commands other than "new layer" during a stroke, pen (instead of mouse) strokes in the reference, performance with many layers. | Coverage gap | Open |
+| D-4A-6 | Not compared yet: deleting a hidden layer (renaming a locked layer was compared in 4B: allowed in both), layer commands other than "new layer" during a stroke, pen (instead of mouse) strokes in the reference, performance with many layers. | Coverage gap | Open |
 | D-4A-7 | Opacity rendering was not compared numerically between the two applications (different brushes). Numeric comparison of compositing belongs to the 4C gate. | Coverage gap | Deferred to 4C |

@@ -1,6 +1,6 @@
 # Technical debt
 
-Known, real debt (updated at the end of phase 4A). Each item: impact, priority,
+Known, real debt (updated at the end of phase 4B). Each item: impact, priority,
 why it is not fixed now, and a possible direction. Priorities: **P1** blocks
 a planned phase or affects users soon; **P2** visible quality issue;
 **P3** latent or cosmetic.
@@ -10,7 +10,7 @@ a planned phase or affects users soon; **P2** visible quality issue;
 | 1 | **No physical tablet validated.** Only a virtual HID pen exists on the dev machine; tests use synthetic Windows Ink injection with integer positions. | Real pens may differ in pressure response, tilt/rotation, timestamps, delivery batching; HIMETRIC sub-pixel mapping is untested. | P1 | No hardware available. | Test on at least one Wacom-class and one N-trig/Surface pen; record device/driver/results in STATUS.md; add Wintab if Ink proves insufficient. |
 | 2 | **8-bit layer storage** (premultiplied RGBA8). | Banding in soft, low-flow build-ups and dark low-alpha colors. | P1 (phase 4) | Changes storage, composition and memory budget; belongs with the layer work. | 16-bit (u16 linear or encoded) tiles, at least as an option; benchmark memory and compose cost. |
 | 3 | **Document limited by GPU max texture size** (single display texture). | Documents beyond 8192/16384 px cannot be shown. | P2 | Typical illustration sizes fit. | Page the display texture (virtual texture / tiles of display textures) while keeping mip continuity. |
-| 4 | **No undo/redo.** | Any mistake is permanent. | P1 (phase 4) | Phase 4 scope. | Copy-on-write tile snapshots of `StrokeBuffer::touched()`; memory-bounded history. |
+| 4 | ~~**No undo/redo.**~~ Resolved in 4B (ADR 0015). | Any mistake is permanent. | P1 (phase 4) | Phase 4 scope. | Copy-on-write tile snapshots of `StrokeBuffer::touched()`; memory-bounded history. |
 | 5 | **Airbrush rest position lags one sample** (uses the last processed path point). | Slight offset of rest build-up after a fast stop. | P3 | Visually negligible at 200 Hz. | Use the raw last input position for rest deposition, filtered for jitter. |
 | 6 | **`distance` effector uses a fixed period `length`**, not the stroke's final length (unknown while drawing). | "Fade over the whole stroke" is not expressible. | P3 | Needs a design for live strokes (the end is unknown). | Optional "fit to stroke" mode evaluated in the provisional tail, like the end taper. |
 | 7 | **No movement prediction.** | Perceived latency ~1 sample + display. | P3 | Correctness first; prediction must be retractable. | Predict into the re-renderable tail only (never committed). |
@@ -23,7 +23,9 @@ a planned phase or affects users soon; **P2** visible quality issue;
 | 15 | **Mouse samples have no device timestamps** (stamped on arrival). | Velocity-driven effectors are noisier with a mouse. | P3 | winit does not expose them. | Use raw input timestamps on Windows if needed. |
 | 16a | **Parallel stamping allocates inside rayon** (one injector block per 63 batches) and dirty sets reallocate `BTreeSet` nodes per frame. | Negligible today (measured, performance.md), but not literally zero. | P3 | Fixing needs a custom submission path or a non-allocating dirty set. | Keep a persistent bitset/Vec-backed dirty set; submit via a pool-resident task if it ever matters. |
 | 16 | **Large modules**: `brush/src/engine.rs` (~800 lines incl. tests) holds `StrokeProcessor` and `BrushEngine`. | Harder to navigate. | P3 | Cohesive (one pipeline); splitting now is cosmetic. | Split `BrushEngine` into its own module if it grows (e.g. with undo hooks). |
-| 17 | **Layer panel is minimal**: no drag-and-drop reorder, no rename field, no thumbnails, no delete confirmation (the reference asks; Tela has no undo until 4B). | Less familiar than the reference; a deleted layer is lost until 4B. | P2 | 4A scope was the model; undo comes in 4B. | Drag reorder and rename in the panel; revisit confirmation once undo exists. |
+| 17 | **Layer panel is minimal**: no drag-and-drop reorder, no rename field, no thumbnails, no delete confirmation (the reference asks; in Tela deletion is undoable since 4B). | Less familiar than the reference. | P2 | 4A/4B scope was the model and history. | Drag reorder and rename in the panel; decide on a confirmation with the owner. |
+| 18 | **`commit_tile` converts whole tiles** (all 256 rows, 8-bit ↔ f32) even where the stroke mask is empty. | ~0.6 ms per touched tile at commit (history_bench); a 74-tile stroke commits in ~50 ms. | P2 | Measured in 4B; pre-existing; not in 4B's scope. | Skip rows (or tiles) whose mask is all zero; re-run history_bench and the goldens. |
+| 19 | **Undo history is uncompressed and in memory only.** | 256 KiB per changed tile per step; 1 GiB default holds ~55 strokes of a 500 px brush across a large canvas. | P3 | ADR 0015: no compression in 4B. | Compress old steps (e.g. deflate) or spill to disk if measurements show the need. |
 
 Resolved in phase 4A: #10, `Document` public fields (now a layer API with
 stable ids, ADR 0014).

@@ -6,8 +6,9 @@ clean-room: behaviour may be studied from the outside, the implementation
 is original ([docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md)).
 
 **Status:** phases 1–3 complete (canvas, tablet input, brush engine);
-phase 3.5 (architecture audit and handoff) complete; phase 4 (layers, undo,
-blend modes, I/O) planned, not started. 207 tests passing. Windows is the
+phase 3.5 (architecture audit and handoff) complete; phase 4 in progress:
+4A (layer stack) and 4B (undo/redo) complete, 4C–4G (blend modes, masks,
+16-bit, I/O) planned. 240 tests passing. Windows is the
 primary platform (Windows Ink); no physical tablet has been validated yet.
 Details: [docs/STATUS.md](docs/STATUS.md).
 
@@ -47,6 +48,8 @@ works on the panels too.
 | O | Toggle pressure → opacity |
 | C | Clear the active layer |
 | Ctrl+Shift+N | New layer above the active one |
+| Ctrl+Z | Undo |
+| Ctrl+Y, Ctrl+Shift+Z | Redo |
 | F3 | Latency summary in the title bar |
 | Home | Fit document |
 

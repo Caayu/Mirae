@@ -25,8 +25,8 @@ measured performance, documented decisions.
 
 Phase 4 (layers and document) is approved as a plan
 ([phase4/PLAN.md](phase4/PLAN.md)) and runs subphase by subphase:
-**4A** (layer API) is complete. Every later subphase (4B…4G) needs the
-owner's explicit approval before it starts, and every subphase ends with
+**4A** (layer API) and **4B** (undo/redo) are complete. Every later
+subphase (4C…4G) needs the owner's explicit approval before it starts, and every subphase ends with
 a **parity gate** recorded in [PARITY.md](PARITY.md). Facts:
 [STATUS.md](STATUS.md).
 
@@ -59,7 +59,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 225 tests, ~5 s after build
+cargo test --workspace --release        # 240 tests, ~10 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -161,8 +161,8 @@ summarized in the changelog).
 ## 16. Limitations
 
 [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md): no physical tablet validation,
-8-bit storage, GPU texture size limit, no undo, no I/O, UI edits not
-persisted, goldens verified on one machine.
+8-bit storage, GPU texture size limit, undo history uncompressed in memory,
+no I/O, UI edits not persisted, goldens verified on one machine.
 
 ## 17. Risks
 

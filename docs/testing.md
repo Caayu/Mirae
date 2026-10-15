@@ -59,7 +59,12 @@ Covered: curve range/monotonicity/edit validity, `angle_delta`/`follow`,
 `StrokeRng` purity and ranges, preset validation idempotence (incl.
 oversized effector lists and non-finite values), spacing independence of
 sample density, tile addressing, `IRect::tiles`, view round trip and
-anchors. Case counts are kept modest (48–256) so the suite stays fast.
+anchors; the layer stack against a reference model (512 sequences); undo/
+redo against a stack of full-content digests (300 sequences of edits,
+undo and redo) and under tiny limits. Case counts are kept modest
+(48–512) so the suite stays fast. Each history test has been checked
+against planted bugs (undo ignoring the active layer, absent tiles not
+restored, an extra tile copy).
 
 ### Visual / golden tests
 
@@ -74,6 +79,7 @@ Not part of `cargo test`; run them when touching hot paths and compare with
 
 ```sh
 cargo run --release -p tela-corpus --example stamp_bench        # stamping, allocations, composition
+cargo run --release -p tela-corpus --example history_bench      # commit/undo/redo time, history memory per stroke
 cargo run --release -p tela-brush --example stabilizer_bench     # phase 2 stabilizer table
 cargo run --release -p tela-brush --example interpolation_bench  # phase 2 interpolator table
 ```
@@ -94,6 +100,15 @@ sizes from 5 px (zoomed in) to 500+ px; rotated canvas; zoom far out (no
 seams) and in (crisp texels); curve editor (double-click adds, drag moves,
 right-click removes); pen over the panel moves sliders; pen eraser end
 erases.
+
+Phase 4 additions (4A/4B): create/select/hide/lock/reorder/delete layers
+and opacity; Ctrl+Shift+N during a stroke is ignored; stroke undo/redo
+(Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, buttons); ten strokes undone and redone
+with identical pixel counts; create/delete/reorder undo and the active
+layer afterwards; two opacity drags = one undo, split by a selection
+change; visibility skipped by undo; lock and clear undo; Ctrl+Z during a
+stroke ignored; undo after synthetic-pen strokes. Pixel counts are read
+from screen captures (see docs/parity/ for the method).
 
 ### Hardware tests
 

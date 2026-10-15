@@ -1,15 +1,15 @@
 # Status
 
-Factual state of the project at the end of **phase 4A** (document model,
-layer API, stable ids). Update this file at the end of every subphase.
+Factual state of the project at the end of **phase 4B** (undo/redo).
+Update this file at the end of every subphase.
 
 ## Summary
 
 | | |
 |---|---|
-| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A complete** (parity gate recorded); 4B–4G await approval |
+| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A and 4B complete** (parity gates recorded); 4C–4G await approval |
 | Parity | Tracked in [PARITY.md](PARITY.md); nothing compared with the reference before phase 4 |
-| Tests | **225** passing, 0 failing (phase 3.5 ended at 207, phase 3 at 188) |
+| Tests | **240** passing, 0 failing (4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -32,7 +32,8 @@ layer API, stable ids). Update this file at the end of every subphase.
 | UI | egui side panel: presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
 | Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile |
-| Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. `Normal` blend only; no undo; no file I/O |
+| Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. `Normal` blend only; no file I/O |
+| Undo/redo (4B) | Linear, swap-based history inside `Document` (ADR 0015): strokes, clear, create/delete/reorder layers, lock, rename, blend mode, opacity (consecutive edits merge); selection and visibility not recorded; add/remove undos restore the active layer; ignored during a stroke; 200 steps / 1 GiB by default; Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Undo/Redo buttons |
 
 ## Hardware validation
 
@@ -47,7 +48,7 @@ layer API, stable ids). Update this file at the end of every subphase.
 
 See [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) for the full list with
 priorities. Most relevant: no physical tablet validation; 8-bit storage
-(banding); document size bounded by GPU texture size; no undo/redo; no
+(banding); document size bounded by GPU texture size; undo history uncompressed in memory; no
 document I/O; preset edits not persisted; UI unpolished.
 
 ## Phase 3.5 outcome
@@ -58,6 +59,14 @@ rule moved out of app/UI, golden hygiene, property tests, enforced crate
 boundaries, crate/API docs, architecture docs, ADRs, handoff docs, check
 script. Details: [CHANGELOG.md](../CHANGELOG.md).
 
+## Phase 4B outcome
+
+Undo/redo with the reference's observed semantics, bit-exact and copy-free
+(swap), memory-bounded; parity gate recorded
+([parity/4B-undo-redo.md](parity/4B-undo-redo.md)). Undo/redo take
+microseconds; recording costs ~0.17 ms per changed painted tile; 256 KiB
+per changed tile per step ([performance.md](performance.md)).
+
 ## Phase 4A outcome
 
 Layer stack with stable ids and one pixel-mutation path (ADR 0014), layer
@@ -67,5 +76,6 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-4B (undo/redo) — **only after the owner explicitly approves it**. See
+4C (blend modes and compositor) — **only after the owner explicitly
+approves it**. See
 [phase4/PLAN.md](phase4/PLAN.md).

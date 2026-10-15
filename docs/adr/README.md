@@ -21,6 +21,7 @@ and both say so.
 | [0012](0012-golden-visual-corpus.md) | Golden visual corpus for brushes | 3 |
 | [0013](0013-airbrush-time-instants.md) | Airbrush deposition at fixed time instants | 3 |
 | [0014](0014-document-layer-model.md) | Document layer model: stable ids, relative placement, one pixel-mutation path | 4A |
+| [0015](0015-undo-redo-tile-swap.md) | Undo/redo inside `Document`, swap-based steps, reference-derived semantics, byte/step limits | 4B |
 
 ## Writing a new ADR
 

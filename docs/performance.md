@@ -91,6 +91,34 @@ recorded): before 0.111 / 0.112 / 0.123 ms, after 0.114 / 0.116 / 0.123 ms
 per tile, 0 allocations — within run-to-run noise. `commit_into` no longer
 allocates its 1 MiB scratch (row buffer on the stack in `commit_tile`).
 
+### Phase 4B — undo history
+
+`history_bench` (4096² document, real brush-engine strokes, medians of 9):
+
+| stroke | size px | layer | tiles | commit, no history ms | commit + history ms | undo ms | redo ms | held after commit | held after undo | reserved |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| small | 5 | empty | 2 | 0.563 | 0.576 | 0.001 | 0.000 | 0.00 MiB | 0.50 MiB | 0.50 MiB |
+| small | 5 | painted | 2 | 0.537 | 0.695 | 0.002 | 0.000 | 0.50 MiB | 0.50 MiB | 0.50 MiB |
+| medium | 25 | empty | 6 | 2.732 | 2.371 | 0.003 | 0.001 | 0.00 MiB | 1.50 MiB | 1.50 MiB |
+| medium | 25 | painted | 6 | 3.060 | 4.060 | 0.004 | 0.001 | 1.50 MiB | 1.50 MiB | 1.50 MiB |
+| large | 100 | empty | 19 | 12.696 | 12.329 | 0.006 | 0.004 | 0.00 MiB | 4.75 MiB | 4.75 MiB |
+| large | 100 | painted | 19 | 10.852 | 13.534 | 0.008 | 0.004 | 4.75 MiB | 4.75 MiB | 4.75 MiB |
+| huge brush | 500 | empty | 74 | 49.629 | 49.646 | 0.018 | 0.013 | 0.00 MiB | 18.50 MiB | 18.50 MiB |
+| huge brush | 500 | painted | 74 | 43.215 | 56.410 | 0.022 | 0.013 | 18.50 MiB | 18.50 MiB | 18.50 MiB |
+
+- Undo and redo are swaps: microseconds regardless of stroke size.
+- Recording costs ~0.17 ms per changed tile that already had pixels (a
+  256 KiB copy plus a comparison); nothing measurable over empty tiles.
+- Memory: exactly 256 KiB per changed tile per step (plus a few hundred
+  bytes per step). "Held" is what the history holds now; "reserved" is the
+  step's larger direction, on which the byte limit is enforced.
+- Observed, not changed in 4B: the commit itself costs ~0.6 ms per tile
+  even without history, because `commit_tile` converts every row of the
+  tile, including rows the stroke does not touch (TECHNICAL_DEBT #18).
+- `stamp_bench` after 4B: allocations per dab 0.000 on every line;
+  composition 0.105 ms per tile, 0 allocations (unchanged; 4B does not
+  touch these paths).
+
 ### Phase 3 → 3.5
 
 The phase 3.5 refactors did not touch pixel loops; all differences are

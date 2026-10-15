@@ -68,5 +68,8 @@ redraw:
 - No visual design, no layout persistence, no theming.
 - Keyboard shortcuts are handled in the app (`App::on_key`), not in the UI
   crate; they call the same domain APIs.
-- The layer panel has no drag-and-drop reordering, no rename field and no
-  delete confirmation yet (undo arrives in 4B).
+- The layer panel has no drag-and-drop reordering and no rename field; it
+  asks no confirmation before deleting (the deletion is undoable).
+- Undo/Redo buttons (`history_bar`) receive only labels (`HistoryButtons`)
+  and return a `HistoryCommand`; the app maps document `HistoryAction`s to
+  text.

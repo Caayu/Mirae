@@ -6,7 +6,8 @@ Approved by the owner on 2026-10-14 (sequence 4A → 4B → 4C → 4D → 4E →
 | Subphase | Status |
 |---|---|
 | 4A | **Complete** (parity gate: [parity/4A-layers.md](../parity/4A-layers.md)) |
-| 4B–4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
+| 4B | **Complete** (parity gate: [parity/4B-undo-redo.md](../parity/4B-undo-redo.md); ADR 0015) |
+| 4C–4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
 starts**, and each ends with a parity gate ([PARITY.md](../PARITY.md)).
 
 ## Rules for the whole phase
@@ -120,6 +121,11 @@ properties; (3) stack API beside the fields; (4) `modify_tiles`,
 fields private; (6) property tests; (7) layer panel, docs, ADR, parity.
 
 ## 4B — Undo/redo
+
+**As built** (ADR 0015): the reference was observed first and two points
+of this plan changed to match it — visibility is *not* a history step, and
+opacity edits merge by an uninterrupted chain (separate drags on one layer
+undo together) instead of per gesture. Original plan text follows.
 
 Linear history of **every** document mutation, owned by `Document` and
 recorded automatically (no unrecorded mutation path). Tile edits store the

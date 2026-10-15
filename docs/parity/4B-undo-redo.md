@@ -71,8 +71,48 @@ related to undo; Tela has no equivalent yet).
 
 ## Tela results
 
-Pending: filled in when 4B closes.
+Tela at commit 9b7358e, Windows 11, 2560×1440, maximized; same driving and
+measuring method (mouse; one check with the synthetic Windows Ink pen).
+Each behaviour is also covered by a unit or property test.
+
+| Ref. | Tela behaviour | How verified |
+|---|---|---|
+| U1 | One stroke is one step; Ctrl+Z removes it (strip ink 4986 → 0), Ctrl+Y and Ctrl+Shift+Z restore it (4986). The Undo button does the same. | App; H1/H7 tests |
+| U2 | Ten strokes undone one by one to nothing, five redone with identical ink counts per stroke. | App; property test |
+| U3 | A new step after undo disables Redo; creating a layer after undoing strokes discarded them. | App; `new_edits_discard_redo` |
+| U4 | Undoing a new layer removes it and reactivates the previous layer; redo restores it, active. | App; `active_layer_after_undo_follows_the_reference` |
+| U5 | Undoing a creation after selecting another layer reactivates the layer active before the creation. | App (Layer 3 created, Layer 1 selected, undo → Layer 2 active) |
+| U6 | Undoing a deletion restores the layer with its id, position, name and pixels (ink 5985 → 0 → 5985) and makes it active; redo deletes it again and the layer below becomes active. | App; `removed_layers_come_back_with_their_id_position_and_pixels` |
+| U7 | Undoing a stroke keeps the current selection. | `active_layer_after_undo_follows_the_reference` |
+| U8 | Undoing a reorder restores the order and keeps the selection made afterwards. | App; same test |
+| U9 | Visibility is not a step: clear, hide, undo → the clear is undone, the layer stays hidden. | App; `visibility_is_outside_history` |
+| U10 | Lock is a step; undo unlocks (Delete and opacity re-enabled). | App; H6 test |
+| U11 | Rename is a step (also on a locked layer). No rename field in the panel yet, so checked by tests only. | `every_recorded_mutation_is_one_step_and_the_others_none` |
+| U12 | Blend mode is a step. Only `Normal` exists until 4C, so checked by the API only. | `every_recorded_mutation…` (no-op case); `Change::Blend` swap |
+| U13 | Clear (C or "Clear layer") is one step; undo restores the strokes (ink 0 → 5984). Clearing an empty layer records nothing. | App; `clearing_moves_the_surface_into_history` |
+| U14–U15 | Two opacity drags in a row are one step: 100 → 28 %, one undo → 100 % (ink back to 5984). No timer. | App; `opacity_edits_merge_until_something_interrupts_them` |
+| U16 | A selection change between two drags makes two steps (undo → 50 %, undo → 100 %). | App; same test |
+| U17 | Any recorded step (even one undone afterwards) ends the merge. | Same test; property test |
+| U18 | Ctrl+Z during a stroke is ignored: the stroke lands, earlier strokes stay. | App |
+| U19 | 200 steps by default (`HistoryLimits`), plus a 1 GiB byte budget of Tela's own. | `step_limit_drops_the_oldest_steps`, `byte_limit_keeps_an_oversized_step_alone` |
+| U20 | Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z. | App |
 
 ## Differences
 
-Pending: filled in when 4B closes.
+| # | Difference | Kind | Status |
+|---|---|---|---|
+| D-4B-1 | Tela also limits history by memory (1 GiB default, worst case per step); the reference shows only a step count in its settings. | Behavioural, by design | Accepted (ADR 0015) |
+| D-4B-2 | No History panel (list of steps, click to jump); Tela has Undo/Redo buttons with the next step's name as a tooltip. | Feature (UI) | Open |
+| D-4B-3 | Not compared: whether an undo/redo *between* two opacity drags ends the merge in the reference (Tela: it does), whether a no-op undo/redo does (Tela: it does not), behaviour at the 200-step limit, opacity typed into the numeric field, undo of other properties merging (Tela merges only opacity). | Coverage gap | Open |
+| D-4B-4 | Rename and blend mode undo were compared in the reference but cannot be exercised in Tela's UI yet (no rename field; blend modes arrive in 4C). | Coverage gap | Open — 4C for blend modes, TECHNICAL_DEBT #17 for rename |
+| D-4B-5 | The reference's shape-assist step ("Ajustar Formas Inteligentes") has no Tela equivalent. | Feature (outside 4B) | Not planned in phase 4 |
+| D-4B-6 | Undo/redo speed and memory were measured in Tela only; not compared with the reference. | Coverage gap | Open |
+
+## Changes to the 4B brief caused by the observations
+
+1. **Visibility is not recorded** (the brief listed it as historical).
+2. **Opacity merging is by uninterrupted chain**, so two separate drags on
+   the same layer with nothing in between are **one** undo (the brief
+   asked for two). A selection change, another step, or an undo/redo
+   splits them. Switching to per-gesture splitting is a one-line change
+   (end the chain on the UI's drag-end signal) if the owner prefers it.

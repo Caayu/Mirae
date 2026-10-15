@@ -61,7 +61,7 @@ All authoritative state lives in `tela-app`'s `App`:
 
 | State | Owner | Notes |
 |---|---|---|
-| `Document` (layers, pixels) | `App.document` | Changed only through `Document` methods (ADR 0014): layer commands from the panel and shortcuts, `modify_tiles` + `StrokeBuffer::commit_tile` at the end of a stroke, `clear_layer`. Every call returns the tiles it invalidated. |
+| `Document` (layers, pixels) | `App.document` | Changed only through `Document` methods (ADR 0014): layer commands from the panel and shortcuts, `modify_tiles` + `StrokeBuffer::commit_tile` at the end of a stroke, `clear_layer`. Every call returns the tiles it invalidated and is recorded in the document's undo history (ADR 0015). |
 | View (`ViewTransform`) | `App.view` | Screen↔canvas mapping. |
 | Presets being edited, selection, eraser mode | `App.tools` (`Tools`) | The UI edits the active preset in place, lent for one frame. |
 | User stroke settings, pressure curve, paint color | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
@@ -207,9 +207,24 @@ use a separate index range (`1 << 40`).
 `TiledSurface<P>` is a `HashMap<TileCoord, Tile<P>>` of 256×256 tiles,
 allocated on first write (ADR 0002). `DirtyTiles` is a `BTreeSet` (ordered,
 deterministic). The stroke buffer keeps two sets: `dirty` (changed since the
-display last took them) and `touched` (every tile of the stroke, for commit
-and future undo). The app keeps `stale` (tiles whose composite must be
-rebuilt) and recomposes only those.
+display last took them) and `touched` (every tile of the stroke, for commit;
+the commit's history step copies exactly these tiles' previous content).
+The app keeps `stale` (tiles whose composite must be rebuilt) and
+recomposes only those.
+
+### Undo history
+
+`Document` owns a linear undo/redo history (private submodule
+`document::history`, ADR 0015) that its own mutation methods record into,
+so no caller can change a document without recording. Each step holds the
+state that is not in the document (previous tiles, a cleared surface, a
+removed layer, an old property value); undo and redo swap it with the
+document's, which makes them bit-exact and copy-free. Semantics follow the
+reference application (docs/parity/4B-undo-redo.md): selecting and
+showing/hiding layers are not steps, add/remove undos restore the active
+layer, consecutive opacity edits of one layer merge, and the app ignores
+undo/redo during a stroke. Limits: 200 steps and 1 GiB by default
+(`HistoryLimits`).
 
 ## 8. Composition and rendering
 
@@ -276,7 +291,7 @@ composition cost. See [golden-tests.md](../golden-tests.md) and
 ## 12. Architectural limits (today)
 
 - Flat layer stack (no groups); `BlendMode::Normal` only (4C).
-- No undo/redo yet (4B); `Document::modify_tiles` is where tile snapshots will be taken.
+- Undo history is in memory only, uncompressed, 256 KiB per changed tile per step (ADR 0015).
 - 8-bit layer storage; display texture limited to the GPU's max texture size.
 - Document I/O does not exist.
 - The UI is functional, not designed; preset edits are not persisted.
