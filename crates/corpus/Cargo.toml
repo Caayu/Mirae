@@ -15,8 +15,9 @@ glam.workspace = true
 png.workspace = true
 
 [dev-dependencies]
-# Only the stamping benchmark composes a document.
+# Benchmarks and the end-to-end tests compose, save and load documents.
 tela-document.workspace = true
+tela-io.workspace = true
 
 [[bin]]
 name = "tela-corpus"

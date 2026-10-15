@@ -2742,6 +2742,7 @@ dependencies = [
  "tela-canvas",
  "tela-color",
  "tela-document",
+ "tela-io",
 ]
 
 [[package]]
