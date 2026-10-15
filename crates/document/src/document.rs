@@ -1,8 +1,12 @@
+mod history;
+
 use std::num::NonZeroU32;
 
 use tela_canvas::{DirtyTiles, IRect, Tile, TileCoord};
 use tela_color::Rgba;
 
+use self::history::{Change, History, layer_bytes};
+pub use self::history::{HistoryAction, HistoryLimits};
 use crate::{BlendMode, LayerError, LayerId, RasterLayer};
 
 /// Prefix of the names the document gives new layers ("Layer 3").
@@ -35,6 +39,11 @@ pub enum Placement {
 ///
 /// Every mutation returns the tiles whose composite it invalidated, so
 /// callers never decide which tiles an operation affects.
+///
+/// Every mutation is also recorded in the document's undo history
+/// ([`Document::undo`], ADR 0015), except the two the reference application
+/// does not record either: [`Document::set_active_layer`] and
+/// [`Document::set_visible`]. No-op calls record nothing.
 #[derive(Clone, Debug)]
 pub struct Document {
     width: u32,
@@ -47,6 +56,7 @@ pub struct Document {
     /// Next id to hand out; greater than every id allocated so far.
     /// `None` once `u32::MAX` has been used.
     next_id: Option<NonZeroU32>,
+    history: History,
 }
 
 impl Document {
@@ -60,6 +70,7 @@ impl Document {
             layers: vec![RasterLayer::new(first, format!("{DEFAULT_NAME} 1"))],
             active: first,
             next_id: NonZeroU32::MIN.checked_add(1),
+            history: History::default(),
         }
     }
 
@@ -130,8 +141,12 @@ impl Document {
     }
 
     /// Makes `id` the active layer. Hidden and locked layers can be active.
+    /// Not recorded in history; a change of selection ends opacity merging.
     pub fn set_active_layer(&mut self, id: LayerId) -> Result<(), LayerError> {
         self.require(id)?;
+        if self.active != id {
+            self.history.opacity_chain = None;
+        }
         self.active = id;
         Ok(())
     }
@@ -144,9 +159,12 @@ impl Document {
         let raw = self.next_id.ok_or(LayerError::IdsExhausted)?;
         let id = LayerId::new(raw);
         let layer = RasterLayer::new(id, self.default_name());
+        let cost = layer_bytes(&layer);
         self.next_id = raw.checked_add(1);
         self.layers.insert(index, layer);
-        self.active = id;
+        let before = std::mem::replace(&mut self.active, id);
+        let change = Change::Presence { index, layer: None };
+        self.record(HistoryAction::AddLayer, vec![change], before, cost);
         Ok(id)
     }
 
@@ -162,10 +180,17 @@ impl Document {
             return Err(LayerError::LastLayer);
         }
         let dirty = self.layers[i].shown_tiles();
-        self.layers.remove(i);
+        let removed = self.layers.remove(i);
+        let before = self.active;
         if self.active == id {
             self.active = self.layers[i.saturating_sub(1)].id();
         }
+        let cost = layer_bytes(&removed);
+        let change = Change::Presence {
+            index: i,
+            layer: Some(Box::new(removed)),
+        };
+        self.record(HistoryAction::RemoveLayer, vec![change], before, cost);
         Ok(dirty)
     }
 
@@ -188,10 +213,17 @@ impl Document {
         if to_index == from {
             return Ok(DirtyTiles::new());
         }
+        let change = Change::Move {
+            id,
+            at: to_index,
+            other: from,
+        };
+        self.record(HistoryAction::MoveLayer, vec![change], self.active, 0);
         Ok(self.layers[to_index].shown_tiles())
     }
 
-    /// Shows or hides a layer. Allowed on locked layers.
+    /// Shows or hides a layer. Allowed on locked layers. Not recorded in
+    /// history (like the reference application, parity record U9).
     pub fn set_visible(&mut self, id: LayerId, visible: bool) -> Result<DirtyTiles, LayerError> {
         let i = self.require(id)?;
         let layer = &mut self.layers[i];
@@ -204,18 +236,32 @@ impl Document {
 
     /// Sets the layer opacity, clamped to `0..=1`. Refused on locked layers
     /// and for non-finite values.
+    ///
+    /// Consecutive opacity changes of the same layer merge into one history
+    /// step until something else is recorded, undone or redone, or the
+    /// active layer changes: dragging a slider, clicking it, or several
+    /// drags in a row undo together (reference behaviour, parity record
+    /// U14–U17). No timer is involved.
     pub fn set_opacity(&mut self, id: LayerId, opacity: f32) -> Result<DirtyTiles, LayerError> {
         let i = self.require_unlocked(id)?;
         if !opacity.is_finite() {
             return Err(LayerError::InvalidOpacity);
         }
-        let layer = &mut self.layers[i];
         let opacity = opacity.clamp(0.0, 1.0);
-        if layer.opacity == opacity {
+        let old = self.layers[i].opacity;
+        if old == opacity {
             return Ok(DirtyTiles::new());
         }
-        layer.opacity = opacity;
-        Ok(layer.shown_tiles())
+        self.layers[i].opacity = opacity;
+        if !self.opacity_merges(id) {
+            let change = Change::Opacity {
+                layer: id,
+                other: old,
+            };
+            self.record(HistoryAction::Opacity, vec![change], self.active, 0);
+            self.history.opacity_chain = Some(id);
+        }
+        Ok(self.layers[i].shown_tiles())
     }
 
     /// Sets the blend mode. Refused on locked layers.
@@ -225,25 +271,48 @@ impl Document {
         mode: BlendMode,
     ) -> Result<DirtyTiles, LayerError> {
         let i = self.require_unlocked(id)?;
-        let layer = &mut self.layers[i];
-        if layer.blend_mode == mode {
+        let old = self.layers[i].blend_mode;
+        if old == mode {
             return Ok(DirtyTiles::new());
         }
-        layer.blend_mode = mode;
-        Ok(layer.shown_tiles())
+        self.layers[i].blend_mode = mode;
+        let change = Change::Blend {
+            layer: id,
+            other: old,
+        };
+        self.record(HistoryAction::BlendMode, vec![change], self.active, 0);
+        Ok(self.layers[i].shown_tiles())
     }
 
     /// Renames a layer. Allowed on locked layers.
     pub fn set_name(&mut self, id: LayerId, name: impl Into<String>) -> Result<(), LayerError> {
         let i = self.require(id)?;
-        self.layers[i].name = name.into();
+        let name = name.into();
+        if self.layers[i].name == name {
+            return Ok(());
+        }
+        let cost = name.len().max(self.layers[i].name.len());
+        let old = std::mem::replace(&mut self.layers[i].name, name);
+        let change = Change::Name {
+            layer: id,
+            other: old,
+        };
+        self.record(HistoryAction::Rename, vec![change], self.active, cost);
         Ok(())
     }
 
     /// Locks or unlocks a layer.
     pub fn set_locked(&mut self, id: LayerId, locked: bool) -> Result<(), LayerError> {
         let i = self.require(id)?;
+        if self.layers[i].locked == locked {
+            return Ok(());
+        }
         self.layers[i].locked = locked;
+        let change = Change::Locked {
+            layer: id,
+            other: !locked,
+        };
+        self.record(HistoryAction::Lock, vec![change], self.active, 0);
         Ok(())
     }
 
@@ -264,6 +333,10 @@ impl Document {
     /// tile in `tiles` (allocating it if needed) and for no other tile.
     /// A tile allocated here that is still blank afterwards is released
     /// again, so the layer stays sparse. Refused on locked layers.
+    ///
+    /// One call is one history step (one stroke = one undo). The previous
+    /// content of each declared tile that actually changed is kept for
+    /// undo; this is the only tile copy history ever makes.
     pub fn modify_tiles(
         &mut self,
         id: LayerId,
@@ -272,25 +345,49 @@ impl Document {
     ) -> Result<DirtyTiles, LayerError> {
         let i = self.require_unlocked(id)?;
         let layer = &mut self.layers[i];
+        let mut previous = Vec::with_capacity(tiles.len());
+        let (mut before, mut after) = (0, 0);
         for coord in tiles.iter() {
-            let existed = layer.pixels.tile(coord).is_some();
+            let old = layer.pixels.tile(coord).cloned();
             f(coord, layer.pixels.tile_or_insert(coord));
-            if !existed && layer.pixels.tile(coord).is_some_and(Tile::is_blank) {
+            if old.is_none() && layer.pixels.tile(coord).is_some_and(Tile::is_blank) {
                 layer.pixels.remove_tile(coord);
             }
+            let new = layer.pixels.tile(coord);
+            if old.as_ref() != new {
+                before += usize::from(old.is_some());
+                after += usize::from(new.is_some());
+                previous.push((coord, old));
+            }
         }
-        Ok(if layer.visible {
+        let dirty = if layer.visible {
             tiles.clone()
         } else {
             DirtyTiles::new()
-        })
+        };
+        let cost = before.max(after) * history::TILE_BYTES
+            + previous.len() * std::mem::size_of::<(TileCoord, Option<Tile<[u8; 4]>>)>();
+        let change = Change::Tiles {
+            layer: id,
+            tiles: previous,
+        };
+        self.record(HistoryAction::Paint, vec![change], self.active, cost);
+        Ok(dirty)
     }
 
-    /// Removes every pixel of a layer. Refused on locked layers.
+    /// Removes every pixel of a layer. Refused on locked layers. The
+    /// surface moves into history as is (no copy); clearing an empty layer
+    /// records nothing.
     pub fn clear_layer(&mut self, id: LayerId) -> Result<DirtyTiles, LayerError> {
         let i = self.require_unlocked(id)?;
+        if self.layers[i].pixels.tile_count() == 0 {
+            return Ok(DirtyTiles::new());
+        }
         let dirty = self.layers[i].shown_tiles();
-        self.layers[i].pixels.clear();
+        let pixels = std::mem::take(&mut self.layers[i].pixels);
+        let cost = pixels.tile_count() * history::TILE_BYTES;
+        let change = Change::Surface { layer: id, pixels };
+        self.record(HistoryAction::ClearLayer, vec![change], self.active, cost);
         Ok(dirty)
     }
 
@@ -352,6 +449,44 @@ impl Document {
         self.next_id = next;
     }
 
+    /// The document's whole content (layers in order with ids, properties
+    /// and every tile's pixels, and the active layer), excluding history.
+    /// Equal digests mean equal documents, up to 64-bit hash collisions of
+    /// tile contents.
+    #[cfg(test)]
+    pub(crate) fn digest(&self) -> Digest {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let layers = self
+            .layers
+            .iter()
+            .map(|l| {
+                let mut tiles: Vec<(TileCoord, u64)> = l
+                    .pixels
+                    .tile_coords()
+                    .map(|c| {
+                        let mut h = DefaultHasher::new();
+                        l.pixels.tile(c).unwrap().pixels().hash(&mut h);
+                        (c, h.finish())
+                    })
+                    .collect();
+                tiles.sort_unstable();
+                LayerDigest {
+                    id: l.id().get(),
+                    name: l.name.clone(),
+                    visible: l.visible,
+                    opacity_bits: l.opacity.to_bits(),
+                    blend_mode: l.blend_mode,
+                    locked: l.locked,
+                    tiles,
+                }
+            })
+            .collect();
+        Digest {
+            active: self.active.get(),
+            layers,
+        }
+    }
+
     /// Checks every structural invariant; used by tests after each step.
     #[cfg(test)]
     pub(crate) fn check_invariants(&self) {
@@ -369,6 +504,27 @@ impl Document {
             assert!((0.0..=1.0).contains(&l.opacity), "L5: opacity in range");
         }
     }
+}
+
+/// See [`Document::digest`].
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Digest {
+    pub active: u32,
+    pub layers: Vec<LayerDigest>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LayerDigest {
+    pub id: u32,
+    pub name: String,
+    pub visible: bool,
+    pub opacity_bits: u32,
+    pub blend_mode: BlendMode,
+    pub locked: bool,
+    /// Sorted by coordinate; absent tiles are absent here too.
+    pub tiles: Vec<(TileCoord, u64)>,
 }
 
 /// `N` if `name` is exactly a default name "Layer N" (N ≥ 1, no leading

@@ -23,11 +23,13 @@
 mod compose;
 mod document;
 mod error;
+#[cfg(test)]
+mod history_properties;
 mod layer;
 #[cfg(test)]
 mod properties;
 
 pub use compose::{ComposeScratch, Overlay};
-pub use document::{Document, Placement};
+pub use document::{Document, HistoryAction, HistoryLimits, Placement};
 pub use error::LayerError;
 pub use layer::{BlendMode, LayerId, RasterLayer};
