@@ -2,13 +2,16 @@
 //! stale ids) run against the document and against a deliberately simple
 //! reference model; after every step both must agree and the document's
 //! invariants (L1–L9, M3) must hold. The model includes masks, clipping,
-//! alpha lock and the edit target (phase 4D). Lives inside the crate to
-//! reach `Document::check_invariants`.
+//! alpha lock and the edit target (phase 4D), and the document depth: pixel
+//! edits for either depth (refused when it is not the document's) and
+//! depth conversion (phase 4E). Lives inside the crate to reach
+//! `Document::check_invariants`.
 
 use std::collections::HashMap;
 
 use proptest::prelude::*;
-use tela_canvas::{DirtyTiles, TileCoord};
+use tela_canvas::{DirtyTiles, Tile, TileCoord};
+use tela_color::{PixelDepth, StoragePixel};
 
 use crate::{Document, LayerError, LayerId, LayerPart, Placement};
 
@@ -22,7 +25,8 @@ enum Op {
     Opacity(usize, f32),
     Lock(usize, bool),
     Rename(usize, u8),
-    Paint(usize),
+    /// A pixel edit written for 16 bits (`true`) or 8 bits.
+    Paint(usize, bool),
     Clear(usize),
     AddMask(usize),
     RemoveMask(usize),
@@ -31,6 +35,8 @@ enum Op {
     Clip(usize, bool),
     AlphaLock(usize, bool),
     Target(bool),
+    /// Convert to 16 bits (`true`) or 8 bits.
+    Convert(bool),
 }
 
 fn op() -> impl Strategy<Value = Op> {
@@ -48,7 +54,7 @@ fn op() -> impl Strategy<Value = Op> {
         1 => (any::<usize>(), opacity).prop_map(|(i, o)| Op::Opacity(i, o)),
         1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Op::Lock(i, v)),
         1 => (any::<usize>(), 0u8..4).prop_map(|(i, n)| Op::Rename(i, n)),
-        2 => any::<usize>().prop_map(Op::Paint),
+        2 => (any::<usize>(), any::<bool>()).prop_map(|(i, s)| Op::Paint(i, s)),
         1 => any::<usize>().prop_map(Op::Clear),
         1 => any::<usize>().prop_map(Op::AddMask),
         1 => any::<usize>().prop_map(Op::RemoveMask),
@@ -57,6 +63,7 @@ fn op() -> impl Strategy<Value = Op> {
         1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Op::Clip(i, v)),
         1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Op::AlphaLock(i, v)),
         1 => any::<bool>().prop_map(Op::Target),
+        1 => any::<bool>().prop_map(Op::Convert),
     ]
 }
 
@@ -98,6 +105,7 @@ struct Model {
     /// The edit target is the active layer's mask.
     on_mask: bool,
     next: u32,
+    depth: PixelDepth,
 }
 
 impl Model {
@@ -107,6 +115,7 @@ impl Model {
             active: 1,
             on_mask: false,
             next: 2,
+            depth: PixelDepth::Rgba8,
         }
     }
 
@@ -167,6 +176,13 @@ fn origin_tile() -> DirtyTiles {
     let mut t = DirtyTiles::new();
     t.mark(TileCoord { x: 0, y: 0 });
     t
+}
+
+/// Paints one opaque pixel with an edit written for `P`.
+fn paint<P: StoragePixel>(d: &mut Document, id: LayerId) -> Result<(), LayerError> {
+    ok(d.modify_tiles(id, &origin_tile(), |_, t: &mut Tile<P>| {
+        *t.get_mut(1, 1) = P::from_rgba8([255; 4]);
+    }))
 }
 
 /// Drops the success value, keeping the outcome.
@@ -268,11 +284,39 @@ fn step(
             let model = m.find(id).map(|i| m.layers[i].name = name.clone());
             (d.set_name(id, name), model)
         }
-        Op::Paint(i) => {
+        Op::Paint(i, sixteen) => {
             let id = pick(d, removed, i);
-            let model = m.unlocked(id).map(|i| m.layers[i].painted = true);
-            let doc = d.modify_tiles(id, &origin_tile(), |_, t| *t.get_mut(1, 1) = [255; 4]);
-            (ok(doc), model)
+            let edit = if sixteen {
+                PixelDepth::Rgba16
+            } else {
+                PixelDepth::Rgba8
+            };
+            let model = m.unlocked(id).and_then(|i| {
+                if edit != m.depth {
+                    return Err(LayerError::WrongDepth {
+                        document: m.depth,
+                        edit,
+                    });
+                }
+                m.layers[i].painted = true;
+                Ok(())
+            });
+            let doc = if sixteen {
+                paint::<[u16; 4]>(d, id)
+            } else {
+                paint::<[u8; 4]>(d, id)
+            };
+            (doc, model)
+        }
+        Op::Convert(sixteen) => {
+            let depth = if sixteen {
+                PixelDepth::Rgba16
+            } else {
+                PixelDepth::Rgba8
+            };
+            m.depth = depth;
+            d.convert_depth(depth);
+            (Ok(()), Ok(()))
         }
         Op::Clear(i) => {
             let id = pick(d, removed, i);
@@ -367,11 +411,17 @@ fn snapshot(d: &Document) -> Vec<ModelLayer> {
 }
 
 /// Address of each layer's tile buffer, to prove layers are not copied.
-fn buffers(d: &Document) -> HashMap<LayerId, *const [u8; 4]> {
+fn buffers(d: &Document) -> HashMap<LayerId, *const u8> {
+    let origin = TileCoord { x: 0, y: 0 };
     d.layers()
         .filter_map(|l| {
-            let t = l.pixels().tile(TileCoord { x: 0, y: 0 })?;
-            Some((l.id(), t.pixels().as_ptr()))
+            let p = l.pixels();
+            let ptr = match (p.rgba8(), p.rgba16()) {
+                (Some(s), _) => s.tile(origin)?.pixels().as_ptr().cast(),
+                (_, Some(s)) => s.tile(origin)?.pixels().as_ptr().cast(),
+                _ => unreachable!("one of the two depths"),
+            };
+            Some((l.id(), ptr))
         })
         .collect()
 }
@@ -393,6 +443,7 @@ proptest! {
             prop_assert_eq!(snapshot(&d), m.layers.clone(), "after {:?}", op);
             prop_assert_eq!(d.active_layer().get(), m.active);
             prop_assert_eq!(d.active_part() == LayerPart::Mask, m.on_mask);
+            prop_assert_eq!(d.depth(), m.depth);
             // L2: a new id was never used before.
             for l in d.layers() {
                 if !ever.contains(&l.id().get()) {
@@ -401,9 +452,12 @@ proptest! {
                 }
             }
             // L7: tile buffers of surviving layers stay where they were,
-            // unless this very operation repainted or cleared them.
+            // unless this very operation repainted, cleared or converted them.
+            if let Op::Convert(_) = op {
+                continue;
+            }
             let touched = match *op {
-                Op::Paint(i) | Op::Clear(i) => Some(pick(&d, &removed, i)),
+                Op::Paint(i, _) | Op::Clear(i) => Some(pick(&d, &removed, i)),
                 _ => None,
             };
             for (id, ptr) in buffers(&d) {

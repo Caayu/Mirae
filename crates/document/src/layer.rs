@@ -2,8 +2,9 @@ use std::fmt;
 use std::num::NonZeroU32;
 
 use tela_canvas::{Tile, TileCoord, TiledSurface};
+use tela_color::PixelDepth;
 
-use crate::BlendMode;
+use crate::{BlendMode, LayerPixels};
 
 /// Stable identity of a layer within one [`Document`](crate::Document).
 ///
@@ -33,7 +34,8 @@ impl fmt::Display for LayerId {
     }
 }
 
-/// Pixel layer stored as premultiplied sRGB RGBA8 tiles.
+/// Pixel layer stored as premultiplied sRGB-encoded RGBA tiles at the
+/// document's depth (8 or 16 bits per channel; its mask is always 8-bit).
 ///
 /// Read-only outside this crate: properties change through
 /// [`Document`](crate::Document) methods, which keep the document's
@@ -48,12 +50,12 @@ pub struct RasterLayer {
     pub(crate) locked: bool,
     pub(crate) alpha_locked: bool,
     pub(crate) clipped: bool,
-    pub(crate) pixels: TiledSurface<[u8; 4]>,
+    pub(crate) pixels: LayerPixels,
     pub(crate) mask: Option<LayerMask>,
 }
 
 impl RasterLayer {
-    pub(crate) fn new(id: LayerId, name: String) -> Self {
+    pub(crate) fn new(id: LayerId, name: String, depth: PixelDepth) -> Self {
         Self {
             id,
             name,
@@ -63,7 +65,7 @@ impl RasterLayer {
             locked: false,
             alpha_locked: false,
             clipped: false,
-            pixels: TiledSurface::new(),
+            pixels: LayerPixels::new(depth),
             mask: None,
         }
     }
@@ -98,8 +100,8 @@ impl RasterLayer {
         self.locked
     }
 
-    /// Premultiplied sRGB-encoded RGBA8, sparse.
-    pub fn pixels(&self) -> &TiledSurface<[u8; 4]> {
+    /// Premultiplied sRGB-encoded RGBA at the document's depth, sparse.
+    pub fn pixels(&self) -> &LayerPixels {
         &self.pixels
     }
 
@@ -123,6 +125,8 @@ impl RasterLayer {
 }
 
 /// A layer mask: how much of its layer each pixel shows (one per layer).
+/// Masks are 8-bit in documents of every depth (decision D13, ADR 0018):
+/// the raster depth of a document is not its mask depth.
 ///
 /// Conceptually 255 shows the layer and 0 hides it, like the masks of the
 /// reference application. It is **stored inverted**, as the amount each

@@ -16,14 +16,13 @@
 use std::collections::VecDeque;
 use std::mem::size_of;
 
-use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
+use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord};
+use tela_color::PixelDepth;
 
 use super::Document;
 use crate::layer::LayerMask;
-use crate::{BlendMode, LayerId, RasterLayer};
-
-/// Bytes of one tile's pixel buffer (premultiplied RGBA8).
-pub(super) const TILE_BYTES: usize = (TILE_SIZE * TILE_SIZE) as usize * 4;
+use crate::pixels::TileBackup;
+use crate::{BlendMode, LayerId, LayerPixels, RasterLayer};
 
 /// Bytes of one mask tile (8-bit).
 pub(super) const MASK_TILE_BYTES: usize = (TILE_SIZE * TILE_SIZE) as usize;
@@ -73,6 +72,8 @@ pub enum HistoryAction {
     MaskEnabled,
     /// A mask changed through [`Document::modify_mask`] (a stroke).
     PaintMask,
+    /// The document changed depth ([`Document::convert_depth`]).
+    ConvertDepth,
 }
 
 impl HistoryAction {
@@ -91,12 +92,12 @@ pub(super) enum Change {
     /// The other state of some tiles of a layer (`None` = absent).
     Tiles {
         layer: LayerId,
-        tiles: Vec<(TileCoord, Option<Tile<[u8; 4]>>)>,
+        tiles: TileBackup,
     },
     /// The other state of a layer's whole surface (clear).
     Surface {
         layer: LayerId,
-        pixels: TiledSurface<[u8; 4]>,
+        pixels: LayerPixels,
     },
     /// A layer at `index`: in the document when `layer` is `None`, held
     /// here otherwise (add/remove).
@@ -150,17 +151,21 @@ pub(super) enum Change {
         layer: LayerId,
         tiles: Vec<(TileCoord, Option<Tile<u8>>)>,
     },
+    /// Every layer's pixels at the `other` depth (convert depth); masks
+    /// are 8-bit at every depth and stay.
+    Depth {
+        layers: Vec<(LayerId, LayerPixels)>,
+        other: PixelDepth,
+    },
 }
 
 impl Change {
     /// Bytes this change holds right now.
     fn held_bytes(&self) -> usize {
         match self {
-            Change::Tiles { tiles, .. } => {
-                tiles.len() * size_of::<(TileCoord, Option<Tile<[u8; 4]>>)>()
-                    + tiles.iter().filter(|(_, t)| t.is_some()).count() * TILE_BYTES
-            }
-            Change::Surface { pixels, .. } => pixels.tile_count() * TILE_BYTES,
+            Change::Tiles { tiles, .. } => tiles.held_bytes(),
+            Change::Surface { pixels, .. } => pixels_bytes(pixels),
+            Change::Depth { layers, .. } => layers.iter().map(|(_, p)| pixels_bytes(p)).sum(),
             Change::Presence { layer, .. } => layer.as_deref().map_or(0, layer_bytes),
             Change::Name { other, .. } => other.len(),
             Change::MaskTiles { tiles, .. } => {
@@ -184,8 +189,13 @@ impl Change {
 pub(super) fn layer_bytes(layer: &RasterLayer) -> usize {
     size_of::<RasterLayer>()
         + layer.name.len()
-        + layer.pixels.tile_count() * TILE_BYTES
+        + pixels_bytes(&layer.pixels)
         + layer.mask.as_ref().map_or(0, mask_bytes)
+}
+
+/// Tile buffers of a layer's pixels at their depth.
+pub(super) fn pixels_bytes(pixels: &LayerPixels) -> usize {
+    pixels.tile_count() * pixels.tile_bytes()
 }
 
 /// Tile buffers of a mask.
@@ -315,7 +325,8 @@ impl Document {
     /// Bytes the history holds now: tile buffers, removed layers (their
     /// tiles and names), cleared surfaces, old names, plus a fixed size per
     /// step and per tile entry. Not counted: allocator and hash-map
-    /// overhead, which is small next to 256 KiB tiles.
+    /// overhead, which is small next to 256 KiB (8-bit) or 512 KiB (16-bit)
+    /// tiles.
     pub fn history_bytes(&self) -> usize {
         let h = &self.history;
         h.undo
@@ -387,14 +398,7 @@ impl Document {
             Change::Tiles { layer, tiles } => {
                 let layer = self.layer_mut_for_history(*layer);
                 let mut dirty = DirtyTiles::new();
-                for (coord, held) in tiles.iter_mut() {
-                    let current = layer.pixels.remove_tile(*coord);
-                    if let Some(tile) = held.take() {
-                        layer.pixels.insert_tile(*coord, tile);
-                    }
-                    *held = current;
-                    dirty.mark(*coord);
-                }
+                layer.pixels.swap_tiles(tiles, |c| dirty.mark(c));
                 if layer.visible {
                     dirty
                 } else {
@@ -475,6 +479,17 @@ impl Document {
                     .expect("history replays on the state it recorded");
                 std::mem::swap(&mut mask.enabled, other);
                 layer.shown_tiles()
+            }
+            Change::Depth { layers, other } => {
+                let mut dirty = DirtyTiles::new();
+                for (id, held) in layers.iter_mut() {
+                    let layer = self.layer_mut_for_history(*id);
+                    dirty.extend(&layer.shown_tiles());
+                    std::mem::swap(&mut layer.pixels, held);
+                    dirty.extend(&layer.shown_tiles());
+                }
+                std::mem::swap(&mut self.depth, other);
+                dirty
             }
             Change::MaskTiles { layer, tiles } => {
                 let layer = self.layer_mut_for_history(*layer);

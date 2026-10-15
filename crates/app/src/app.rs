@@ -4,8 +4,8 @@ use std::time::Instant;
 use glam::Vec2;
 use tela_brush::dynamics::{DynamicsSource, InputCaps};
 use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha};
-use tela_canvas::{DirtyTiles, TileCoord, ViewTransform};
-use tela_color::PremulRgba;
+use tela_canvas::{DirtyTiles, Tile, TileCoord, ViewTransform};
+use tela_color::{PremulRgba, with_pixel_type};
 use tela_document::{
     BlendMode, ComposeScratch, Document, HistoryAction, LayerId, LayerPart, Overlay, OverlayPaint,
     Placement,
@@ -281,8 +281,12 @@ impl App {
             let tiles = stroke.touched();
             let doc = &mut self.document;
             let committed = target.map(|t| match t.part {
-                LayerPart::Pixels => doc.modify_tiles(t.layer, tiles, |c, tile| {
-                    stroke.commit_tile(c, tile, t.alpha)
+                // The commit is monomorphized per depth; the document's depth
+                // picks the instance once per stroke.
+                LayerPart::Pixels => with_pixel_type!(doc.depth(), P => {
+                    doc.modify_tiles(t.layer, tiles, |c, tile: &mut Tile<P>| {
+                        stroke.commit_tile(c, tile, t.alpha)
+                    })
                 }),
                 LayerPart::Mask => {
                     doc.modify_mask(t.layer, tiles, |c, tile| stroke.commit_alpha_tile(c, tile))
@@ -722,6 +726,7 @@ fn history_label(action: HistoryAction) -> &'static str {
         HistoryAction::RemoveMask => "delete mask",
         HistoryAction::MaskEnabled => "enable mask",
         HistoryAction::PaintMask => "paint mask",
+        HistoryAction::ConvertDepth => "convert depth",
     }
 }
 

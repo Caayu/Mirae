@@ -116,6 +116,35 @@ impl StoragePixel for [u16; 4] {
     }
 }
 
+/// Evaluates `$body` with `$P` naming the [`StoragePixel`] type of a
+/// [`PixelDepth`] known only at run time: the one place where a depth
+/// value becomes a type, so generic code (`fn f<P: StoragePixel>`) is
+/// monomorphized once per depth and chosen once per call, not per pixel.
+///
+/// ```
+/// use tela_color::{PixelDepth, StoragePixel, with_pixel_type};
+/// fn bytes<P: StoragePixel>() -> usize { size_of::<P>() }
+/// let depth = PixelDepth::Rgba16;
+/// assert_eq!(with_pixel_type!(depth, P => bytes::<P>()), 8);
+/// ```
+#[macro_export]
+macro_rules! with_pixel_type {
+    ($depth:expr, $P:ident => $body:expr) => {
+        match $depth {
+            $crate::PixelDepth::Rgba8 => {
+                #[allow(dead_code)]
+                type $P = [u8; 4];
+                $body
+            }
+            $crate::PixelDepth::Rgba16 => {
+                #[allow(dead_code)]
+                type $P = [u16; 4];
+                $body
+            }
+        }
+    };
+}
+
 /// 8-bit to 16-bit channel, exact: `v · 257`.
 #[inline]
 pub const fn widen8(v: u8) -> u16 {

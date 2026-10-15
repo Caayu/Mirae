@@ -103,8 +103,7 @@ impl Document {
         let overlay = overlay
             .filter(|o| (o.covers)(coord) && self.layer(o.target).is_some_and(|l| l.visible()));
         let draws = |l: &RasterLayer| {
-            l.visible()
-                && (l.pixels().tile(coord).is_some() || overlay.is_some_and(|o| o.on_pixels(l)))
+            l.visible() && (l.pixels().has_tile(coord) || overlay.is_some_and(|o| o.on_pixels(l)))
         };
         let layers = self.layer_slice();
         if !layers.iter().any(draws) {
@@ -191,14 +190,9 @@ fn load_layer(
     layer: &mut [PremulRgba],
     reveal: &mut [f32],
 ) {
-    match l.pixels().tile(coord) {
-        Some(t) => {
-            for (d, s) in layer.iter_mut().zip(t.pixels()) {
-                *d = PremulRgba::from_rgba8(*s);
-            }
-        }
-        None => layer.fill(PremulRgba::TRANSPARENT),
-    }
+    // Decoded at the document's depth; composition itself is f32 at
+    // every depth, so storage precision is all that differs.
+    l.pixels().decode_tile(coord, layer);
     let mine = overlay.filter(|o| o.target == l.id());
     if let Some(OverlayPaint::Pixels(paint)) = mine.map(|o| o.paint) {
         paint(coord, layer);
@@ -239,7 +233,8 @@ pub struct ComposeScratch {
     group: Vec<PremulRgba>,
     /// Mask reveal values while a mask stroke is previewed.
     mask: Vec<f32>,
-    /// The composed tile, premultiplied RGBA8.
+    /// The composed tile, premultiplied RGBA8 for display at every storage
+    /// depth (storage precision is not display precision, ADR 0018).
     pub out: Vec<[u8; 4]>,
 }
 
@@ -267,7 +262,8 @@ mod tests {
     use glam::Vec2;
     use tela_brush::dynamics::BrushProperty;
     use tela_brush::{BrushInput, BrushPreset, PixelAlpha, StrokeBuffer};
-    use tela_canvas::DirtyTiles;
+    use tela_canvas::{DirtyTiles, Tile};
+    use tela_color::{StoragePixel, with_pixel_type};
 
     use super::*;
     use crate::Placement;
@@ -285,16 +281,16 @@ mod tests {
         let mut tiles = DirtyTiles::new();
         tiles.mark(coord);
         let (ox, oy) = coord.origin();
-        d.modify_tiles(id, &tiles, |_, t| {
-            *t.get_mut((x - ox) as u32, (y - oy) as u32) = p;
-        })
+        with_pixel_type!(d.depth(), P => d.modify_tiles(id, &tiles, |_, t: &mut Tile<P>| {
+            *t.get_mut((x - ox) as u32, (y - oy) as u32) = P::from_rgba8(p);
+        }))
         .unwrap();
     }
 
     fn commit(d: &mut Document, id: LayerId, stroke: &StrokeBuffer) {
-        d.modify_tiles(id, stroke.touched(), |c, t| {
+        with_pixel_type!(d.depth(), P => d.modify_tiles(id, stroke.touched(), |c, t: &mut Tile<P>| {
             stroke.commit_tile(c, t, PixelAlpha::Free)
-        })
+        }))
         .unwrap();
     }
 
@@ -439,7 +435,7 @@ mod tests {
         let l = d.active_layer();
         let mut square = DirtyTiles::new();
         square.mark(TileCoord { x: 0, y: 0 });
-        d.modify_tiles(l, &square, |_, t| {
+        d.modify_tiles(l, &square, |_, t: &mut Tile<[u8; 4]>| {
             for y in 20..60 {
                 for x in 20..60 {
                     *t.get_mut(x, y) = [180, 60, 30, 255];
@@ -480,7 +476,7 @@ mod tests {
         let base = d.active_layer();
         let mut tile = DirtyTiles::new();
         tile.mark(TileCoord { x: 0, y: 0 });
-        d.modify_tiles(base, &tile, |_, t| {
+        d.modify_tiles(base, &tile, |_, t: &mut Tile<[u8; 4]>| {
             for y in 0..128 {
                 for x in 0..256 {
                     *t.get_mut(x, y) = [180, 90, 40, 255];
@@ -582,17 +578,18 @@ mod tests {
         assert_eq!(d.compose_tile(coord, None).unwrap(), difference);
     }
 
-    /// Fills the whole tile (0, 0) of a layer with `f(x, y)`.
+    /// Fills the whole tile (0, 0) of a layer with `f(x, y)` (8-bit values,
+    /// stored exactly at either depth).
     fn fill(d: &mut Document, id: LayerId, f: impl Fn(u32, u32) -> [u8; 4]) {
         let mut tile = DirtyTiles::new();
         tile.mark(TileCoord { x: 0, y: 0 });
-        d.modify_tiles(id, &tile, |_, t| {
+        with_pixel_type!(d.depth(), P => d.modify_tiles(id, &tile, |_, t: &mut Tile<P>| {
             for y in 0..256 {
                 for x in 0..256 {
-                    *t.get_mut(x, y) = f(x, y);
+                    *t.get_mut(x, y) = P::from_rgba8(f(x, y));
                 }
             }
-        })
+        }))
         .unwrap();
     }
 
@@ -612,7 +609,12 @@ mod tests {
     /// A base with an alpha ramp (left to right) and varied colour, and a
     /// second layer above it with its own colour and alpha bands.
     fn two_layers() -> (Document, LayerId, LayerId) {
-        let mut d = Document::new(256, 256);
+        two_layers_at(tela_color::PixelDepth::Rgba8)
+    }
+
+    /// [`two_layers`] in a document of `depth` (same 8-bit content).
+    fn two_layers_at(depth: tela_color::PixelDepth) -> (Document, LayerId, LayerId) {
+        let mut d = Document::with_depth(256, 256, depth);
         let base = d.active_layer();
         fill(&mut d, base, |x, y| {
             let a = x as u8;
@@ -751,9 +753,9 @@ mod tests {
         let preview = d.compose_tile(coord, Some(&o)).unwrap();
         match part {
             LayerPart::Pixels => {
-                d.modify_tiles(target, stroke.touched(), |c, t| {
+                with_pixel_type!(d.depth(), P => d.modify_tiles(target, stroke.touched(), |c, t: &mut Tile<P>| {
                     stroke.commit_tile(c, t, alpha)
-                })
+                }))
                 .unwrap();
             }
             LayerPart::Mask => {
@@ -781,8 +783,33 @@ mod tests {
     /// pixels only.
     #[test]
     fn preview_matches_commit_across_masks_clipping_lock_and_modes() {
+        let (cases, worst, differing) = preview_commit_matrix(tela_color::PixelDepth::Rgba8);
+        assert_eq!(cases, 2 * (2 * 3 * 3 * 3 + 3 * 3));
+        assert!(worst <= 1, "{worst}");
+        eprintln!(
+            "8-bit preview == commit: {cases} cases, worst {worst}/255, {differing} pixel channels differ"
+        );
+    }
+
+    /// The same matrix in 16-bit documents (phase 4E): the preview is
+    /// composed from the f32 stroke, the commit is stored at 16 bits; both
+    /// are shown at 8 bits, so they may differ by one display level where
+    /// the stored value falls on the other side of a rounding boundary.
+    #[test]
+    fn preview_matches_commit_in_16_bit_documents() {
+        let (cases, worst, differing) = preview_commit_matrix(tela_color::PixelDepth::Rgba16);
+        assert_eq!(cases, 2 * (2 * 3 * 3 * 3 + 3 * 3));
+        assert!(worst <= 1, "{worst}");
+        eprintln!(
+            "16-bit preview == commit: {cases} cases, worst {worst}/255, {differing} pixel channels differ"
+        );
+    }
+
+    /// Runs the matrix at `depth`; returns the cases, the largest
+    /// difference (1/255) and how many pixel channels differ in total.
+    fn preview_commit_matrix(depth: tela_color::PixelDepth) -> (usize, u8, usize) {
         use tela_brush::preset::PaintMode;
-        let mut cases = 0;
+        let (mut cases, mut worst, mut differing) = (0, 0, 0);
         for op in [PaintMode::Paint, PaintMode::Erase] {
             let stroke = crossing_stroke(op, 0.8);
             for part in [LayerPart::Pixels, LayerPart::Mask] {
@@ -797,7 +824,7 @@ mod tests {
                             }
                             for (clipped, on_base) in [(false, false), (true, false), (true, true)]
                             {
-                                let (mut d, base, top) = two_layers();
+                                let (mut d, base, top) = two_layers_at(depth);
                                 d.set_blend_mode(top, mode).unwrap();
                                 d.set_opacity(top, 0.7).unwrap();
                                 d.set_clipped(top, clipped).unwrap();
@@ -816,8 +843,15 @@ mod tests {
                                 let diff = max_diff(&preview, &committed);
                                 assert!(
                                     diff <= 1,
-                                    "{op:?} {part:?} {lock:?} {mode:?} {mask:?} clipped {clipped} base {on_base}: {diff}"
+                                    "{depth:?} {op:?} {part:?} {lock:?} {mode:?} {mask:?} clipped {clipped} base {on_base}: {diff}"
                                 );
+                                worst = worst.max(diff);
+                                differing += preview
+                                    .iter()
+                                    .zip(&committed)
+                                    .flat_map(|(a, b)| a.iter().zip(b))
+                                    .filter(|(a, b)| a != b)
+                                    .count();
                                 cases += 1;
                             }
                         }
@@ -825,6 +859,41 @@ mod tests {
                 }
             }
         }
-        assert_eq!(cases, 2 * (2 * 3 * 3 * 3 + 3 * 3));
+        (cases, worst, differing)
+    }
+
+    /// 8-bit content widened to 16 bits composes to exactly the same
+    /// display pixels in every mode, with masks (enabled and disabled),
+    /// clipping, opacity and the paper backdrop (ADR 0018: depth changes
+    /// precision, never appearance).
+    #[test]
+    fn widened_8_bit_content_composes_identically_in_every_mode() {
+        let coord = TileCoord { x: 0, y: 0 };
+        for mode in BlendMode::ALL {
+            for (clipped, masked, enabled) in [
+                (false, false, true),
+                (true, false, true),
+                (false, true, true),
+                (true, true, false),
+            ] {
+                let (mut d, base, top) = two_layers();
+                d.set_blend_mode(top, mode).unwrap();
+                d.set_blend_mode(base, mode).unwrap();
+                d.set_opacity(top, 0.65).unwrap();
+                d.set_clipped(top, clipped).unwrap();
+                if masked {
+                    d.add_mask(top).unwrap();
+                    fill_mask(&mut d, top, |x, y| ((x * 5 + y * 3) % 256) as u8);
+                    d.set_mask_enabled(top, enabled).unwrap();
+                }
+                let eight = d.compose_tile(coord, None);
+                d.convert_depth(tela_color::PixelDepth::Rgba16);
+                assert_eq!(
+                    d.compose_tile(coord, None),
+                    eight,
+                    "{mode:?} {clipped} {masked}"
+                );
+            }
+        }
     }
 }

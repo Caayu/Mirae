@@ -1,8 +1,9 @@
 //! The document model.
 //!
 //! **Responsibility:** the authoritative pixel data ([`RasterLayer`]s of
-//! premultiplied RGBA8 tiles), the layer stack with stable [`LayerId`]s and
-//! the rules for changing it ([`Document`]), and per-tile composition
+//! premultiplied tiles at the document's [`PixelDepth`], 8 or 16 bits per
+//! channel, in [`LayerPixels`]; masks are 8-bit), the layer stack with
+//! stable [`LayerId`]s and the rules for changing it ([`Document`]), and per-tile composition
 //! ([`Document::compose_tile_into`]) with an optional [`Overlay`] for
 //! content that is not committed yet (the stroke preview).
 //! **Does not:** know about brushes, input, the view or the GPU. Brushes
@@ -27,6 +28,7 @@ mod error;
 #[cfg(test)]
 mod history_properties;
 mod layer;
+mod pixels;
 #[cfg(test)]
 mod properties;
 
@@ -35,3 +37,5 @@ pub use compose::{ComposeScratch, Overlay, OverlayPaint};
 pub use document::{Document, HistoryAction, HistoryLimits, LayerPart, Placement};
 pub use error::LayerError;
 pub use layer::{LayerId, LayerMask, RasterLayer};
+pub use pixels::LayerPixels;
+pub use tela_color::{PixelDepth, StoragePixel};

@@ -204,7 +204,7 @@ fn main() {
             let (ox, oy) = c.origin();
             for i in 0..TILE_SIZE {
                 if ox == oy {
-                    *t.get_mut(i, i) = [20, 30, 40, 255];
+                    *t.get_mut(i, i) = [20u8, 30, 40, 255];
                 }
             }
         })

@@ -3,12 +3,13 @@ mod history;
 use std::num::NonZeroU32;
 
 use tela_canvas::{DirtyTiles, IRect, Tile, TileCoord};
-use tela_color::Rgba;
+use tela_color::{PixelDepth, Rgba, StoragePixel};
 
-use self::history::{Change, History, layer_bytes, mask_bytes};
+use self::history::{Change, History, layer_bytes, mask_bytes, pixels_bytes};
 pub use self::history::{HistoryAction, HistoryLimits};
 use crate::layer::LayerMask;
-use crate::{BlendMode, LayerError, LayerId, RasterLayer};
+use crate::pixels::{TileBackup, tile_bytes};
+use crate::{BlendMode, LayerError, LayerId, LayerPixels, RasterLayer};
 
 /// Prefix of the names the document gives new layers ("Layer 3").
 const DEFAULT_NAME: &str = "Layer";
@@ -58,6 +59,8 @@ pub struct Document {
     width: u32,
     height: u32,
     background: Rgba,
+    /// Storage depth of every layer's pixels (masks are always 8-bit).
+    depth: PixelDepth,
     /// Bottom to top; never empty.
     layers: Vec<RasterLayer>,
     /// Always the id of a layer in `layers`.
@@ -71,14 +74,21 @@ pub struct Document {
 }
 
 impl Document {
-    /// White document with one empty layer, "Layer 1", which is active.
+    /// White 8-bit document with one empty layer, "Layer 1", which is
+    /// active.
     pub fn new(width: u32, height: u32) -> Self {
+        Self::with_depth(width, height, PixelDepth::Rgba8)
+    }
+
+    /// Like [`Document::new`], storing pixels at `depth`.
+    pub fn with_depth(width: u32, height: u32, depth: PixelDepth) -> Self {
         let first = LayerId::new(NonZeroU32::MIN);
         Self {
             width,
             height,
             background: Rgba::WHITE,
-            layers: vec![RasterLayer::new(first, format!("{DEFAULT_NAME} 1"))],
+            depth,
+            layers: vec![RasterLayer::new(first, format!("{DEFAULT_NAME} 1"), depth)],
             active: first,
             active_part: LayerPart::Pixels,
             next_id: NonZeroU32::MIN.checked_add(1),
@@ -99,6 +109,12 @@ impl Document {
     /// Paper color shown under all layers.
     pub fn background(&self) -> Rgba {
         self.background
+    }
+
+    /// Bits per channel of every layer's pixels. Masks are 8-bit at every
+    /// depth (ADR 0018).
+    pub fn depth(&self) -> PixelDepth {
+        self.depth
     }
 
     /// `(0, 0)..(width, height)` in canvas pixels.
@@ -196,7 +212,7 @@ impl Document {
         let index = self.placement_index(at)?;
         let raw = self.next_id.ok_or(LayerError::IdsExhausted)?;
         let id = LayerId::new(raw);
-        let mut layer = RasterLayer::new(id, self.default_name());
+        let mut layer = RasterLayer::new(id, self.default_name(), self.depth);
         layer.clipped = self.layers.get(index).is_some_and(|l| l.clipped);
         let cost = layer_bytes(&layer);
         self.next_id = raw.checked_add(1);
@@ -528,28 +544,39 @@ impl Document {
     /// The only way to change a layer's pixels: calls `f` once for each
     /// tile in `tiles` (allocating it if needed) and for no other tile.
     /// A tile allocated here that is still blank afterwards is released
-    /// again, so the layer stays sparse. Refused on locked layers.
+    /// again, so the layer stays sparse. Refused on locked layers, and
+    /// when `P` is not the document's storage ([`LayerError::WrongDepth`]):
+    /// the edit states the depth it was written for, and the document
+    /// never converts tiles behind its back. Callers that serve both
+    /// depths choose `P` once from [`Document::depth`]
+    /// (`tela_color::with_pixel_type!`).
     ///
     /// One call is one history step (one stroke = one undo). The previous
     /// content of each declared tile that actually changed is kept for
-    /// undo; this is the only tile copy history ever makes.
-    pub fn modify_tiles(
+    /// undo, at the document's depth; this is the only tile copy history
+    /// ever makes.
+    pub fn modify_tiles<P: StoragePixel>(
         &mut self,
         id: LayerId,
         tiles: &DirtyTiles,
-        mut f: impl FnMut(TileCoord, &mut Tile<[u8; 4]>),
+        mut f: impl FnMut(TileCoord, &mut Tile<P>),
     ) -> Result<DirtyTiles, LayerError> {
         let i = self.require_unlocked(id)?;
+        let wrong = LayerError::WrongDepth {
+            document: self.depth,
+            edit: P::DEPTH,
+        };
         let layer = &mut self.layers[i];
+        let pixels = layer.pixels.surface_mut::<P>().ok_or(wrong)?;
         let mut previous = Vec::with_capacity(tiles.len());
         let (mut before, mut after) = (0, 0);
         for coord in tiles.iter() {
-            let old = layer.pixels.tile(coord).cloned();
-            f(coord, layer.pixels.tile_or_insert(coord));
-            if old.is_none() && layer.pixels.tile(coord).is_some_and(Tile::is_blank) {
-                layer.pixels.remove_tile(coord);
+            let old = pixels.tile(coord).cloned();
+            f(coord, pixels.tile_or_insert(coord));
+            if old.is_none() && pixels.tile(coord).is_some_and(Tile::is_blank) {
+                pixels.remove_tile(coord);
             }
-            let new = layer.pixels.tile(coord);
+            let new = pixels.tile(coord);
             if old.as_ref() != new {
                 before += usize::from(old.is_some());
                 after += usize::from(new.is_some());
@@ -561,11 +588,11 @@ impl Document {
         } else {
             DirtyTiles::new()
         };
-        let cost = before.max(after) * history::TILE_BYTES
-            + previous.len() * std::mem::size_of::<(TileCoord, Option<Tile<[u8; 4]>>)>();
+        let cost = before.max(after) * tile_bytes(self.depth)
+            + previous.len() * std::mem::size_of::<(TileCoord, Option<Tile<P>>)>();
         let change = Change::Tiles {
             layer: id,
-            tiles: previous,
+            tiles: TileBackup::new(previous),
         };
         self.record(HistoryAction::Paint, vec![change], self.active, cost);
         Ok(dirty)
@@ -580,11 +607,47 @@ impl Document {
             return Ok(DirtyTiles::new());
         }
         let dirty = self.layers[i].shown_tiles();
-        let pixels = std::mem::take(&mut self.layers[i].pixels);
-        let cost = pixels.tile_count() * history::TILE_BYTES;
+        let empty = LayerPixels::new(self.depth);
+        let pixels = std::mem::replace(&mut self.layers[i].pixels, empty);
+        let cost = pixels_bytes(&pixels);
         let change = Change::Surface { layer: id, pixels };
         self.record(HistoryAction::ClearLayer, vec![change], self.active, cost);
         Ok(dirty)
+    }
+
+    /// Converts every layer's pixels to `depth`: 8 → 16 exactly
+    /// (`v · 257`, the composite does not change at all), 16 → 8 to the
+    /// nearest 8-bit level (`(v + 128) / 257`). Applies to hidden and
+    /// locked layers too: the depth is a property of the document, not of
+    /// a layer. Masks are 8-bit at every depth and do not change; ids,
+    /// order, properties and the sparse tile layout are kept.
+    ///
+    /// One history step. It holds the previous pixels of every layer
+    /// (moved, not copied); its cost is the larger of the two depths'
+    /// buffers, so 8 → 16 reserves the new 16-bit size. Converting to the
+    /// current depth does nothing and records nothing. Returns the tiles
+    /// where a visible layer has pixels.
+    pub fn convert_depth(&mut self, depth: PixelDepth) -> DirtyTiles {
+        if depth == self.depth {
+            return DirtyTiles::new();
+        }
+        let mut dirty = DirtyTiles::new();
+        let mut held = Vec::with_capacity(self.layers.len());
+        let mut cost = 0;
+        for layer in &mut self.layers {
+            let converted = layer.pixels.converted(depth);
+            cost += pixels_bytes(&converted).max(pixels_bytes(&layer.pixels));
+            let old = std::mem::replace(&mut layer.pixels, converted);
+            dirty.extend(&layer.shown_tiles());
+            held.push((layer.id(), old));
+        }
+        let other = std::mem::replace(&mut self.depth, depth);
+        let change = Change::Depth {
+            layers: held,
+            other,
+        };
+        self.record(HistoryAction::ConvertDepth, vec![change], self.active, cost);
+        dirty
     }
 
     /// Every tile where a visible layer has pixels (what a full redraw
@@ -661,8 +724,9 @@ impl Document {
         self.next_id = next;
     }
 
-    /// The document's whole content (layers in order with ids, properties
-    /// and every tile's pixels, and the active layer), excluding history.
+    /// The document's whole content (depth, layers in order with ids,
+    /// properties, every tile's stored values and masks, and the active
+    /// layer), excluding history.
     /// Equal digests mean equal documents, up to 64-bit hash collisions of
     /// tile contents.
     #[cfg(test)]
@@ -675,11 +739,7 @@ impl Document {
                 let mut tiles: Vec<(TileCoord, u64)> = l
                     .pixels
                     .tile_coords()
-                    .map(|c| {
-                        let mut h = DefaultHasher::new();
-                        l.pixels.tile(c).unwrap().pixels().hash(&mut h);
-                        (c, h.finish())
-                    })
+                    .map(|c| (c, l.pixels.hash_tile(c).unwrap()))
                     .collect();
                 tiles.sort_unstable();
                 let mask = l.mask.as_ref().map(|m| {
@@ -710,6 +770,7 @@ impl Document {
             })
             .collect();
         Digest {
+            depth: self.depth,
             active: self.active.get(),
             layers,
         }
@@ -730,6 +791,7 @@ impl Document {
         assert!(self.index_of(self.active).is_some(), "L4: active exists");
         for l in &self.layers {
             assert!((0.0..=1.0).contains(&l.opacity), "L5: opacity in range");
+            assert_eq!(l.pixels.depth(), self.depth, "D1: one depth per document");
             if let Some(m) = &l.mask {
                 for c in m.hidden.tile_coords() {
                     assert!(
@@ -751,6 +813,8 @@ impl Document {
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Digest {
+    /// Storage depth; tile hashes are of the stored values at this depth.
+    pub depth: PixelDepth,
     pub active: u32,
     pub layers: Vec<LayerDigest>,
 }
@@ -821,7 +885,7 @@ mod tests {
 
     /// Paints one opaque pixel at (1, 1) into `id`.
     fn paint(d: &mut Document, id: LayerId) -> DirtyTiles {
-        d.modify_tiles(id, &tile_with_pixel(), |_, t| *t.get_mut(1, 1) = [255; 4])
+        d.modify_tiles(id, &tile_with_pixel(), |_, t| *t.get_mut(1, 1) = [255u8; 4])
             .unwrap()
     }
 
@@ -941,6 +1005,8 @@ mod tests {
             .layer(l1)
             .unwrap()
             .pixels()
+            .rgba8()
+            .unwrap()
             .tile(TileCoord { x: 0, y: 0 })
             .unwrap()
             .pixels()
@@ -956,6 +1022,8 @@ mod tests {
             .layer(l1)
             .unwrap()
             .pixels()
+            .rgba8()
+            .unwrap()
             .tile(TileCoord { x: 0, y: 0 })
             .unwrap()
             .pixels()
@@ -989,7 +1057,8 @@ mod tests {
         assert_eq!(d.paint_target(gone, LayerPart::Pixels).err(), err);
         assert_eq!(d.clear_layer(gone).err(), err);
         assert_eq!(
-            d.modify_tiles(gone, &tile_with_pixel(), |_, _| ()).err(),
+            d.modify_tiles(gone, &tile_with_pixel(), |_, _: &mut Tile<[u8; 4]>| ())
+                .err(),
             err
         );
         assert_eq!(d.layer_count(), 1);
@@ -1007,7 +1076,8 @@ mod tests {
         let locked = Some(LayerError::Locked(l2));
         assert_eq!(d.paint_target(l2, LayerPart::Pixels).err(), locked);
         assert_eq!(
-            d.modify_tiles(l2, &tile_with_pixel(), |_, _| ()).err(),
+            d.modify_tiles(l2, &tile_with_pixel(), |_, _: &mut Tile<[u8; 4]>| ())
+                .err(),
             locked
         );
         assert_eq!(d.clear_layer(l2).err(), locked);
@@ -1086,12 +1156,12 @@ mod tests {
         d.modify_tiles(l1, &declared, |c, t| {
             seen.push(c);
             if c.x == 0 {
-                *t.get_mut(0, 0) = [9; 4];
+                *t.get_mut(0, 0) = [9u8; 4];
             }
         })
         .unwrap();
         assert_eq!(seen, [TileCoord { x: 0, y: 0 }, TileCoord { x: 2, y: 1 }]);
-        let px = d.layer(l1).unwrap().pixels();
+        let px = d.layer(l1).unwrap().pixels().rgba8().unwrap();
         assert_eq!(px.tile_count(), 1, "the untouched new tile was released");
         assert_eq!(px.pixel(0, 0), [9; 4]);
     }
@@ -1225,6 +1295,156 @@ mod tests {
     }
 
     #[test]
+    fn documents_store_one_depth_and_refuse_edits_for_the_other() {
+        let mut d = Document::with_depth(64, 64, PixelDepth::Rgba16);
+        assert_eq!(d.depth(), PixelDepth::Rgba16);
+        assert_eq!(Document::new(8, 8).depth(), PixelDepth::Rgba8, "D12");
+        let l = d.active_layer();
+        let before = d.digest();
+        let wrong = d.modify_tiles(l, &tile_with_pixel(), |_, t: &mut Tile<[u8; 4]>| {
+            *t.get_mut(1, 1) = [255; 4]
+        });
+        assert_eq!(
+            wrong.err(),
+            Some(LayerError::WrongDepth {
+                document: PixelDepth::Rgba16,
+                edit: PixelDepth::Rgba8
+            })
+        );
+        assert_eq!(d.digest(), before, "L6: refused, nothing changed");
+        assert_eq!(d.history_len(), 0, "and nothing recorded");
+        d.modify_tiles(l, &tile_with_pixel(), |_, t: &mut Tile<[u16; 4]>| {
+            *t.get_mut(1, 1) = [1000, 2000, 3000, 4000]
+        })
+        .unwrap();
+        let px = d.layer(l).unwrap().pixels();
+        assert_eq!(px.rgba16().unwrap().pixel(1, 1), [1000, 2000, 3000, 4000]);
+        assert!(px.rgba8().is_none());
+        assert_eq!(px.pixel_rgba8(1, 1), [4, 8, 12, 16], "nearest 8-bit level");
+        let l2 = d.add_layer(Placement::Top).unwrap();
+        assert_eq!(d.layer(l2).unwrap().pixels().depth(), PixelDepth::Rgba16);
+        d.check_invariants();
+    }
+
+    /// A small stack exercising every layer property, at 8 bits.
+    fn varied_document() -> (Document, [LayerId; 3]) {
+        let mut d = Document::new(600, 300);
+        let a = d.active_layer();
+        let b = d.add_layer(Placement::Top).unwrap();
+        let c = d.add_layer(Placement::Top).unwrap();
+        let mut tiles = DirtyTiles::new();
+        tiles.mark(TileCoord { x: 0, y: 0 });
+        tiles.mark(TileCoord { x: 2, y: 1 });
+        for (k, id) in [a, b, c].into_iter().enumerate() {
+            d.modify_tiles(id, &tiles, |_, t: &mut Tile<[u8; 4]>| {
+                for (i, p) in t.pixels_mut().iter_mut().enumerate() {
+                    let v = ((i * (k + 3)) % 256) as u8;
+                    *p = [v / 2, v / 3, v / 4, v];
+                }
+            })
+            .unwrap();
+        }
+        d.add_mask(b).unwrap();
+        d.modify_mask(b, &tiles, |_, t| *t.get_mut(5, 5) = 17)
+            .unwrap();
+        d.set_clipped(c, true).unwrap();
+        d.set_blend_mode(c, BlendMode::Multiply).unwrap();
+        d.set_opacity(b, 0.6).unwrap();
+        d.set_alpha_locked(a, true).unwrap();
+        d.set_locked(a, true).unwrap();
+        d.set_visible(b, false).unwrap();
+        (d, [a, b, c])
+    }
+
+    fn composite(d: &Document) -> Vec<Option<Vec<[u8; 4]>>> {
+        let mut coords: Vec<TileCoord> = d.content_tiles().iter().collect();
+        coords.push(TileCoord { x: 1, y: 0 });
+        coords.iter().map(|&c| d.compose_tile(c, None)).collect()
+    }
+
+    #[test]
+    fn widening_keeps_structure_composite_and_masks_and_is_one_step() {
+        let (mut d, ids) = varied_document();
+        let eight = d.digest();
+        let shown = composite(&d);
+        let (steps, reserved) = (d.history_len(), d.history_reserved_bytes());
+        let tiles: usize = d.layers().map(|l| l.pixels().tile_count()).sum();
+        let dirty = d.convert_depth(PixelDepth::Rgba16);
+        assert_eq!(d.depth(), PixelDepth::Rgba16);
+        assert_eq!(dirty.len(), 2, "the tiles where visible layers draw");
+        assert_eq!(d.history_len(), steps + 1, "one step");
+        assert_eq!(d.next_undo(), Some(HistoryAction::ConvertDepth));
+        let sixteen = d.digest();
+        // Ids, order, properties, masks and the sparse layout are kept.
+        for (a, b) in eight.layers.iter().zip(&sixteen.layers) {
+            assert_eq!(
+                (a.id, &a.name, a.visible, a.opacity_bits),
+                (b.id, &b.name, b.visible, b.opacity_bits)
+            );
+            assert_eq!(
+                (a.blend_mode, a.locked, a.alpha_locked, a.clipped),
+                (b.blend_mode, b.locked, b.alpha_locked, b.clipped)
+            );
+            assert_eq!(a.mask, b.mask, "masks are 8-bit at every depth");
+            let coords = |l: &LayerDigest| l.tiles.iter().map(|t| t.0).collect::<Vec<_>>();
+            assert_eq!(coords(a), coords(b));
+        }
+        assert_eq!(sixteen.active, eight.active);
+        // Exact widening: same composite, bit for bit, locked layer too.
+        assert_eq!(composite(&d), shown);
+        for id in ids {
+            let p = d.layer(id).unwrap().pixels();
+            assert_eq!(
+                p.rgba16().unwrap().pixel(7, 3),
+                p.pixel_rgba8(7, 3).map(tela_color::widen8)
+            );
+        }
+        // The step reserves the 16-bit size of every converted tile.
+        let added = d.history_reserved_bytes() - reserved;
+        assert!(added >= tiles * tile_bytes(PixelDepth::Rgba16), "{added}");
+        assert!(d.history_bytes() <= d.history_reserved_bytes());
+        // Converting to the current depth does nothing.
+        assert!(d.convert_depth(PixelDepth::Rgba16).is_empty());
+        assert_eq!(d.history_len(), steps + 1);
+        // Undo and redo are bit-exact (H1 at both depths).
+        d.undo().unwrap();
+        assert_eq!(d.digest(), eight);
+        d.check_invariants();
+        d.redo().unwrap();
+        assert_eq!(d.digest(), sixteen);
+        d.check_invariants();
+        // 8 → 16 → 8 is the identity for 8-bit content, as a new step.
+        d.convert_depth(PixelDepth::Rgba8);
+        assert_eq!(d.digest(), eight);
+        assert_eq!(d.history_len(), steps + 2);
+    }
+
+    #[test]
+    fn narrowing_rounds_to_8_bits_and_undo_brings_the_precision_back() {
+        let mut d = Document::with_depth(64, 64, PixelDepth::Rgba16);
+        let l = d.active_layer();
+        d.modify_tiles(l, &tile_with_pixel(), |_, t: &mut Tile<[u16; 4]>| {
+            *t.get_mut(1, 1) = [128, 129, 32896 + 128, 65535];
+        })
+        .unwrap();
+        let sixteen = d.digest();
+        d.convert_depth(PixelDepth::Rgba8);
+        assert_eq!(
+            d.layer(l).unwrap().pixels().rgba8().unwrap().pixel(1, 1),
+            [0, 1, 128, 255]
+        );
+        // The eight-bit layer is editable with 8-bit edits now.
+        let edit = d.modify_tiles(l, &tile_with_pixel(), |_, t: &mut Tile<[u8; 4]>| {
+            *t.get_mut(2, 2) = [9; 4]
+        });
+        assert!(edit.is_ok());
+        d.undo().unwrap();
+        d.undo().unwrap();
+        assert_eq!(d.digest(), sixteen, "the 16-bit values come back exactly");
+        d.check_invariants();
+    }
+
+    #[test]
     fn group_changes_invalidate_the_clipped_layers_too() {
         let mut d = Document::new(1024, 256);
         let base = d.active_layer();
@@ -1234,7 +1454,7 @@ mod tests {
         let paint_at = |d: &mut Document, id: LayerId, coord: TileCoord| {
             let mut t = DirtyTiles::new();
             t.mark(coord);
-            d.modify_tiles(id, &t, |_, t| *t.get_mut(1, 1) = [255; 4])
+            d.modify_tiles(id, &t, |_, t| *t.get_mut(1, 1) = [255u8; 4])
                 .unwrap();
         };
         paint_at(&mut d, base, a);

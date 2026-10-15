@@ -19,7 +19,7 @@ use glam::Vec2;
 use tela_brush::dynamics::BrushProperty;
 use tela_brush::preset::PaintMode;
 use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha, StrokeBuffer};
-use tela_canvas::{DirtyTiles, IRect, TILE_SIZE, TileCoord};
+use tela_canvas::{DirtyTiles, IRect, TILE_SIZE, Tile, TileCoord};
 use tela_color::PremulRgba;
 use tela_document::{
     BlendMode, ComposeScratch, Document, LayerId, Overlay, OverlayPaint, Placement,
@@ -228,8 +228,10 @@ fn main() {
             let mut copy = document(1, false, n, false);
             let id = copy.active_layer();
             let t = Instant::now();
-            copy.modify_tiles(id, s.touched(), |c, tile| s.commit_tile(c, tile, alpha))
-                .unwrap();
+            copy.modify_tiles(id, s.touched(), |c, tile: &mut Tile<[u8; 4]>| {
+                s.commit_tile(c, tile, alpha)
+            })
+            .unwrap();
             times.push(t.elapsed().as_secs_f64() * 1e3 / touched.len() as f64);
         }
         println!("| {name} (incl. history copy) | {:.3} | — |", median(times));

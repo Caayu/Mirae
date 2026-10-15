@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use glam::Vec2;
 use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha, StrokeBuffer};
-use tela_canvas::{DirtyTiles, IRect, TiledSurface};
+use tela_canvas::{DirtyTiles, IRect, Tile, TiledSurface};
 use tela_document::Document;
 
 const DOC: u32 = 4096;
@@ -39,7 +39,7 @@ fn painted_document(painted: bool) -> Document {
         let mut all = DirtyTiles::new();
         all.mark_rect(IRect::from_size(DOC, DOC));
         let l = d.active_layer();
-        d.modify_tiles(l, &all, |_, t| t.pixels_mut().fill([90, 60, 30, 255]))
+        d.modify_tiles(l, &all, |_, t| t.pixels_mut().fill([90u8, 60, 30, 255]))
             .unwrap();
         // The fill itself is a step; start every measurement with an empty
         // history so only the stroke is counted.
@@ -100,7 +100,7 @@ fn main() {
         for painted in [false, true] {
             let base = painted_document(painted);
             let layer = base.active_layer();
-            let surface = base.layer(layer).unwrap().pixels().clone();
+            let surface = base.layer(layer).unwrap().pixels().rgba8().unwrap().clone();
             let (mut bare, mut commit, mut undo, mut redo) = (vec![], vec![], vec![], vec![]);
             let (mut held, mut held_undone, mut reserved) = (0, 0, 0);
             for _ in 0..RUNS {
@@ -112,7 +112,7 @@ fn main() {
 
                 let mut d = base.clone();
                 commit.push(ms(|| {
-                    d.modify_tiles(layer, s.touched(), |c, t| {
+                    d.modify_tiles(layer, s.touched(), |c, t: &mut Tile<[u8; 4]>| {
                         s.commit_tile(c, t, PixelAlpha::Free)
                     })
                     .unwrap();

@@ -1,5 +1,7 @@
 use std::fmt;
 
+use tela_color::PixelDepth;
+
 use crate::LayerId;
 
 /// Why a layer operation was refused. A refused operation leaves the
@@ -24,6 +26,12 @@ pub enum LayerError {
     HasMask(LayerId),
     /// A disabled mask cannot be painted on (reference behaviour).
     MaskDisabled(LayerId),
+    /// A pixel edit was written for another depth than the document's
+    /// (`document` is the depth the document stores).
+    WrongDepth {
+        document: PixelDepth,
+        edit: PixelDepth,
+    },
 }
 
 impl fmt::Display for LayerError {
@@ -38,6 +46,12 @@ impl fmt::Display for LayerError {
             LayerError::NoMask(id) => write!(f, "{id} has no mask"),
             LayerError::HasMask(id) => write!(f, "{id} already has a mask"),
             LayerError::MaskDisabled(id) => write!(f, "the mask of {id} is disabled"),
+            LayerError::WrongDepth { document, edit } => write!(
+                f,
+                "the document stores {}-bit pixels, not {}-bit",
+                document.bits(),
+                edit.bits()
+            ),
         }
     }
 }

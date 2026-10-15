@@ -5,10 +5,13 @@
 //! selection are outside history, consecutive opacity edits of one layer
 //! merge, and only add/remove steps restore the active layer; and in
 //! docs/parity/4D-masks-clipping-alpha-lock.md: mask add/remove/enable,
-//! mask strokes, clipping and alpha lock are steps (M5, CL4).
+//! mask strokes, clipping and alpha lock are steps (M5, CL4); and in
+//! docs/parity/4E-16bit.md: a depth conversion is one step, undone and
+//! redone bit-exactly with every step around it, at both depths.
 
 use proptest::prelude::*;
-use tela_canvas::{DirtyTiles, TileCoord};
+use tela_canvas::{DirtyTiles, Tile, TileCoord};
+use tela_color::{PixelDepth, StoragePixel, with_pixel_type};
 
 use crate::document::Digest;
 use crate::{Document, LayerError, LayerId, Placement};
@@ -31,6 +34,8 @@ enum Edit {
     PaintMask(usize, u8, u8),
     Clip(usize, bool),
     AlphaLock(usize, bool),
+    /// Convert to 16 bits (`true`) or 8 bits.
+    Convert(bool),
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +64,7 @@ fn hop() -> impl Strategy<Value = HOp> {
         2 => (any::<usize>(), 0u8..3, 0u8..3).prop_map(|(i, t, v)| Edit::PaintMask(i, t, v)),
         1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Edit::Clip(i, v)),
         1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Edit::AlphaLock(i, v)),
+        1 => any::<bool>().prop_map(Edit::Convert),
     ];
     prop_oneof![
         6 => edit.prop_map(HOp::Edit),
@@ -116,10 +122,12 @@ fn edit(d: &mut Document, removed: &mut Vec<LayerId>, e: &Edit) -> Result<(), La
                 x: i32::from(t),
                 y: 0,
             });
-            let px = [60 * (v + 1); 4];
-            ok(d.modify_tiles(pick(d, removed, i), &tiles, |_, tile| {
-                *tile.get_mut(u32::from(v), 1) = px;
-            }))
+            // At the document's depth; 16-bit values fall between 8-bit
+            // levels, so a lossy round trip would show in the digests.
+            let id = pick(d, removed, i);
+            with_pixel_type!(d.depth(), P => ok(d.modify_tiles(id, &tiles, |_, tile: &mut Tile<P>| {
+                *tile.get_mut(u32::from(v), 1) = value::<P>(v);
+            })))
         }
         Edit::Clear(i) => ok(d.clear_layer(pick(d, removed, i))),
         Edit::AddMask(i) => ok(d.add_mask(pick(d, removed, i))),
@@ -139,7 +147,22 @@ fn edit(d: &mut Document, removed: &mut Vec<LayerId>, e: &Edit) -> Result<(), La
         }
         Edit::Clip(i, v) => ok(d.set_clipped(pick(d, removed, i), v)),
         Edit::AlphaLock(i, v) => d.set_alpha_locked(pick(d, removed, i), v),
+        Edit::Convert(sixteen) => {
+            d.convert_depth(if sixteen {
+                PixelDepth::Rgba16
+            } else {
+                PixelDepth::Rgba8
+            });
+            Ok(())
+        }
     }
+}
+
+/// A pixel value for stroke `v`: grey `60·(v + 1)`, plus a fraction of a
+/// level at 16 bits.
+fn value<P: StoragePixel>(v: u8) -> P {
+    let g = f32::from(60 * (v + 1)) / 255.0 + 0.3 / 255.0;
+    P::from_premul(tela_color::PremulRgba::new(g, g, g, 1.0))
 }
 
 /// A model stack entry: the content on the other side of one step.

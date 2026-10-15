@@ -12,8 +12,8 @@
 //! The scenario table repeats the probe's in Tela's terms; the probe's
 //! `SCENARIOS` is the source both follow.
 
-use tela_canvas::{DirtyTiles, TileCoord};
-use tela_color::Rgba;
+use tela_canvas::{DirtyTiles, Tile, TileCoord};
+use tela_color::{PixelDepth, Rgba, StoragePixel, with_pixel_type};
 use tela_document::{BlendMode, Document, LayerId, Placement};
 
 const CELL: u32 = 12;
@@ -215,10 +215,10 @@ const SCENARIOS: &[(&str, &[L])] = &[
     ),
 ];
 
-/// Premultiplied 8-bit, as Tela stores layers.
-fn stored(c: [u8; 4]) -> [u8; 4] {
+/// Premultiplied, at the storage's precision, as Tela stores layers.
+fn stored<P: StoragePixel>(c: [u8; 4]) -> P {
     let [r, g, b, a] = c.map(|v| f32::from(v) / 255.0);
-    Rgba::new(r, g, b, a).premultiply().to_rgba8()
+    P::from_premul(Rgba::new(r, g, b, a).premultiply())
 }
 
 fn content_at(c: Content, row: u32, col: u32) -> [u8; 4] {
@@ -254,20 +254,20 @@ fn all_tiles() -> DirtyTiles {
 }
 
 /// One scenario as a Tela document, through the public API only.
-fn build(stack: &[L]) -> Document {
-    let mut d = Document::new(REGION, REGION);
+fn build(stack: &[L], depth: PixelDepth) -> Document {
+    let mut d = Document::with_depth(REGION, REGION, depth);
     let mut ids: Vec<LayerId> = vec![d.active_layer()];
     for _ in 1..stack.len() {
         ids.push(d.add_layer(Placement::Top).unwrap());
     }
     for (l, &id) in stack.iter().zip(&ids) {
-        d.modify_tiles(id, &all_tiles(), |_, t| {
+        with_pixel_type!(depth, P => d.modify_tiles(id, &all_tiles(), |_, t: &mut Tile<P>| {
             for y in 0..REGION {
                 for x in 0..REGION {
-                    *t.get_mut(x, y) = stored(content_at(l.content, y / CELL, x / CELL));
+                    *t.get_mut(x, y) = stored::<P>(content_at(l.content, y / CELL, x / CELL));
                 }
             }
-        })
+        }))
         .unwrap();
         if let Some(m) = l.mask {
             d.add_mask(id).unwrap();
@@ -319,12 +319,12 @@ fn rows(file: &str) -> Vec<Row> {
 /// Largest premultiplied channel difference over every measured swatch.
 /// `paper`: the reference's export had its white paper layer; Tela's
 /// composite is put over white as the display does.
-fn worst_difference(file: &str, paper: bool) -> (u8, String) {
+fn worst_difference(file: &str, paper: bool, depth: PixelDepth) -> (u8, String) {
     let rows = rows(file);
     assert_eq!(rows.len(), SCENARIOS.len() * 64, "every swatch measured");
     let mut worst = (0u8, String::new());
     for (name, stack) in SCENARIOS {
-        let doc = build(stack);
+        let doc = build(stack, depth);
         let tile = doc
             .compose_tile(TileCoord { x: 0, y: 0 }, None)
             .unwrap_or_else(|| vec![[0; 4]; 256 * 256]);
@@ -361,12 +361,26 @@ fn worst_difference(file: &str, paper: bool) -> (u8, String) {
 
 #[test]
 fn masks_and_clipping_match_the_reference_over_its_paper() {
-    let (e, at) = worst_difference("clip_with_paper.csv", true);
+    let (e, at) = worst_difference("clip_with_paper.csv", true, PixelDepth::Rgba8);
     assert!(e <= 2, "largest difference {e}/255 at {at}");
+}
+
+/// Phase 4E: the same stacks in 16-bit documents (colours at 16-bit
+/// precision, masks 8-bit as always), against the reference's 8-bit
+/// measurements (it has no 16-bit documents).
+#[test]
+fn masks_and_clipping_match_the_reference_in_16_bit_documents() {
+    for (file, paper) in [
+        ("clip_with_paper.csv", true),
+        ("clip_without_paper.csv", false),
+    ] {
+        let (e, at) = worst_difference(file, paper, PixelDepth::Rgba16);
+        assert!(e <= 2, "{file}: largest difference {e}/255 at {at}");
+    }
 }
 
 #[test]
 fn masks_and_clipping_match_the_reference_without_paper() {
-    let (e, at) = worst_difference("clip_without_paper.csv", false);
+    let (e, at) = worst_difference("clip_without_paper.csv", false, PixelDepth::Rgba8);
     assert!(e <= 2, "largest difference {e}/255 at {at}");
 }

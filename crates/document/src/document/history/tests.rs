@@ -2,9 +2,13 @@ use tela_canvas::{DirtyTiles, TileCoord};
 
 use super::*;
 use crate::{LayerError, LayerPart, Placement};
+use tela_canvas::Tile;
+use tela_color::StoragePixel;
 
 const A: TileCoord = TileCoord { x: 0, y: 0 };
 const B: TileCoord = TileCoord { x: 1, y: 0 };
+/// One 8-bit tile buffer (these tests use 8-bit documents).
+const TILE_BYTES: usize = crate::pixels::tile_bytes(PixelDepth::Rgba8);
 
 fn tiles(coords: &[TileCoord]) -> DirtyTiles {
     let mut t = DirtyTiles::new();
@@ -16,12 +20,19 @@ fn tiles(coords: &[TileCoord]) -> DirtyTiles {
 
 /// One "stroke": sets pixel (k, k) of every declared tile to `v`.
 fn stroke(d: &mut Document, id: LayerId, coords: &[TileCoord], k: u32, v: u8) {
-    d.modify_tiles(id, &tiles(coords), |_, t| *t.get_mut(k, k) = [v; 4])
-        .unwrap();
+    d.modify_tiles(id, &tiles(coords), |_, t: &mut Tile<[u8; 4]>| {
+        *t.get_mut(k, k) = [v; 4]
+    })
+    .unwrap();
 }
 
 fn tile_ptr(d: &Document, id: LayerId, c: TileCoord) -> Option<*const [u8; 4]> {
-    d.layer(id)?.pixels().tile(c).map(|t| t.pixels().as_ptr())
+    d.layer(id)?
+        .pixels()
+        .rgba8()
+        .unwrap()
+        .tile(c)
+        .map(|t| t.pixels().as_ptr())
 }
 
 #[test]
@@ -37,7 +48,13 @@ fn stroke_undo_redo_is_bit_exact_and_restores_absent_tiles() {
     let dirty = d.undo().unwrap();
     assert_eq!(d.digest(), before, "H1/H2");
     assert!(
-        d.layer(l).unwrap().pixels().tile(B).is_none(),
+        d.layer(l)
+            .unwrap()
+            .pixels()
+            .rgba8()
+            .unwrap()
+            .tile(B)
+            .is_none(),
         "H9: B absent again"
     );
     assert!(dirty.contains(A) && dirty.contains(B));
@@ -331,7 +348,7 @@ fn step_limit_drops_the_oldest_steps() {
     while d.can_undo() {
         d.undo().unwrap();
     }
-    let px = d.layer(l).unwrap().pixels();
+    let px = d.layer(l).unwrap().pixels().rgba8().unwrap();
     assert_eq!(
         px.pixel(2, 2),
         [1; 4],
@@ -357,7 +374,15 @@ fn byte_limit_keeps_an_oversized_step_alone() {
     stroke(&mut d, l, &wide, 1, 1);
     assert_eq!(d.history_len(), 1, "H4: the oversized step is kept alone");
     d.undo().unwrap();
-    assert!(d.layer(l).unwrap().pixels().tile(wide[0]).is_none());
+    assert!(
+        d.layer(l)
+            .unwrap()
+            .pixels()
+            .rgba8()
+            .unwrap()
+            .tile(wide[0])
+            .is_none()
+    );
     assert!(d.history_bytes() <= d.history_reserved_bytes());
     // Shrinking the limits applies at once; 0 steps disables history.
     d.set_history_limits(HistoryLimits {
@@ -499,5 +524,116 @@ fn undoing_a_mask_away_targets_the_pixels() {
     assert!(d.layer(l).unwrap().mask().is_none());
     assert_eq!(d.active_part(), LayerPart::Pixels);
     d.redo().unwrap();
+    d.check_invariants();
+}
+
+/// One 16-bit "stroke": sets pixel (k, k) of every declared tile to `v`.
+fn stroke16(d: &mut Document, id: LayerId, coords: &[TileCoord], k: u32, v: u16) {
+    d.modify_tiles(id, &tiles(coords), |_, t: &mut Tile<[u16; 4]>| {
+        *t.get_mut(k, k) = [v; 4]
+    })
+    .unwrap();
+}
+
+fn tile_ptr16(d: &Document, id: LayerId, c: TileCoord) -> Option<*const [u16; 4]> {
+    let tile = d.layer(id)?.pixels().rgba16().unwrap().tile(c)?;
+    Some(tile.pixels().as_ptr())
+}
+
+#[test]
+fn sixteen_bit_strokes_undo_and_redo_bit_exactly_by_swapping() {
+    let mut d = Document::with_depth(1024, 1024, PixelDepth::Rgba16);
+    let l = d.active_layer();
+    stroke16(&mut d, l, &[A], 1, 300);
+    let first = d.digest();
+    // B is absent before the second stroke (H9).
+    stroke16(&mut d, l, &[A, B], 2, 40_001);
+    let second = d.digest();
+    let ptr = tile_ptr16(&d, l, A);
+    d.undo().unwrap();
+    assert_eq!(d.digest(), first, "H1/H2 at 16 bits");
+    assert!(tile_ptr16(&d, l, B).is_none(), "H9");
+    let restored = tile_ptr16(&d, l, A);
+    d.redo().unwrap();
+    assert_eq!(d.digest(), second);
+    assert_eq!(tile_ptr16(&d, l, A), ptr, "H5: the same buffer came back");
+    assert_ne!(restored, ptr);
+    d.check_invariants();
+}
+
+#[test]
+fn sixteen_bit_tiles_cost_twice_as_much_history() {
+    let costs: Vec<usize> = PixelDepth::ALL
+        .iter()
+        .map(|&depth| {
+            let mut d = Document::with_depth(1024, 256, depth);
+            let l = d.active_layer();
+            // Two painted tiles, then a stroke over them: the step holds
+            // their previous content.
+            tela_color::with_pixel_type!(depth, P => {
+                d.modify_tiles(l, &tiles(&[A, B]), |_, t: &mut Tile<P>| {
+                    *t.get_mut(1, 1) = P::from_rgba8([9; 4])
+                })
+                .unwrap();
+                let before = d.history_bytes();
+                d.modify_tiles(l, &tiles(&[A, B]), |_, t: &mut Tile<P>| {
+                    *t.get_mut(2, 2) = P::from_rgba8([7; 4])
+                })
+                .unwrap();
+                d.history_bytes() - before
+            })
+        })
+        .collect();
+    let tile8 = crate::pixels::tile_bytes(PixelDepth::Rgba8);
+    assert!(
+        costs[0] >= 2 * tile8 && costs[0] < 2 * tile8 + 1024,
+        "{costs:?}"
+    );
+    assert!(
+        costs[1] >= 4 * tile8 && costs[1] < 4 * tile8 + 1024,
+        "{costs:?}"
+    );
+}
+
+#[test]
+fn the_byte_budget_counts_16_bit_tiles_at_their_size() {
+    let mut d = Document::with_depth(4096, 256, PixelDepth::Rgba16);
+    let l = d.active_layer();
+    // Room for three 8-bit tiles is one and a half 16-bit tiles.
+    d.set_history_limits(HistoryLimits {
+        max_bytes: 3 * TILE_BYTES,
+        ..HistoryLimits::default()
+    });
+    stroke16(&mut d, l, &[A], 1, 1);
+    stroke16(&mut d, l, &[B], 1, 1);
+    assert_eq!(d.history_len(), 1, "H4: two 16-bit tiles exceed the budget");
+    assert!(d.history_reserved_bytes() <= 3 * TILE_BYTES);
+}
+
+#[test]
+fn depth_conversion_undoes_and_redoes_through_later_steps() {
+    let mut d = Document::new(1024, 256);
+    let l = d.active_layer();
+    stroke(&mut d, l, &[A], 1, 50);
+    let eight = d.digest();
+    d.convert_depth(PixelDepth::Rgba16);
+    stroke16(&mut d, l, &[A, B], 3, 60_000);
+    d.add_mask(l).unwrap();
+    let last = d.digest();
+    // Back through the 16-bit steps and the conversion…
+    for _ in 0..3 {
+        d.undo().unwrap();
+    }
+    assert_eq!(d.digest(), eight);
+    assert_eq!(d.depth(), PixelDepth::Rgba8);
+    // …an 8-bit edit now discards the redo steps (H3)…
+    let mut e = d.clone();
+    stroke(&mut e, l, &[B], 1, 1);
+    assert!(!e.can_redo());
+    // …or redoing them all walks forward again.
+    for _ in 0..3 {
+        d.redo().unwrap();
+    }
+    assert_eq!(d.digest(), last);
     d.check_invariants();
 }
