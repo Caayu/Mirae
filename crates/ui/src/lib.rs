@@ -16,12 +16,14 @@
 
 pub mod brush_panel;
 pub mod curve_editor;
+pub mod history_bar;
 pub mod layer_panel;
 
 pub use brush_panel::{BrushPanel, PanelAction, PanelModel};
 pub use egui;
 use egui::{ClippedPrimitive, TexturesDelta, ViewportId};
 use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
+pub use history_bar::{HistoryButtons, HistoryCommand, history_bar};
 pub use layer_panel::{LayerAction, LayerRow, layer_panel};
 use tela_renderer::FrameOverlay;
 use winit::window::Window;

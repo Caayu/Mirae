@@ -6,7 +6,7 @@ use tela_brush::dynamics::{DynamicsSource, InputCaps};
 use tela_brush::{BrushEngine, BrushInput, BrushPreset};
 use tela_canvas::{DirtyTiles, TileCoord, ViewTransform};
 use tela_color::PremulRgba;
-use tela_document::{ComposeScratch, Document, LayerId, Overlay, Placement};
+use tela_document::{ComposeScratch, Document, HistoryAction, LayerId, Overlay, Placement};
 use tela_renderer::{Frame, Renderer};
 use tela_tablet::{DeviceKind, Phase, TabletEvent, TabletSample, TimestampNormalizer, clock};
 use winit::application::ApplicationHandler;
@@ -17,7 +17,10 @@ use winit::window::{Window, WindowId};
 
 use crate::stats::LatencyStats;
 use crate::tools::Tools;
-use tela_ui::{BrushPanel, LayerAction, LayerRow, PanelAction, PanelModel, UiLayer, egui};
+use tela_ui::{
+    BrushPanel, HistoryButtons, HistoryCommand, LayerAction, LayerRow, PanelAction, PanelModel,
+    UiLayer, egui,
+};
 
 const DOCUMENT_SIZE: (u32, u32) = (4000, 3000);
 const WORKSPACE_COLOR: [f32; 4] = [0.18, 0.18, 0.2, 1.0];
@@ -324,11 +327,21 @@ impl App {
         if !pressed || self.engine.is_stroking() {
             return;
         }
-        if self.modifiers.control_key()
-            && self.modifiers.shift_key()
-            && event.physical_key == PhysicalKey::Code(KeyCode::KeyN)
-        {
-            self.apply_layer(LayerAction::Add);
+        if self.modifiers.control_key() {
+            let shift = self.modifiers.shift_key();
+            let command = match event.physical_key {
+                PhysicalKey::Code(KeyCode::KeyN) if shift => {
+                    self.apply_layer(LayerAction::Add);
+                    None
+                }
+                PhysicalKey::Code(KeyCode::KeyZ) if shift => Some(HistoryCommand::Redo),
+                PhysicalKey::Code(KeyCode::KeyZ) => Some(HistoryCommand::Undo),
+                PhysicalKey::Code(KeyCode::KeyY) => Some(HistoryCommand::Redo),
+                _ => return,
+            };
+            if let Some(c) = command {
+                self.apply_history(c);
+            }
             self.request_redraw();
             return;
         }
@@ -380,6 +393,21 @@ impl App {
         match self.document.clear_layer(self.document.active_layer()) {
             Ok(dirty) => self.stale.extend(&dirty),
             Err(e) => log::info!("not clearing: {e}"),
+        }
+    }
+
+    /// Undo or redo. Like layer commands, ignored while a stroke is in
+    /// progress (reference behaviour, docs/parity/4B-undo-redo.md U18).
+    fn apply_history(&mut self, command: HistoryCommand) {
+        if self.engine.is_stroking() {
+            return;
+        }
+        let dirty = match command {
+            HistoryCommand::Undo => self.document.undo(),
+            HistoryCommand::Redo => self.document.redo(),
+        };
+        if let Some(dirty) = dirty {
+            self.stale.extend(&dirty);
         }
     }
 
@@ -487,13 +515,22 @@ impl App {
                 active: l.id() == active,
             })
             .collect();
+        let history = HistoryButtons {
+            undo: self.document.next_undo().map(history_label),
+            redo: self.document.next_redo().map(history_label),
+        };
         let mut action = PanelAction::None;
         let mut layer_action = None;
+        let mut history_command = None;
         let (tools, engine, panel) = (&mut self.tools, &mut self.engine, &mut self.panel);
         let repaint = gpu.ui.build(&gpu.window, |ui| {
             let layers = egui::Panel::right("layer-panel")
                 .default_size(230.0)
-                .show(ui, |ui| layer_action = tela_ui::layer_panel(ui, &rows));
+                .show(ui, |ui| {
+                    history_command = tela_ui::history_bar(ui, &history);
+                    ui.separator();
+                    layer_action = tela_ui::layer_panel(ui, &rows);
+                });
             let r = egui::Panel::left("brush-panel")
                 .default_size(290.0)
                 .show(ui, |ui| {
@@ -518,9 +555,10 @@ impl App {
         if repaint {
             gpu.window.request_redraw();
         }
-        match layer_action {
-            Some(a) => PanelAction::Layer(a),
-            None => action,
+        match (history_command, layer_action) {
+            (Some(c), _) => PanelAction::History(c),
+            (None, Some(a)) => PanelAction::Layer(a),
+            (None, None) => action,
         }
     }
 
@@ -531,6 +569,7 @@ impl App {
             PanelAction::ToggleEraser => self.tools.eraser_mode = !self.tools.eraser_mode,
             PanelAction::ClearLayer => self.clear_canvas(),
             PanelAction::Layer(a) => self.apply_layer(a),
+            PanelAction::History(c) => self.apply_history(c),
         }
         self.request_redraw();
     }
@@ -565,6 +604,21 @@ impl App {
         if self.show_stats && self.stats.summary.len() != before {
             self.update_title();
         }
+    }
+}
+
+/// Button tooltip text for a history step.
+fn history_label(action: HistoryAction) -> &'static str {
+    match action {
+        HistoryAction::Paint => "paint",
+        HistoryAction::ClearLayer => "clear layer",
+        HistoryAction::AddLayer => "new layer",
+        HistoryAction::RemoveLayer => "delete layer",
+        HistoryAction::MoveLayer => "move layer",
+        HistoryAction::Opacity => "opacity",
+        HistoryAction::BlendMode => "blend mode",
+        HistoryAction::Rename => "rename",
+        HistoryAction::Lock => "lock",
     }
 }
 

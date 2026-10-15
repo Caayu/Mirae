@@ -31,6 +31,8 @@ pub enum PanelAction {
     ClearLayer,
     /// From the layer panel.
     Layer(crate::LayerAction),
+    /// From the undo/redo buttons.
+    History(crate::HistoryCommand),
 }
 
 /// Persistent panel state.
