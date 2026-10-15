@@ -87,7 +87,7 @@ active layer, how opacity edits group, what happens during a stroke.
   anyway; storing states is simpler and bit-exact.
 - **Gesture-delimited coalescing** (begin/end signals from the UI, as the
   4B brief proposed): differs from the reference, where separate drags on
-  the same layer merge; kept as an easy change if the owner prefers it
-  (break the chain on the UI's drag-end signal).
+  the same layer merge. Rejected by the owner at 4B approval.
 - **Recording visibility** (as the 4B brief listed): the reference does
   not; recorded visibility would also make undo stop at every eye toggle.
+  Rejected by the owner at 4B approval.

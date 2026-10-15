@@ -114,5 +114,11 @@ Each behaviour is also covered by a unit or property test.
 2. **Opacity merging is by uninterrupted chain**, so two separate drags on
    the same layer with nothing in between are **one** undo (the brief
    asked for two). A selection change, another step, or an undo/redo
-   splits them. Switching to per-gesture splitting is a one-line change
-   (end the chain on the UI's drag-end signal) if the owner prefers it.
+   splits them.
+
+**Owner decision (2026-10-14, at 4B approval):** both are confirmed as
+Tela's intended behaviour and are part of 4B's behavioural parity:
+visibility stays out of the history, and consecutive opacity changes of
+one layer stay one step until another operation, an undo/redo or a change
+of the selected layer interrupts them. Per-gesture steps are **not**
+wanted where they would diverge from the reference.
