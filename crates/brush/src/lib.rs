@@ -51,4 +51,4 @@ pub use engine::{BrushEngine, StrokeParams, StrokeProcessor, StrokeStats};
 pub use input::BrushInput;
 pub use preset::{BrushPreset, Param, Properties, StrokeSettings, Taper};
 pub use spacing::Dab;
-pub use stroke::{DabLog, DabSink, StampContext, StrokeBuffer};
+pub use stroke::{DabLog, DabSink, PixelAlpha, StampContext, StrokeBuffer};

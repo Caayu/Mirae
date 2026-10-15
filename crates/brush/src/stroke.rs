@@ -1,5 +1,5 @@
 use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
-use tela_color::{PremulRgba, Rgba};
+use tela_color::{PremulRgba, Rgba, unorm8};
 
 use crate::Dab;
 use crate::preset::PaintMode;
@@ -85,6 +85,18 @@ pub struct StrokeBuffer {
     /// Every tile the stroke has touched.
     touched: DirtyTiles,
     scratch: BatchScratch,
+}
+
+/// Whether a stroke may change the alpha of the pixels it paints on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PixelAlpha {
+    /// Painting adds alpha, erasing removes it.
+    #[default]
+    Free,
+    /// "Lock transparent pixels": painting is source-atop (colour changes
+    /// only where there is alpha, alpha never changes); erasing still
+    /// erases, as in the reference application (parity record 4D A1–A3).
+    Preserved,
 }
 
 /// Everything constant across the dabs of one stroke.
@@ -297,29 +309,49 @@ impl StrokeBuffer {
     }
 
     /// Composites the stroke over one tile of premultiplied pixels.
-    pub fn paint_over_tile(&self, coord: TileCoord, pixels: &mut [PremulRgba]) {
+    /// `alpha` says whether the stroke may change the pixels' alpha.
+    pub fn paint_over_tile(&self, coord: TileCoord, pixels: &mut [PremulRgba], alpha: PixelAlpha) {
         if let Some(mask) = self.mask_tile(coord) {
-            self.paint_over(pixels, mask.pixels());
+            self.paint_over(pixels, mask.pixels(), alpha);
         }
     }
 
     /// The one compositing rule shared by preview and commit: `pixels` and
     /// `mask` are matching runs of the same tile (whole tile or one row).
-    fn paint_over(&self, pixels: &mut [PremulRgba], mask: &[f32]) {
-        match self.ctx.mode {
-            // Destination-out: the stroke's alpha removes layer alpha.
-            PaintMode::Erase => {
+    fn paint_over(&self, pixels: &mut [PremulRgba], mask: &[f32], alpha: PixelAlpha) {
+        match (self.ctx.mode, alpha) {
+            // Destination-out: the stroke's alpha removes layer alpha. A
+            // preserved alpha does not stop the eraser (reference
+            // behaviour, parity record 4D A3).
+            (PaintMode::Erase, _) => {
                 for (dst, &m) in pixels.iter_mut().zip(mask) {
                     if m > 0.0 {
                         *dst = dst.scale(1.0 - m);
                     }
                 }
             }
-            PaintMode::Paint | PaintMode::Unknown => {
+            (PaintMode::Paint | PaintMode::Unknown, PixelAlpha::Free) => {
                 let paint = self.paint();
                 for (dst, &m) in pixels.iter_mut().zip(mask) {
                     if m > 0.0 {
                         *dst = paint.scale(m).over(*dst);
+                    }
+                }
+            }
+            // Source-atop: colour changes where there is alpha, alpha
+            // never does (parity record 4D A1, A2).
+            (PaintMode::Paint | PaintMode::Unknown, PixelAlpha::Preserved) => {
+                let paint = self.paint();
+                for (dst, &m) in pixels.iter_mut().zip(mask) {
+                    if m > 0.0 && dst.a > 0.0 {
+                        let s = paint.scale(m);
+                        let keep = 1.0 - s.a;
+                        *dst = PremulRgba::new(
+                            s.r * dst.a + dst.r * keep,
+                            s.g * dst.a + dst.g * keep,
+                            s.b * dst.a + dst.b * keep,
+                            dst.a,
+                        );
                     }
                 }
             }
@@ -329,7 +361,7 @@ impl StrokeBuffer {
     /// Writes the finished stroke into one tile of an 8-bit premultiplied
     /// layer (the tile at `coord`). Does nothing where the stroke has no
     /// mask. Works row by row on the stack: no allocation.
-    pub fn commit_tile(&self, coord: TileCoord, tile: &mut Tile<[u8; 4]>) {
+    pub fn commit_tile(&self, coord: TileCoord, tile: &mut Tile<[u8; 4]>, alpha: PixelAlpha) {
         let Some(mask) = self.mask_tile(coord) else {
             return;
         };
@@ -339,7 +371,7 @@ impl StrokeBuffer {
             for (s, p) in row.iter_mut().zip(pixels.iter()) {
                 *s = PremulRgba::from_rgba8(*p);
             }
-            self.paint_over(&mut row, mask.row(y));
+            self.paint_over(&mut row, mask.row(y), alpha);
             for (p, s) in pixels.iter_mut().zip(&row) {
                 *p = s.to_rgba8();
             }
@@ -347,14 +379,65 @@ impl StrokeBuffer {
     }
 
     /// Writes the finished stroke into an 8-bit premultiplied surface
-    /// ([`StrokeBuffer::commit_tile`] for every touched tile with paint).
+    /// ([`StrokeBuffer::commit_tile`] for every touched tile with paint,
+    /// alpha free).
     pub fn commit_into(&self, target: &mut TiledSurface<[u8; 4]>) -> DirtyTiles {
         for coord in self.touched.iter() {
             if self.mask_tile(coord).is_some() {
-                self.commit_tile(coord, target.tile_or_insert(coord));
+                self.commit_tile(coord, target.tile_or_insert(coord), PixelAlpha::Free);
             }
         }
         self.touched.clone()
+    }
+
+    /// Applies the stroke to one tile of a single alpha channel (`0..=1`,
+    /// e.g. how much a layer mask reveals): painting adds the stroke's
+    /// alpha (`a + m·(1 − a)`), erasing removes it (`a·(1 − m)`). The
+    /// stroke's colour plays no part (reference behaviour for masks,
+    /// parity record 4D M2–M4). Shared by preview and commit.
+    pub fn paint_alpha_tile(&self, coord: TileCoord, values: &mut [f32]) {
+        if let Some(mask) = self.mask_tile(coord) {
+            self.alpha_over(values, mask.pixels());
+        }
+    }
+
+    fn alpha_over(&self, values: &mut [f32], mask: &[f32]) {
+        match self.ctx.mode {
+            PaintMode::Erase => {
+                for (v, &m) in values.iter_mut().zip(mask) {
+                    if m > 0.0 {
+                        *v *= 1.0 - m;
+                    }
+                }
+            }
+            PaintMode::Paint | PaintMode::Unknown => {
+                for (v, &m) in values.iter_mut().zip(mask) {
+                    if m > 0.0 {
+                        *v = m + *v * (1.0 - m);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Writes the finished stroke into one tile of an 8-bit alpha channel
+    /// (255 = full), with [`StrokeBuffer::paint_alpha_tile`]'s rule. Row by
+    /// row on the stack: no allocation.
+    pub fn commit_alpha_tile(&self, coord: TileCoord, tile: &mut Tile<u8>) {
+        let Some(mask) = self.mask_tile(coord) else {
+            return;
+        };
+        let mut row = [0.0f32; TILE_SIZE as usize];
+        for y in 0..TILE_SIZE {
+            let values = tile.row_mut(y);
+            for (r, v) in row.iter_mut().zip(values.iter()) {
+                *r = f32::from(*v) / 255.0;
+            }
+            self.alpha_over(&mut row, mask.row(y));
+            for (v, r) in values.iter_mut().zip(&row) {
+                *v = unorm8(*r);
+            }
+        }
     }
 }
 
@@ -538,6 +621,133 @@ mod tests {
         assert_eq!(target.pixel(40, 10), [200, 100, 0, 255], "untouched");
     }
 
+    /// A tile with opaque, half-transparent and empty pixels of one colour
+    /// at x = 10, 20, 30 (y = 10).
+    fn bands() -> Tile<[u8; 4]> {
+        let mut t = Tile::new();
+        *t.get_mut(10, 10) = [200, 160, 60, 255];
+        *t.get_mut(20, 10) = [100, 80, 30, 128];
+        t
+    }
+
+    fn stroke_over(xs: &[f32], opacity: f32, mode: PaintMode) -> StrokeBuffer {
+        let ctx = StampContext {
+            anti_aliasing: true,
+            mode,
+            ..Default::default()
+        };
+        let mut s = StrokeBuffer::new(Rgba::BLACK, ctx);
+        for &x in xs {
+            s.dab(&dab(x + 0.5, 10.5, 3.0, opacity, 1.0));
+        }
+        s
+    }
+
+    #[test]
+    fn preserved_alpha_paints_atop_and_never_changes_alpha() {
+        let c = TileCoord { x: 0, y: 0 };
+        let s = stroke_over(&[10.0, 20.0, 30.0], 0.5, PaintMode::Paint);
+        let mut t = bands();
+        s.commit_tile(c, &mut t, PixelAlpha::Preserved);
+        // Colour moves halfway to black; alpha stays; empty stays empty.
+        assert_eq!(t.get(10, 10), [100, 80, 30, 255]);
+        assert_eq!(t.get(20, 10), [50, 40, 15, 128]);
+        assert_eq!(t.get(30, 10), [0, 0, 0, 0]);
+        // Free alpha paints over everything.
+        let mut free = bands();
+        s.commit_tile(c, &mut free, PixelAlpha::Free);
+        assert_eq!(free.get(30, 10), [0, 0, 0, 128]);
+        assert_eq!(free.get(20, 10)[3], 192, "0.5 + 0.502 * 0.5");
+    }
+
+    #[test]
+    fn preserved_alpha_matches_the_reference_edge_measurement() {
+        // Parity record 4D A2: black at coverage 0.47 over 200,160,60 at
+        // 50 % alpha shows 180,170,143 over white paper.
+        let s = stroke_over(&[], 1.0, PaintMode::Paint);
+        let dst = PremulRgba::from_rgba8([100, 80, 30, 128]);
+        let mut px = [dst];
+        s.paint_over(&mut px, &[0.47], PixelAlpha::Preserved);
+        let shown = px[0].over(PremulRgba::new(1.0, 1.0, 1.0, 1.0)).to_rgba8();
+        let reference = [180u8, 170, 143, 255];
+        let diff = shown
+            .iter()
+            .zip(reference)
+            .map(|(a, b)| a.abs_diff(b))
+            .max();
+        assert!(diff <= Some(1), "{shown:?} vs {reference:?}");
+        assert!((px[0].a - dst.a).abs() < 1e-7);
+    }
+
+    #[test]
+    fn preserved_alpha_does_not_stop_the_eraser() {
+        let c = TileCoord { x: 0, y: 0 };
+        let s = stroke_over(&[10.0, 20.0], 1.0, PaintMode::Erase);
+        let mut t = bands();
+        s.commit_tile(c, &mut t, PixelAlpha::Preserved);
+        assert_eq!(t.get(10, 10), [0, 0, 0, 0]);
+        assert_eq!(t.get(20, 10), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn alpha_channel_painting_adds_and_erasing_removes_stroke_alpha() {
+        let c = TileCoord { x: 0, y: 0 };
+        let mut t: Tile<u8> = Tile::new();
+        *t.get_mut(20, 10) = 255;
+        *t.get_mut(30, 10) = 128;
+        let paint = stroke_over(&[10.0, 30.0], 0.5, PaintMode::Paint);
+        paint.commit_alpha_tile(c, &mut t);
+        assert_eq!(t.get(10, 10), 128, "half the stroke's alpha added");
+        assert_eq!(t.get(30, 10), 192, "a + m(1 - a)");
+        let erase = stroke_over(&[20.0, 30.0], 0.5, PaintMode::Erase);
+        erase.commit_alpha_tile(c, &mut t);
+        assert_eq!(t.get(20, 10), 128, "a(1 - m)");
+        assert_eq!(t.get(30, 10), 96);
+        assert_eq!(t.get(50, 10), 0, "untouched");
+    }
+
+    #[test]
+    fn alpha_channel_ignores_the_paint_colour() {
+        let c = TileCoord { x: 0, y: 0 };
+        let mut results = Vec::new();
+        for color in [Rgba::BLACK, Rgba::WHITE, Rgba::new(1.0, 0.2, 0.4, 1.0)] {
+            let mut s = StrokeBuffer::new(
+                color,
+                StampContext {
+                    anti_aliasing: true,
+                    ..Default::default()
+                },
+            );
+            s.dab(&dab(10.5, 10.5, 3.0, 1.0, 1.0));
+            let mut t: Tile<u8> = Tile::new();
+            s.commit_alpha_tile(c, &mut t);
+            results.push(t);
+        }
+        assert!(results.windows(2).all(|w| w[0] == w[1]));
+    }
+
+    #[test]
+    fn alpha_channel_preview_matches_commit() {
+        let c = TileCoord { x: 0, y: 0 };
+        let mut s = buffer();
+        for i in 0..20 {
+            s.dab(&dab(5.0 + i as f32 * 3.7, 30.0, 6.0, 0.7, 0.4));
+        }
+        let mut t: Tile<u8> = Tile::new();
+        for (i, v) in t.pixels_mut().iter_mut().enumerate() {
+            *v = (i % 251) as u8;
+        }
+        let mut preview: Vec<f32> = t.pixels().iter().map(|&v| f32::from(v) / 255.0).collect();
+        s.paint_alpha_tile(c, &mut preview);
+        s.commit_alpha_tile(c, &mut t);
+        let diff = preview
+            .iter()
+            .zip(t.pixels())
+            .map(|(p, &v)| unorm8(*p).abs_diff(v))
+            .max()
+            .unwrap();
+        assert_eq!(diff, 0, "commit is the preview rounded once");
+    }
     #[test]
     fn parallel_stamping_is_bit_identical_to_sequential() {
         use crate::texture::{CanvasTexture, TextureMode, TextureSettings};

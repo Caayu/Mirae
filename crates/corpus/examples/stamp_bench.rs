@@ -14,7 +14,7 @@ use glam::Vec2;
 use tela_brush::scatter::ScatterMode;
 use tela_brush::texture::{CanvasTexture, TextureMode, TexturePattern, TextureSettings};
 use tela_brush::tip::Tip;
-use tela_brush::{Dab, DabSink, StampContext, StrokeBuffer};
+use tela_brush::{Dab, DabSink, PixelAlpha, StampContext, StrokeBuffer};
 use tela_canvas::{DirtyTiles, IRect, TILE_SIZE, TileCoord};
 use tela_color::{PremulRgba, Rgba};
 use tela_document::{ComposeScratch, Document, Overlay, Placement};
@@ -214,7 +214,8 @@ fn main() {
     for d in dabs(Kind::Soft, 120.0, 400) {
         stroke.dab(&d);
     }
-    let paint = |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px);
+    let paint =
+        |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px, PixelAlpha::Free);
     let covers = |c: TileCoord| stroke.touched().contains(c);
     let overlay = Overlay {
         target: top,

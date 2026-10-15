@@ -13,7 +13,7 @@
 use std::time::Instant;
 
 use glam::Vec2;
-use tela_brush::{BrushEngine, BrushInput, BrushPreset, StrokeBuffer};
+use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha, StrokeBuffer};
 use tela_canvas::{DirtyTiles, IRect, TiledSurface};
 use tela_document::Document;
 
@@ -112,8 +112,10 @@ fn main() {
 
                 let mut d = base.clone();
                 commit.push(ms(|| {
-                    d.modify_tiles(layer, s.touched(), |c, t| s.commit_tile(c, t))
-                        .unwrap();
+                    d.modify_tiles(layer, s.touched(), |c, t| {
+                        s.commit_tile(c, t, PixelAlpha::Free)
+                    })
+                    .unwrap();
                 }));
                 held = d.history_bytes();
                 reserved = d.history_reserved_bytes();

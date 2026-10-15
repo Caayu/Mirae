@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use glam::Vec2;
 use tela_brush::dynamics::{DynamicsSource, InputCaps};
-use tela_brush::{BrushEngine, BrushInput, BrushPreset};
+use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha};
 use tela_canvas::{DirtyTiles, TileCoord, ViewTransform};
 use tela_color::PremulRgba;
 use tela_document::{
@@ -252,8 +252,9 @@ impl App {
             // The preview disappears either way, so its tiles recompose.
             self.stale.extend(stroke.touched());
             let committed = target.map(|id| {
-                self.document
-                    .modify_tiles(id, stroke.touched(), |c, t| stroke.commit_tile(c, t))
+                self.document.modify_tiles(id, stroke.touched(), |c, t| {
+                    stroke.commit_tile(c, t, PixelAlpha::Free)
+                })
             });
             if let Some(Err(e)) = committed {
                 log::warn!(target: "tela::stroke", "stroke discarded: {e}");
@@ -474,7 +475,7 @@ impl App {
         let stroke = self.engine.stroke();
         let paint = |c: TileCoord, px: &mut [PremulRgba]| {
             if let Some(s) = stroke {
-                s.paint_over_tile(c, px);
+                s.paint_over_tile(c, px, PixelAlpha::Free);
             }
         };
         let covers = |c: TileCoord| stroke.is_some_and(|s| s.touched().contains(c));

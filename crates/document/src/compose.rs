@@ -143,7 +143,7 @@ impl ComposeScratch {
 mod tests {
     use glam::Vec2;
     use tela_brush::dynamics::BrushProperty;
-    use tela_brush::{BrushInput, BrushPreset, StrokeBuffer};
+    use tela_brush::{BrushInput, BrushPreset, PixelAlpha, StrokeBuffer};
     use tela_canvas::DirtyTiles;
 
     use super::*;
@@ -169,8 +169,10 @@ mod tests {
     }
 
     fn commit(d: &mut Document, id: LayerId, stroke: &StrokeBuffer) {
-        d.modify_tiles(id, stroke.touched(), |c, t| stroke.commit_tile(c, t))
-            .unwrap();
+        d.modify_tiles(id, stroke.touched(), |c, t| {
+            stroke.commit_tile(c, t, PixelAlpha::Free)
+        })
+        .unwrap();
     }
 
     fn max_diff(a: &[[u8; 4]], b: &[[u8; 4]]) -> u8 {
@@ -257,7 +259,8 @@ mod tests {
         d.set_opacity(l, 0.6).unwrap();
         let stroke = stroke_at(40.0, 40.0, 0.7);
         let coord = TileCoord { x: 0, y: 0 };
-        let paint = |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px);
+        let paint =
+            |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px, PixelAlpha::Free);
         let covers = |c: TileCoord| stroke.touched().contains(c);
         let o = Overlay {
             target: l,
@@ -279,7 +282,8 @@ mod tests {
         let above = d.add_layer(Placement::Top).unwrap();
         set_pixel(&mut d, above, 40, 40, [0, 0, 200, 255]);
         let stroke = stroke_at(40.0, 40.0, 1.0);
-        let paint = |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px);
+        let paint =
+            |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px, PixelAlpha::Free);
         let covers = |c: TileCoord| stroke.touched().contains(c);
         let o = Overlay {
             target,
@@ -331,7 +335,8 @@ mod tests {
         );
         let stroke = e.end_stroke().unwrap();
         let coord = TileCoord { x: 0, y: 0 };
-        let paint = |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px);
+        let paint =
+            |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px, PixelAlpha::Free);
         let covers = |c: TileCoord| stroke.touched().contains(c);
         let o = Overlay {
             target: l,
@@ -387,7 +392,9 @@ mod tests {
             e.add_input_at(BrushInput::from_position(Vec2::new(60.0, 240.0), 1.0), 1.0);
             let stroke = e.end_stroke().unwrap();
             let coord = TileCoord { x: 0, y: 0 };
-            let paint = |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px);
+            let paint = |c: TileCoord, px: &mut [PremulRgba]| {
+                stroke.paint_over_tile(c, px, PixelAlpha::Free)
+            };
             let covers = |c: TileCoord| stroke.touched().contains(c);
             let o = Overlay {
                 target: top,
