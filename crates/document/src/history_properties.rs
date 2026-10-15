@@ -3,7 +3,9 @@
 //! stack of document snapshots (digests). The model encodes the reference
 //! behaviour recorded in docs/parity/4B-undo-redo.md: visibility and
 //! selection are outside history, consecutive opacity edits of one layer
-//! merge, and only add/remove steps restore the active layer.
+//! merge, and only add/remove steps restore the active layer; and in
+//! docs/parity/4D-masks-clipping-alpha-lock.md: mask add/remove/enable,
+//! mask strokes, clipping and alpha lock are steps (M5, CL4).
 
 use proptest::prelude::*;
 use tela_canvas::{DirtyTiles, TileCoord};
@@ -23,6 +25,12 @@ enum Edit {
     Rename(usize, u8),
     Paint(usize, u8, u8),
     Clear(usize),
+    AddMask(usize),
+    RemoveMask(usize),
+    MaskEnabled(usize, bool),
+    PaintMask(usize, u8, u8),
+    Clip(usize, bool),
+    AlphaLock(usize, bool),
 }
 
 #[derive(Clone, Debug)]
@@ -45,6 +53,12 @@ fn hop() -> impl Strategy<Value = HOp> {
         1 => (any::<usize>(), 0u8..3).prop_map(|(i, n)| Edit::Rename(i, n)),
         3 => (any::<usize>(), 0u8..3, 0u8..3).prop_map(|(i, t, v)| Edit::Paint(i, t, v)),
         1 => any::<usize>().prop_map(Edit::Clear),
+        1 => any::<usize>().prop_map(Edit::AddMask),
+        1 => any::<usize>().prop_map(Edit::RemoveMask),
+        1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Edit::MaskEnabled(i, v)),
+        2 => (any::<usize>(), 0u8..3, 0u8..3).prop_map(|(i, t, v)| Edit::PaintMask(i, t, v)),
+        1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Edit::Clip(i, v)),
+        1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Edit::AlphaLock(i, v)),
     ];
     prop_oneof![
         6 => edit.prop_map(HOp::Edit),
@@ -108,6 +122,23 @@ fn edit(d: &mut Document, removed: &mut Vec<LayerId>, e: &Edit) -> Result<(), La
             }))
         }
         Edit::Clear(i) => ok(d.clear_layer(pick(d, removed, i))),
+        Edit::AddMask(i) => ok(d.add_mask(pick(d, removed, i))),
+        Edit::RemoveMask(i) => ok(d.remove_mask(pick(d, removed, i))),
+        Edit::MaskEnabled(i, v) => ok(d.set_mask_enabled(pick(d, removed, i), v)),
+        Edit::PaintMask(i, t, v) => {
+            let mut tiles = DirtyTiles::new();
+            tiles.mark(TileCoord {
+                x: i32::from(t),
+                y: 0,
+            });
+            // 255 reveals: some strokes give tiles back (released).
+            let value = [0, 120, 255][v as usize];
+            ok(d.modify_mask(pick(d, removed, i), &tiles, |_, tile| {
+                *tile.get_mut(u32::from(t), 2) = value;
+            }))
+        }
+        Edit::Clip(i, v) => ok(d.set_clipped(pick(d, removed, i), v)),
+        Edit::AlphaLock(i, v) => d.set_alpha_locked(pick(d, removed, i), v),
     }
 }
 
@@ -199,7 +230,7 @@ proptest! {
                         }
                         // Paint is always a step (one call = one stroke);
                         // the rest only when they changed something.
-                        (Edit::Paint(..), Ok(())) | (_, Ok(())) if changed || matches!(e, Edit::Paint(..)) => {
+                        (Edit::Paint(..) | Edit::PaintMask(..), Ok(())) | (_, Ok(())) if changed || matches!(e, Edit::Paint(..) | Edit::PaintMask(..)) => {
                             let restores = matches!(e, Edit::Add(..) | Edit::Remove(_));
                             past.push(Entry { active_before: before.active, active_after: after.active, state: before, restores });
                             future.clear();

@@ -1,15 +1,16 @@
 //! Property tests of the layer stack: random operation sequences (including
 //! stale ids) run against the document and against a deliberately simple
 //! reference model; after every step both must agree and the document's
-//! invariants (L1–L9) must hold. Lives inside the crate to reach
-//! `Document::check_invariants`.
+//! invariants (L1–L9, M3) must hold. The model includes masks, clipping,
+//! alpha lock and the edit target (phase 4D). Lives inside the crate to
+//! reach `Document::check_invariants`.
 
 use std::collections::HashMap;
 
 use proptest::prelude::*;
 use tela_canvas::{DirtyTiles, TileCoord};
 
-use crate::{Document, LayerError, LayerId, Placement};
+use crate::{Document, LayerError, LayerId, LayerPart, Placement};
 
 #[derive(Clone, Debug)]
 enum Op {
@@ -23,6 +24,13 @@ enum Op {
     Rename(usize, u8),
     Paint(usize),
     Clear(usize),
+    AddMask(usize),
+    RemoveMask(usize),
+    MaskEnabled(usize, bool),
+    PaintMask(usize),
+    Clip(usize, bool),
+    AlphaLock(usize, bool),
+    Target(bool),
 }
 
 fn op() -> impl Strategy<Value = Op> {
@@ -42,6 +50,13 @@ fn op() -> impl Strategy<Value = Op> {
         1 => (any::<usize>(), 0u8..4).prop_map(|(i, n)| Op::Rename(i, n)),
         2 => any::<usize>().prop_map(Op::Paint),
         1 => any::<usize>().prop_map(Op::Clear),
+        1 => any::<usize>().prop_map(Op::AddMask),
+        1 => any::<usize>().prop_map(Op::RemoveMask),
+        1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Op::MaskEnabled(i, v)),
+        1 => any::<usize>().prop_map(Op::PaintMask),
+        1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Op::Clip(i, v)),
+        1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Op::AlphaLock(i, v)),
+        1 => any::<bool>().prop_map(Op::Target),
     ]
 }
 
@@ -54,29 +69,50 @@ struct ModelLayer {
     opacity: f32,
     locked: bool,
     painted: bool,
+    alpha_locked: bool,
+    clipped: bool,
+    /// `(enabled, hides something)`.
+    mask: Option<(bool, bool)>,
+}
+
+impl ModelLayer {
+    fn new(id: u32, name: String, clipped: bool) -> Self {
+        Self {
+            id,
+            name,
+            visible: true,
+            opacity: 1.0,
+            locked: false,
+            painted: false,
+            alpha_locked: false,
+            clipped,
+            mask: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 struct Model {
     layers: Vec<ModelLayer>,
     active: u32,
+    /// The edit target is the active layer's mask.
+    on_mask: bool,
     next: u32,
 }
 
 impl Model {
     fn new() -> Self {
         Self {
-            layers: vec![ModelLayer {
-                id: 1,
-                name: "Layer 1".into(),
-                visible: true,
-                opacity: 1.0,
-                locked: false,
-                painted: false,
-            }],
+            layers: vec![ModelLayer::new(1, "Layer 1".into(), false)],
             active: 1,
+            on_mask: false,
             next: 2,
         }
+    }
+
+    fn with_mask(&self, i: usize, id: LayerId) -> Result<usize, LayerError> {
+        self.layers[i].mask.ok_or(LayerError::NoMask(id))?;
+        Ok(i)
     }
 
     fn find(&self, id: LayerId) -> Result<usize, LayerError> {
@@ -152,18 +188,11 @@ fn step(
                 let id = m.next;
                 m.next += 1;
                 let name = m.free_name();
-                m.layers.insert(
-                    i,
-                    ModelLayer {
-                        id,
-                        name,
-                        visible: true,
-                        opacity: 1.0,
-                        locked: false,
-                        painted: false,
-                    },
-                );
+                // Clipped when the layer above is (reference C4, C5).
+                let clipped = m.layers.get(i).is_some_and(|l| l.clipped);
+                m.layers.insert(i, ModelLayer::new(id, name, clipped));
                 m.active = id;
+                m.on_mask = false;
             });
             (ok(d.add_layer(placement(kind, anchor))), model)
         }
@@ -176,6 +205,7 @@ fn step(
                 m.layers.remove(i);
                 if m.active == id.get() {
                     m.active = m.layers[i.saturating_sub(1)].id;
+                    m.on_mask = false;
                 }
                 Ok(())
             });
@@ -204,7 +234,10 @@ fn step(
         }
         Op::Activate(i) => {
             let id = pick(d, removed, i);
-            let model = m.find(id).map(|_| m.active = id.get());
+            let model = m.find(id).map(|_| {
+                m.active = id.get();
+                m.on_mask = false;
+            });
             (d.set_active_layer(id), model)
         }
         Op::Show(i, v) => {
@@ -246,6 +279,74 @@ fn step(
             let model = m.unlocked(id).map(|i| m.layers[i].painted = false);
             (ok(d.clear_layer(id)), model)
         }
+        Op::AddMask(i) => {
+            let id = pick(d, removed, i);
+            let model = m.unlocked(id).and_then(|i| {
+                if m.layers[i].mask.is_some() {
+                    return Err(LayerError::HasMask(id));
+                }
+                m.layers[i].mask = Some((true, false));
+                if m.active == id.get() {
+                    m.on_mask = true;
+                }
+                Ok(())
+            });
+            (ok(d.add_mask(id)), model)
+        }
+        Op::RemoveMask(i) => {
+            let id = pick(d, removed, i);
+            let model = m.unlocked(id).and_then(|i| m.with_mask(i, id)).map(|i| {
+                m.layers[i].mask = None;
+                if m.active == id.get() {
+                    m.on_mask = false;
+                }
+            });
+            (ok(d.remove_mask(id)), model)
+        }
+        Op::MaskEnabled(i, v) => {
+            let id = pick(d, removed, i);
+            // Allowed on locked layers (reference A6).
+            let model = m
+                .find(id)
+                .and_then(|i| m.with_mask(i, id))
+                .map(|i| m.layers[i].mask.as_mut().unwrap().0 = v);
+            (ok(d.set_mask_enabled(id, v)), model)
+        }
+        Op::PaintMask(i) => {
+            let id = pick(d, removed, i);
+            let model = m
+                .unlocked(id)
+                .and_then(|i| m.with_mask(i, id))
+                .map(|i| m.layers[i].mask.as_mut().unwrap().1 = true);
+            let doc = d.modify_mask(id, &origin_tile(), |_, t| *t.get_mut(1, 1) = 0);
+            (ok(doc), model)
+        }
+        Op::Clip(i, v) => {
+            let id = pick(d, removed, i);
+            let model = m.unlocked(id).map(|i| m.layers[i].clipped = v);
+            (ok(d.set_clipped(id, v)), model)
+        }
+        Op::AlphaLock(i, v) => {
+            let id = pick(d, removed, i);
+            let model = m.unlocked(id).map(|i| m.layers[i].alpha_locked = v);
+            (d.set_alpha_locked(id, v), model)
+        }
+        Op::Target(mask) => {
+            let active = d.active_layer();
+            let model = if !mask {
+                m.on_mask = false;
+                Ok(())
+            } else {
+                let i = m.find(active).unwrap();
+                m.with_mask(i, active).map(|_| m.on_mask = true)
+            };
+            let part = if mask {
+                LayerPart::Mask
+            } else {
+                LayerPart::Pixels
+            };
+            (d.set_active_part(part), model)
+        }
     }
 }
 
@@ -258,6 +359,9 @@ fn snapshot(d: &Document) -> Vec<ModelLayer> {
             opacity: l.opacity(),
             locked: l.locked(),
             painted: l.pixels().tile_count() > 0,
+            alpha_locked: l.alpha_locked(),
+            clipped: l.clipped(),
+            mask: l.mask().map(|m| (m.enabled(), m.tile_count() > 0)),
         })
         .collect()
 }
@@ -288,6 +392,7 @@ proptest! {
             d.check_invariants();
             prop_assert_eq!(snapshot(&d), m.layers.clone(), "after {:?}", op);
             prop_assert_eq!(d.active_layer().get(), m.active);
+            prop_assert_eq!(d.active_part() == LayerPart::Mask, m.on_mask);
             // L2: a new id was never used before.
             for l in d.layers() {
                 if !ever.contains(&l.id().get()) {

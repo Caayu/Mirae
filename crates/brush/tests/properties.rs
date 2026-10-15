@@ -215,3 +215,44 @@ proptest! {
         }
     }
 }
+
+proptest! {
+    #![proptest_config(config())]
+
+    /// A1 / A2 (phase 4D): with alpha preserved, painting never changes a
+    /// pixel's alpha and never creates pixels where there were none,
+    /// whatever the colour, opacity, flow and position of the stroke.
+    #[test]
+    fn preserved_alpha_never_changes_alpha(
+        pixels in prop::collection::vec(any::<[u8; 4]>(), 64),
+        color in any::<[u8; 3]>(),
+        opacity in 0.0f32..=1.0,
+        flow in 0.01f32..=1.0,
+        x in 0.0f32..8.0,
+        y in 0.0f32..8.0,
+    ) {
+        use tela_brush::{DabSink, PixelAlpha, StampContext, StrokeBuffer};
+        use tela_canvas::{Tile, TileCoord};
+        use tela_color::Rgba;
+        let [r, g, b] = color.map(|v| f32::from(v) / 255.0);
+        let mut s = StrokeBuffer::new(
+            Rgba::new(r, g, b, 1.0),
+            StampContext { anti_aliasing: true, ..Default::default() },
+        );
+        s.dab(&Dab { center: Vec2::new(x, y), radius: 3.0, opacity, flow, ..Dab::default() });
+        let mut tile: Tile<[u8; 4]> = Tile::new();
+        for (i, p) in pixels.iter().enumerate() {
+            // Valid premultiplied input: colour never above alpha.
+            *tile.get_mut(i as u32 % 8, i as u32 / 8) = [p[0].min(p[3]), p[1].min(p[3]), p[2].min(p[3]), p[3]];
+        }
+        let before = tile.clone();
+        s.commit_tile(TileCoord { x: 0, y: 0 }, &mut tile, PixelAlpha::Preserved);
+        for (a, b) in tile.pixels().iter().zip(before.pixels()) {
+            prop_assert_eq!(a[3], b[3], "A1");
+            if b[3] == 0 {
+                prop_assert_eq!(*a, [0; 4], "A2");
+            }
+            prop_assert!(a[0] <= a[3] && a[1] <= a[3] && a[2] <= a[3]);
+        }
+    }
+}
