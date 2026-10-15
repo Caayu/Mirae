@@ -6,7 +6,9 @@ use tela_brush::dynamics::{DynamicsSource, InputCaps};
 use tela_brush::{BrushEngine, BrushInput, BrushPreset};
 use tela_canvas::{DirtyTiles, TileCoord, ViewTransform};
 use tela_color::PremulRgba;
-use tela_document::{ComposeScratch, Document, HistoryAction, LayerId, Overlay, Placement};
+use tela_document::{
+    BlendMode, ComposeScratch, Document, HistoryAction, LayerId, Overlay, Placement,
+};
 use tela_renderer::{Frame, Renderer};
 use tela_tablet::{DeviceKind, Phase, TabletEvent, TabletSample, TimestampNormalizer, clock};
 use winit::application::ApplicationHandler;
@@ -443,6 +445,10 @@ impl App {
                 None => Ok(DirtyTiles::new()),
             },
             LayerAction::SetOpacity(o) => doc.set_opacity(active, o),
+            LayerAction::SetBlendMode(i) => match BlendMode::ALL.get(i) {
+                Some(&mode) => doc.set_blend_mode(active, mode),
+                None => return,
+            },
             LayerAction::Select(_) => doc.set_active_layer(target).map(|()| DirtyTiles::new()),
             LayerAction::SetVisible(_, v) => doc.set_visible(target, v),
             LayerAction::SetLocked(_, v) => doc.set_locked(target, v).map(|()| DirtyTiles::new()),
@@ -512,6 +518,10 @@ impl App {
                 visible: l.visible(),
                 locked: l.locked(),
                 opacity: l.opacity(),
+                blend: BlendMode::ALL
+                    .iter()
+                    .position(|&m| m == l.blend_mode())
+                    .unwrap_or(0),
                 active: l.id() == active,
             })
             .collect();
@@ -529,7 +539,7 @@ impl App {
                 .show(ui, |ui| {
                     history_command = tela_ui::history_bar(ui, &history);
                     ui.separator();
-                    layer_action = tela_ui::layer_panel(ui, &rows);
+                    layer_action = tela_ui::layer_panel(ui, &rows, &BLEND_LABELS);
                 });
             let r = egui::Panel::left("brush-panel")
                 .default_size(290.0)
@@ -606,6 +616,28 @@ impl App {
         }
     }
 }
+
+/// Blend-mode labels in `BlendMode::ALL` order.
+const BLEND_LABELS: [&str; 17] = [
+    "Normal",
+    "Multiply",
+    "Screen",
+    "Overlay",
+    "Darken",
+    "Lighten",
+    "Color Dodge",
+    "Color Burn",
+    "Hard Light",
+    "Soft Light",
+    "Difference",
+    "Exclusion",
+    "Hue",
+    "Saturation",
+    "Color",
+    "Luminosity",
+    "Add",
+];
+const _: () = assert!(BLEND_LABELS.len() == BlendMode::ALL.len());
 
 /// Button tooltip text for a history step.
 fn history_label(action: HistoryAction) -> &'static str {

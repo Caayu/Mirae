@@ -1,5 +1,5 @@
 //! The layer panel: the stack (top first), visibility and lock per layer,
-//! and new/delete/move/opacity for the active layer. It never sees the
+//! and new/delete/move/blend mode/opacity for the active layer. It never sees the
 //! document: the app lends one [`LayerRow`] per layer and applies the
 //! [`LayerAction`] the panel returns. Controls the document would refuse
 //! are greyed out (as the reference application does); the document still
@@ -17,6 +17,9 @@ pub struct LayerRow<'a> {
     pub locked: bool,
     /// `0..=1`.
     pub opacity: f32,
+    /// Index into the blend-mode names given to [`layer_panel`]; 0 is the
+    /// default mode.
+    pub blend: usize,
     pub active: bool,
 }
 
@@ -33,11 +36,14 @@ pub enum LayerAction {
     SetLocked(u32, bool),
     /// `0..=1`.
     SetOpacity(f32),
+    /// Index into the blend-mode names.
+    SetBlendMode(usize),
 }
 
 /// Draws the panel for `rows` (bottom to top, as the document stores
-/// them). Returns the action requested, if any.
-pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow]) -> Option<LayerAction> {
+/// them); `blend_names` labels the blend modes the app offers. Returns the
+/// action requested, if any.
+pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow], blend_names: &[&str]) -> Option<LayerAction> {
     let mut action = None;
     let active = rows.iter().find(|r| r.active);
     let unlocked = active.is_some_and(|r| !r.locked);
@@ -70,13 +76,24 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow]) -> Option<LayerAction> {
     });
 
     if let Some(row) = active {
-        // Whole percent, like the reference; disabled while the layer is
-        // locked or hidden.
+        // Blend mode and whole-percent opacity, like the reference; both
+        // disabled while the layer is locked or hidden.
+        let editable = !row.locked && row.visible;
+        ui.add_enabled_ui(editable, |ui| {
+            egui::ComboBox::from_id_salt("blend-mode")
+                .selected_text(blend_names.get(row.blend).copied().unwrap_or("?"))
+                .show_ui(ui, |ui| {
+                    for (i, name) in blend_names.iter().enumerate() {
+                        if ui.selectable_label(i == row.blend, *name).clicked() && i != row.blend {
+                            action = Some(LayerAction::SetBlendMode(i));
+                        }
+                    }
+                });
+        });
         let mut percent = (row.opacity * 100.0).round() as i32;
         let slider = Slider::new(&mut percent, 0..=100)
             .suffix(" %")
             .text("opacity");
-        let editable = !row.locked && row.visible;
         if ui.add_enabled(editable, slider).changed() {
             action = Some(LayerAction::SetOpacity(percent as f32 / 100.0));
         }
@@ -101,7 +118,11 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow]) -> Option<LayerAction> {
                 {
                     action = Some(LayerAction::SetLocked(row.key, !row.locked));
                 }
-                let label = format!("{}  {:.0} %", row.name, row.opacity * 100.0);
+                let mut label = format!("{}  {:.0} %", row.name, row.opacity * 100.0);
+                if row.blend != 0 {
+                    label.push_str("  ");
+                    label.push_str(blend_names.get(row.blend).copied().unwrap_or("?"));
+                }
                 if ui.selectable_label(row.active, label).clicked() {
                     action = Some(LayerAction::Select(row.key));
                 }
