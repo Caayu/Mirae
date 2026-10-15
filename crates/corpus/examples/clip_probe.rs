@@ -544,6 +544,35 @@ fn fit(with_paper: &str, without_paper: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Prepared content for the UI-driven probes (alpha lock, mask painting):
+/// an 800 × 600 document. "alpha" holds `BASE_RGB` bands over the top half
+/// with alpha 255, 128, 0 and a left-to-right ramp 0..255 (x 600..800);
+/// "solid" holds opaque `BLUE` over the bottom half.
+fn ui_layers() -> Vec<PsdLayer> {
+    let alpha = |x: u32| match x {
+        0..200 => 255,
+        200..400 => 128,
+        400..600 => 0,
+        _ => ((x - 600) * 255 / 199) as u8,
+    };
+    let [r, g, b] = BASE_RGB;
+    let top = (0..800 * 300).map(|i| [r, g, b, alpha(i % 800)]).collect();
+    let layer = |name: &str, top: u32, rgba| PsdLayer {
+        name: name.into(),
+        mode: *b"norm",
+        opacity: 255,
+        clipped: false,
+        hidden: false,
+        rect: (0, top, 800, 300),
+        rgba,
+        mask: None,
+    };
+    vec![
+        layer("solid", 300, vec![BLUE; 800 * 300]),
+        layer("alpha", 0, top),
+    ]
+}
+
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
@@ -551,11 +580,12 @@ fn main() -> std::io::Result<()> {
             let (w, h) = size();
             write_psd(Path::new(&args[2]), w, h, &psd_layers())
         }
+        Some("ui") if args.len() == 3 => write_psd(Path::new(&args[2]), 800, 600, &ui_layers()),
         Some("read") if args.len() == 4 => read_png(&args[2], &args[3]),
         Some("fit") if args.len() == 4 => fit(&args[2], &args[3]),
         _ => {
             eprintln!(
-                "usage: clip_probe psd <out.psd> | read <in.png> <out.csv> | fit <with_paper.csv> <without_paper.csv>"
+                "usage: clip_probe psd <out.psd> | ui <out.psd> | read <in.png> <out.csv> | fit <with_paper.csv> <without_paper.csv>"
             );
             std::process::exit(2);
         }
