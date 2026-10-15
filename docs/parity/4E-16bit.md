@@ -175,8 +175,8 @@ Colour-dependent checks remain test-only (the app paints black; D-4D-5).
 | # | Difference | Kind | Status |
 |---|---|---|---|
 | D-4E-1 | Tela has 16-bit documents and depth conversion; the reference has neither (E1, E2). | Feature (beyond the reference) | Accepted — 8-bit stays the default, so new documents behave like the reference's |
-| D-4E-2 | 16 → 8: Tela rounds to the nearest level; the reference's import of a 16-bit image drops the low byte (E5). | Behavioural | Open for 4F (16-bit import): decide the import rounding there with this record |
-| D-4E-3 | The reference exports 8-bit only (E3); Tela has no export yet. | Coverage | Open (4F) |
+| D-4E-2 | 16 → 8: Tela rounds to the nearest level; the reference's import of a 16-bit image drops the low byte (E5). | Behavioural | Decided in 4F: import rounds (8-bit documents) or keeps 16 bits; a deliberate quality difference, D-4F-3 ([4F](4F-file-workflow.md#differences)) |
+| D-4E-3 | The reference exports 8-bit only (E3); Tela has no export yet. | Coverage | Resolved in 4F: 8-bit PNG export by default (equal to the reference's with the paper), 16-bit on request ([4F](4F-file-workflow.md)) |
 | D-4E-4 | Masks are 8-bit at every depth (D13); faint repeated mask strokes were not measured. | Quality | Open — measure before deciding on 16-bit masks |
 | D-4E-5 | 8-bit accumulation compared qualitatively only: the reference shows a plateau at 254 and a hard tail edge after 20 airbrush passes (E9), Tela's 8-bit documents a hard edge and a plateau after 60 soft strokes; the brushes differ, so the numbers are not comparable. The reference's repeated 1 % merges (E8) have no Tela equivalent (no merge down, D-4C-3). | Coverage | Open |
 | D-4E-6 | The reference's gradient tool dithers (E10); Tela has no gradient tool and no dithering. | Feature | Open (gradient tool phase) |

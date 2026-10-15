@@ -3,6 +3,54 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 4F — document I/O (the product is now named Mirae)
+
+### Added
+- `png_probe` (PNG test images of our own, reads the reference's exports
+  against models) and `docs/parity/4F-file-workflow.md` part 1: the
+  reference's file workflow, prompts, shortcuts, PNG export and import
+  observed before implementing (9f21130).
+- `Document::revision` (save point from history serials; visibility
+  counts, selection does not), `Document::from_parts` with
+  `DocumentParts`/`LayerParts`/`MaskParts`/`PartsError` (validated
+  construction), `next_layer_id`, `add_layer_with_pixels`
+  (`HistoryAction::ImportLayer`, one step), `LayerPixels::from_surface`,
+  `LayerMask::reveal_tile`, `paper_backdrop`,
+  `ComposeScratch::premultiplied`, `BlendMode::from_name`,
+  `LayerError::TileOutOfRange`, `MAX_TILE_COORD` (7ef2b93).
+- New crate `tela-io`: the `.mirae` v1 format (ZIP, JSON manifest, raw
+  tiles), deterministic atomic save, hostile-input loading with explicit
+  `Limits`, `IoError` and `Warning`, PNG export (8/16-bit, paper or
+  transparent) and import (any colour type, 16 bits kept or rounded,
+  centred); tests for round trips, corruption, properties, PNG fidelity
+  (c9baa3a). v1 compatibility fixtures, never regenerated (17df807).
+  `io_bench` (2965e01). `png_parity` against the reference's exports and
+  the format specification `docs/formats/mirae-v1.md` (5645f7b).
+- App: Open / Save / Save As / Import PNG / Export PNG in the document
+  bar, Ctrl+N/O/S, Ctrl+Shift+S and Shift+Alt+S, native file dialogs
+  (`rfd`), drag-and-drop of `.mirae` and `.png`, `Mirae — <name>*` title,
+  Save / Don't Save / Cancel before anything replaces or closes a
+  modified document, error notices; egui `prompt` module in `tela-ui`
+  (6484d27).
+- ADR 0019 (format) and 0020 (crate, dependencies, workflow); invariants
+  L10, H12, IO1–IO10.
+
+### Changed
+- Window title and `inject_pen`'s default target are "Mirae".
+- The composition's paper-backdrop decision is a shared function (output
+  unchanged).
+
+### Decided
+- Deflate level 2 by default (measured). 16-bit PNG import keeps 16 bits
+  or rounds to the nearest level (the reference truncates; D-4F-3).
+  Newer format versions and unknown blend modes or depths are errors.
+
+### Parity
+- 4F gate recorded: PNG export with the paper equals the reference's own
+  export pixel for pixel at both depths; opaque imports and translucent
+  imports in 16-bit documents equal too; workflow compared in the running
+  app. Remaining differences D-4F-1 … D-4F-11.
+
 ## Phase 4E — 16-bit storage
 
 ### Added

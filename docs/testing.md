@@ -43,6 +43,12 @@ clock (`tablet`), curve-editor geometry (`ui`), tools selection (`app`).
 | `renderer/tests/display_quality.rs` | Headless GPU: seams, 100% identity, magnified texels. |
 | `corpus/tests/golden.rs` | Golden sheets (below). |
 | `app/tests/crate_boundaries.rs` | Crate dependency boundaries. |
+| `io/tests/round_trip.rs` | `.mirae` save → load bit-exact at both depths, determinism, compression levels, atomic save on disk, the identification bytes. |
+| `io/tests/corrupt.rs` | Malformed, truncated, flipped, hostile and oversized files: each a specific `IoError`, never a panic. |
+| `io/tests/fixture.rs` | The v1 compatibility fixtures (never regenerated) load as pinned. |
+| `io/tests/png.rs` | PNG export against the compositor, import precision for every (colour, alpha) pair, 16-bit images, centring, colour types, interlaced images, limits. |
+| `io/tests/png_parity.rs` | PNG import/export against the reference's own exports (below). |
+| `io/tests/properties.rs` | Random documents round-trip exactly; random bytes and random damage never panic or load as a different document. |
 
 ### Invariant tests
 
@@ -87,6 +93,12 @@ within 2/255 (method in docs/parity/4D-masks-clipping-alpha-lock.md;
 the candidate clipping models). `mask_clip_properties.rs` property-tests
 mask and clipping composition over random stacks.
 
+`crates/io/tests/png_parity.rs` (phase 4F) imports the `png_probe` test
+images (`crates/io/tests/reference/`) into a 1600 × 1200 document,
+exports, and compares every pixel with the reference's exports of the
+same steps (`docs/parity/4F/csp_*.png`; method in
+docs/parity/4F-file-workflow.md).
+
 Both parity tests also run in **16-bit documents** (phase 4E): the probe
 colours stored at 16-bit precision against the reference's 8-bit
 measurements (the reference has no 16-bit documents), within 2/255.
@@ -118,6 +130,7 @@ cargo run --release -p tela-corpus --example blend_bench        # composition ms
 cargo run --release -p tela-corpus --example blend_fit          # sRGB-encoded vs linear blending against the reference data
 cargo run --release -p tela-corpus --example mask_clip_bench    # masks, clipping groups, alpha lock: compose, preview, commit, mask history
 cargo run --release -p tela-corpus --example depth_bench        # 8 vs 16-bit: memory, composition, strokes, history, conversion
+cargo run --release -p tela-io --example io_bench                # .mirae save/load: time, size, MB/s, peak memory, deflate levels
 cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit banding table
 cargo run --release -p tela-brush --example stabilizer_bench     # phase 2 stabilizer table
 cargo run --release -p tela-brush --example interpolation_bench  # phase 2 interpolator table
@@ -169,7 +182,7 @@ Bash:
 ```sh
 cargo build --release -p tela-app -p tela-tablet --examples
 target/release/tela.exe &          # start the app, wait for its window
-TELA_INJECT_REGION="0.26,0.02,0.88,0.98" target/release/examples/inject_pen.exe "Tela" all
+TELA_INJECT_REGION="0.26,0.02,0.88,0.98" target/release/examples/inject_pen.exe "Mirae" all
 ```
 
 PowerShell:
@@ -178,7 +191,7 @@ PowerShell:
 cargo build --release -p tela-app -p tela-tablet --examples
 $app = Start-Process target\release\tela.exe -PassThru; Start-Sleep 3
 $env:TELA_INJECT_REGION = "0.26,0.02,0.88,0.98"
-target\release\examples\inject_pen.exe "Tela" all
+target\release\examples\inject_pen.exe "Mirae" all
 Stop-Process -Id $app.Id
 ```
 

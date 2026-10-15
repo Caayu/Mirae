@@ -23,7 +23,11 @@ worth a dependency today.
 | `RendererError` | renderer | `Surface`, `Adapter`, `Device`, `UnsupportedSurface`, `DocumentTooLarge { width, height, max }` | `Renderer::new`, `set_document_size` (`new_headless` returns `None` without a GPU, so GPU tests skip) |
 | `InkError` | tablet (Windows) | `UnsupportedWindow`, `Subclass` | `InkBackend::attach` |
 | `LayerError` | document | `NotFound(LayerId)`, `LastLayer`, `Locked(LayerId)`, `Hidden(LayerId)`, `InvalidOpacity`, `IdsExhausted` | Every `Document` layer operation; refused operations change nothing. The app logs them (a UI row may name a layer removed a frame earlier). |
+| `PartsError` | document | `InvalidSize`, `InvalidPaper`, `NoLayers`, `ZeroId`, `DuplicateId`, `StaleNextId`, `ActiveNotFound`, `MaskTargetWithoutMask`, `InvalidOpacity`, `WrongDepth`, `TileOutOfRange`, `MaskTileRevealsAll` | `Document::from_parts`: the first broken invariant; nothing is repaired |
+| `IoError` | io | `Filesystem`, `NotADocument`, `MalformedArchive`, `UnsupportedVersion`, `InvalidManifest` (names the field), `InvalidDocument(PartsError)`, `CorruptTile`, `LimitExceeded`, `Unsupported`, `InvalidImage`, `Internal` | Loading, saving, PNG import/export. A failed load builds nothing, a failed save keeps the old file. The app shows it as a notice. |
 | `std::io::Error` | corpus | — | PNG load/save |
+
+Warnings (`tela_io::Warning`: unknown fields and entries, colour space ignored, 16 → 8 reduction, first frame only) come back with a successful load or import; the app logs them and shows them in the status line.
 
 ## Repair instead of failure
 
@@ -38,6 +42,12 @@ yields a usable preset plus `warnings: Vec<String>`:
 - more than `BrushProperty::MAX_EFFECTORS` effectors are truncated;
 - an invalid embedded tip image falls back to a round tip;
 - stroke overrides of an unknown kind load as "no override" (`lenient`).
+
+Documents are the opposite on purpose (ADR 0019): a `.mirae` file that
+is structurally wrong, from a newer version, or that names a blend mode
+or depth Mirae does not know is an **error**, never repaired or mapped to
+a default, because a silent repair could change how a work looks. Only
+fields and entries that cannot affect it are ignored, with a warning.
 
 Device input is normalized defensively (`ink_pressure` clamps, tilt is
 clamped to ±90°, rotation wraps; timestamps are forced strictly increasing;

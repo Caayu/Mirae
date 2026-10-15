@@ -1,15 +1,15 @@
 # Status
 
-Factual state of the project at the end of **phase 4E** (16-bit
-storage). Update this file at the end of every subphase.
+Factual state of the project at the end of **phase 4F** (document
+I/O). The product is named **Mirae** (crates keep their `tela-` names). Update this file at the end of every subphase.
 
 ## Summary
 
 | | |
 |---|---|
-| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A, 4B, 4C, 4D and 4E complete** (parity gates recorded); 4F–4G await approval |
+| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A, 4B, 4C, 4D, 4E and 4F complete** (parity gates recorded); 4G awaits approval |
 | Parity | Tracked in [PARITY.md](PARITY.md); nothing compared with the reference before phase 4 |
-| Tests | **324** passing, 0 failing (4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Tests | **386** passing, 0 failing (4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -36,6 +36,7 @@ storage). Update this file at the end of every subphase.
 | Blend modes (4C) | Normal + 16 modes (multiply, screen, overlay, darken, lighten, color dodge/burn, hard/soft light, difference, exclusion, hue, saturation, color, luminosity, add); W3C formulas on sRGB-encoded values, paper as backdrop for blend tiles (ADR 0016); matches the reference's measured results within 1–2/255; selector in the layer panel; undoable |
 | Masks, clipping, alpha lock (4D) | One mask per layer (sparse 8-bit, new mask reveals all; paint reveals by stroke alpha, erase hides; enable/disable; delete), clipping groups (isolated, source-atop with the blend result, base opacity/mode/mask apply to the group; new layers inside a group are clipped), lock transparent pixels (source-atop paint, eraser unaffected); all measured against the reference and matching within 2/255 (ADR 0017); panel controls; undoable |
 | Undo/redo (4B) | Linear, swap-based history inside `Document` (ADR 0015): strokes, clear, create/delete/reorder layers, lock, rename, blend mode, opacity (consecutive edits merge); selection and visibility not recorded; add/remove undos restore the active layer; ignored during a stroke; 200 steps / 1 GiB by default; Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Undo/Redo buttons |
+| Document I/O (4F) | `.mirae` documents (ZIP + JSON manifest + raw tiles; ADR 0019): save (atomic, deterministic), open (validated; hostile input refused with named errors), Save As, PNG export (8/16-bit, paper or transparent) and import (a centred layer, 16 bits kept or rounded); Ctrl+N/O/S, Ctrl+Shift+S, Shift+Alt+S; native dialogs; drag-and-drop; title `Mirae — name*`; Save / Don't Save / Cancel before replacing or closing a modified document; undo back to the saved state is clean |
 | 16-bit storage (4E) | Per-document depth (8 or 16 bits per channel; 8-bit default), premultiplied sRGB-encoded `u16` (ADR 0018); exact 8 → 16 (composite unchanged), nearest-level 16 → 8, conversion as one undoable step; masks 8-bit; display 8-bit; New 8-bit / New 16-bit / To 8/16-bit in the panel; banding measured (16-bit within 0.75 level of exact where 8-bit is off by 25–136 levels) |
 
 ## Hardware validation
@@ -52,8 +53,10 @@ storage). Update this file at the end of every subphase.
 See [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) for the full list with
 priorities. Most relevant: no physical tablet validation; 8-bit default
 storage and 8-bit masks (16-bit documents optional), 8-bit display;
-document size bounded by GPU texture size; undo history uncompressed in memory; no
-document I/O; preset edits not persisted; UI unpolished.
+document size bounded by GPU texture size; undo history uncompressed in memory;
+saving and loading synchronous (no autosave, recent files or background
+save); transparent export refused for non-Normal stack blending (D-4C-1);
+preset edits not persisted; UI unpolished.
 
 ## Phase 3.5 outcome
 
@@ -62,6 +65,21 @@ Ink API without raw handles, smaller brush API, preset hardening, domain
 rule moved out of app/UI, golden hygiene, property tests, enforced crate
 boundaries, crate/API docs, architecture docs, ADRs, handoff docs, check
 script. Details: [CHANGELOG.md](../CHANGELOG.md).
+
+## Phase 4F outcome
+
+Document I/O with the reference's file workflow and PNG fidelity observed
+first (a corrupt PNG crashed it), parity gate recorded
+([parity/4F-file-workflow.md](parity/4F-file-workflow.md)): the `.mirae`
+v1 format (ADR 0019, [formats/mirae-v1.md](formats/mirae-v1.md)) and the
+`tela-io` crate (ADR 0020); bit-exact save/load at both depths, atomic
+save, explicit limits, strict versioning, corruption and property tests,
+v1 fixtures as a compatibility contract; PNG export equal to the
+reference's with the paper; PNG import that keeps 16 bits or rounds
+(deliberately unlike the reference's truncation); the desktop workflow
+with native dialogs, drag-and-drop, a revision-based save point and the
+unsaved-changes prompt. Save/load measured (`io_bench`): 640 MiB of 8-bit
+pixels in 1.9 s / 0.7 s with 2–3 MiB of extra memory.
 
 ## Phase 4E outcome
 
@@ -108,7 +126,5 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-4F (document I/O) — **only after the owner explicitly approves it**; its
-reference behaviours (file workflow, PNG fidelity, 16-bit import
-rounding, D-4E-2) must be observed before implementing. See
-[phase4/PLAN.md](phase4/PLAN.md).
+4G (integration, benchmarks, hardening) — **only after the owner
+explicitly approves it**. See [phase4/PLAN.md](phase4/PLAN.md).

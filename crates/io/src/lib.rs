@@ -1,7 +1,7 @@
 //! Document files and image exchange.
 //!
 //! **Responsibility:** the `.mirae` document format (v1: a ZIP container
-//! with a JSON manifest and raw tiles; [`format`], docs/formats/mirae-v1.md,
+//! with a JSON manifest and raw tiles; [`format`](mod@format), docs/formats/mirae-v1.md,
 //! ADR 0019), saving it atomically and loading it with explicit
 //! [`Limits`], PNG export of the composite and PNG import as a new layer's
 //! pixels. **Does not:** know about the UI, dialogs or the app's state; it

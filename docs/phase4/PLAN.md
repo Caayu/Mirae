@@ -10,7 +10,8 @@ Approved by the owner on 2026-10-14 (sequence 4A → 4B → 4C → 4D → 4E →
 | 4C | **Complete** (parity gate: [parity/4C-blend.md](../parity/4C-blend.md); ADR 0016; merge down deferred) |
 | 4D | **Complete** (parity gate: [parity/4D-masks-clipping-alpha-lock.md](../parity/4D-masks-clipping-alpha-lock.md); ADR 0017) |
 | 4E | **Complete** (parity gate: [parity/4E-16bit.md](../parity/4E-16bit.md); ADR 0018) |
-| 4F–4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
+| 4F | **Complete** (parity gate: [parity/4F-file-workflow.md](../parity/4F-file-workflow.md); ADR 0019, 0020) |
+| 4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
 starts**, and each ends with a parity gate ([PARITY.md](../PARITY.md)).
 
 ## Rules for the whole phase
@@ -206,6 +207,20 @@ depth conversion compared with the reference.
 
 ## 4F — Document I/O
 
+**As built** (ADR 0019, 0020; format docs/formats/mirae-v1.md): the
+reference's file workflow and PNG fidelity were observed first (parity
+4F, F1–F20). The product is now named **Mirae**: documents are `.mirae`
+files; crates keep their `tela-` names. Two points of this plan changed:
+**unknown values are errors, not lenient** (a newer version is refused
+whole; an unknown blend mode or depth would change the picture), and
+the unsaved-changes prompt is an **egui modal** (native message boxes
+never appear under winit's handler). Also built: `Document::revision`
+(save point; undo to the saved state is clean), `from_parts`,
+`add_layer_with_pixels`, PNG export at 8/16 bits with or without paper
+(transparent refused where D-4C-1 applies), PNG import that keeps 16 bits
+or rounds (D-4F-3), explicit limits, v1 fixtures, `io_bench` (deflate
+level 2 chosen). Original plan text follows.
+
 New crate `tela-io` (document, canvas, color, serde, serde_json, png,
 zip); `Document::from_parts` validates every invariant; zip container +
 JSON manifest + per-tile entries; atomic save; strict structural errors,
@@ -241,10 +256,10 @@ real-app scenarios; documentation and phase report; final parity summary.
 | D13 | 8-bit masks | Approved for this phase |
 | D14 | `convert_depth` as a heavy undo step | Approved; built in 4E (costed at the larger depth) |
 | D15 | Mask painting/erasing/pressure; eraser with alpha lock | Determined by observation (parity 4D M2–M5, A3): stroke alpha reveals, eraser hides, colour ignored; the eraser ignores alpha lock; pressure not observable on this machine (D-4D-1) |
-| D16 | File dialogs | Fixed path/drag-and-drop during development; full desktop workflow in the 4F DoD; dialog crate only in `app` |
-| D17 | Corrupt tile on load is an error | Approved |
-| D18 | Save off-canvas pixels in v1 | Approved |
-| D19 | zip container; presets not stored in documents | Approved |
+| D16 | File dialogs | Built in 4F: native file dialogs (rfd, app only), drag-and-drop, egui unsaved-changes prompt (ADR 0020) |
+| D17 | Corrupt tile on load is an error | Approved; built (`IoError::CorruptTile`, checksums and sizes enforced) |
+| D18 | Save off-canvas pixels in v1 | Approved; built (negative and off-canvas tiles kept) |
+| D19 | zip container; presets not stored in documents | Approved; built (ADR 0019) |
 
 ## Largest risks
 

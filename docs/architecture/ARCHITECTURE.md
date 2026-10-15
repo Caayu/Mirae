@@ -29,13 +29,15 @@ paint/
                         textures, scatter, airbrush, stroke buffer)
       presets/*.json    built-in presets (embedded at build time)
     document/           layers and per-tile composition
+    io/                 .mirae documents (ZIP + JSON + raw tiles), PNG I/O
+      tests/fixtures/v1/ the v1 compatibility fixtures (never regenerated)
     renderer/           wgpu display texture, mips, overlay hook
     tablet/             input samples, Windows Ink backend, input clock
     ui/                 egui panel and curve editor
     corpus/             trajectories, golden sheets, benchmark (test support)
       golden/           golden reference PNGs
     app/                the `tela` binary: composition layer
-  docs/                 architecture, ADRs, phase reports, status
+  docs/                 architecture, ADRs, formats, phase reports, status
   scripts/check.ps1     local verification gate
 ```
 
@@ -47,11 +49,12 @@ paint/
 | `tela-canvas` | `TiledSurface<P>`, `Tile<P>`, `TileCoord`, `DirtyTiles`, `IRect`, `ViewTransform` | know about layers, colors or brushes |
 | `tela-brush` | the whole stroke engine up to the stroke mask | read devices, own documents, know UI/GPU |
 | `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay` | know brushes, input, view, GPU |
+| `tela-io` | the `.mirae` format (manifest DTOs, tile codec, limits, versioning), atomic save, hostile-input loading through `Document::from_parts`, PNG export of the composite and PNG import as layer pixels (ADR 0019, 0020) | know paths chosen by the user, dialogs, UI; change a document |
 | `tela-renderer` | GPU device/surface, display texture + mips, canvas shader, `FrameOverlay` | see the document |
 | `tela-tablet` | `TabletSample`/`TabletEvent`, unit normalization, input clock, Windows Ink | know brushes or canvas space |
 | `tela-ui` | brush panel, curve editor, egui plumbing | own authoritative state |
 | `tela-corpus` | standard trajectories, `render_sheet`, image diff, goldens, `stamp_bench` | ship in the app |
-| `tela-app` | window/event loop, wiring, application state | implement engine logic |
+| `tela-app` | window/event loop, wiring, application state, the file workflow (native dialogs, unsaved-changes prompt, drag-and-drop) | implement engine logic or file formats |
 
 The boundaries are enforced by a test (see crate-dependencies.md).
 
@@ -66,6 +69,7 @@ All authoritative state lives in `tela-app`'s `App`:
 | Presets being edited, selection, eraser mode | `App.tools` (`Tools`) | The UI edits the active preset in place, lent for one frame. |
 | User stroke settings, pressure curve, paint color | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
 | Stroke in progress | `BrushEngine` (its `StrokeBuffer`) | Separate from the layer until committed. |
+| Document file: path, saved revision, pending question, export choice | `App.file` (`FileState`) | Modified while `document.revision() != saved` (ADR 0020). |
 | GPU resources | `Renderer`, `UiLayer` | Derived; rebuilt from the document. |
 | Pen queue | `InkBackend` (`Rc<Shared>`) | Drained by the app each event. |
 
@@ -296,6 +300,31 @@ is monomorphized; `with_pixel_type!` picks the instance once per call).
 rounds to the nearest level. The composite handed to the renderer is
 RGBA8 at every depth: storage precision is not display precision.
 
+## 8b. Document files and images
+
+`tela-io` (ADR 0019, 0020; format in [../formats/mirae-v1.md](../formats/mirae-v1.md)):
+
+```
+save:  Document ──getters──► manifest DTOs + raw tiles ──► ZipWriter ──► temp file ──fsync──► rename
+load:  file ──end-record check──► ZipArchive ──► mimetype, manifest (fields, limits, version)
+       ──► every listed tile (exact size, CRC) ──► DocumentParts ──► Document::from_parts
+export: compose_tile_into (f32) per tile row ──► over paper | un-premultiply ──► PNG rows
+import: PNG rows ──► straight f64 ──► premultiply ──► quantize once at the document depth
+        ──► LayerPixels ──► Document::add_layer_with_pixels (one undo step)
+```
+
+Both directions stream one tile at a time (peak extra memory ~2–3 MiB).
+The loader never builds a document except through
+`Document::from_parts`, which checks every structural invariant; every
+input is treated as hostile (limits checked before data is read). The
+app (`app/files.rs`) owns paths, native file dialogs (rfd) and the
+unsaved-changes prompt (an egui modal): an action that replaces or closes
+a modified document waits in `FileState::asking` until it is answered,
+and a document replaces the current one only after it loaded completely.
+"Modified" is `document.revision() != file.saved`: the revision moves
+with every history step, undo, redo and visibility change and returns
+with undo/redo, so undoing to the saved state is clean again.
+
 ## 9. UI overlay
 
 `tela-ui::UiLayer` runs egui each frame and implements the renderer's
@@ -339,7 +368,7 @@ composition cost. See [golden-tests.md](../golden-tests.md) and
 - Flat layer stack (no groups; clipping groups only); masks without apply/selection; 17 blend modes; blending over a translucent backdrop without paper does not match the reference (D-4C-1, unreachable today).
 - Undo history is in memory only, uncompressed, 256 KiB (8-bit) or 512 KiB (16-bit) per changed tile per step (ADR 0015, 0018).
 - 8- or 16-bit layer storage per document, 8-bit masks, 8-bit display (no dithering, no HDR); display texture limited to the GPU's max texture size.
-- Document I/O does not exist.
+- Saving and loading are synchronous on the UI thread (a full 16-bit 4096² × 10 document saves in ~6 s); no autosave, recent files or background saving yet.
 - The UI is functional, not designed; preset edits are not persisted.
 
 See [TECHNICAL_DEBT.md](../TECHNICAL_DEBT.md) and [ROADMAP.md](../ROADMAP.md).

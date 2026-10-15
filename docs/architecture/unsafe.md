@@ -24,9 +24,10 @@ Policy:
 | `crates/tablet/examples/pointer_devices.rs` | example | Device enumeration | Documented |
 | `crates/corpus/examples/stamp_bench.rs` | benchmark | Counting `GlobalAlloc` forwarding to `System` | Documented |
 | `crates/corpus/examples/blend_bench.rs` | benchmark | Counting `GlobalAlloc` forwarding to `System` (same as stamp_bench) | Documented |
+| `crates/io/examples/io_bench.rs` | benchmark | Counting `GlobalAlloc` (live and peak bytes) forwarding to `System` | Documented |
 | `crates/brush/tests/allocation.rs` | test | Counting `GlobalAlloc` (thread-local counters, const-initialized) forwarding to `System` | Documented |
 
-No `unsafe` exists in color, canvas, brush, document, renderer, ui, corpus
+No `unsafe` exists in color, canvas, brush, document, io, renderer, ui, corpus
 (library) or app. The app reaches Windows Ink only through `InkBackend`.
 
 ## The Windows Ink backend in detail

@@ -12,8 +12,9 @@ conversation. Read it fully, then these, all **mandatory**:
 
 ## 1. Mission
 
-Build **Tela**, a professional raster illustration editor in Rust (wgpu +
-winit). The long-term goal is very high functional, behavioural,
+Build **Mirae** (formerly Tela: crates, binary `tela.exe` and some
+identifiers keep the old name), a professional raster illustration editor
+in Rust (wgpu + winit). The long-term goal is very high functional, behavioural,
 qualitative and performance **parity with Clip Studio Paint** for
 professional illustration workflows ([PARITY.md](PARITY.md)), developed
 strictly **clean-room** ([CLEAN_ROOM.md](CLEAN_ROOM.md)): the reference is
@@ -26,8 +27,9 @@ measured performance, documented decisions.
 Phase 4 (layers and document) is approved as a plan
 ([phase4/PLAN.md](phase4/PLAN.md)) and runs subphase by subphase:
 **4A** (layer API), **4B** (undo/redo), **4C** (blend modes), **4D**
-(masks, clipping, alpha lock) and **4E** (16-bit storage) are complete.
-Every later subphase (4F, 4G) needs the owner's explicit approval before
+(masks, clipping, alpha lock), **4E** (16-bit storage) and **4F**
+(document I/O: the `.mirae` format, PNG, the file workflow) are complete.
+The last subphase (4G) needs the owner's explicit approval before
 it starts, and every subphase ends with
 a **parity gate** recorded in [PARITY.md](PARITY.md). Facts:
 [STATUS.md](STATUS.md).
@@ -61,7 +63,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 324 tests, ~20 s after build
+cargo test --workspace --release        # 386 tests, ~20 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -76,6 +78,7 @@ powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # fmt, clippy, test
 ```sh
 cargo run --release -p tela-corpus --example stamp_bench        # ~1 min
 cargo run --release -p tela-corpus --example depth_bench        # 8 vs 16-bit, ~20 s
+cargo run --release -p tela-io --example io_bench              # .mirae save/load, ~40 s
 cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit banding, ~2 s
 cargo run --release -p tela-brush --example stabilizer_bench
 cargo run --release -p tela-brush --example interpolation_bench
@@ -91,10 +94,10 @@ synthetic Windows Ink pen (real WM_POINTER path):
 ```sh
 cargo build --release -p tela-app -p tela-tablet --examples
 target/release/tela.exe                                   # start it first
-TELA_INJECT_REGION="0.26,0.02,0.88,0.98" target/release/examples/inject_pen.exe "Tela" all
+TELA_INJECT_REGION="0.26,0.02,0.88,0.98" target/release/examples/inject_pen.exe "Mirae" all
 ```
 
-PowerShell: `$env:TELA_INJECT_REGION = "0.26,0.02,0.88,0.98"; target\release\examples\inject_pen.exe "Tela" all`
+PowerShell: `$env:TELA_INJECT_REGION = "0.26,0.02,0.88,0.98"; target\release\examples\inject_pen.exe "Mirae" all`
 (full sequence in docs/testing.md#hardware-tests).
 
 Patterns: `all`, `pressure`, `fast`, `detail`, `eraser`,
@@ -121,9 +124,10 @@ never sees the document; the UI owns nothing. Read
 ## 11. Crates
 
 `color` (premultiplied color), `canvas` (sparse tiles, view), `brush`
-(engine), `document` (layer stack with stable ids, composition), `renderer` (wgpu), `tablet`
-(input, Windows Ink), `ui` (egui), `corpus` (goldens, benchmark), `app`
-(binary `tela`).
+(engine), `document` (layer stack with stable ids, composition, history),
+`io` (`.mirae` files, PNG), `renderer` (wgpu), `tablet` (input, Windows
+Ink), `ui` (egui), `corpus` (goldens, benchmarks), `app` (binary `tela`;
+the file workflow).
 
 ## 12. Allowed dependencies
 
@@ -150,6 +154,14 @@ easily broken:
 9. One depth per document; pixel edits name their depth (`modify_tiles::<P>`,
    `with_pixel_type!`) and the other depth is refused; 8 → 16 is exact and
    composes bit-identically; masks stay 8-bit (ADR 0018, DP1–DP7).
+10. Files: save → load is bit-exact (IO1); documents are built only
+    through `Document::from_parts` (L10); every file is hostile input
+    (limits before data, never a panic); a newer format version is
+    refused; the v1 fixtures in `crates/io/tests/fixtures/v1/` are a
+    contract and are **never regenerated** (ADR 0019).
+11. "Modified" is `document.revision() != saved` (H12): every new
+    persistent change must either be a history step or bump the
+    revision (as visibility does).
 
 ## 14. Architectural decisions
 
@@ -160,7 +172,8 @@ canvas-space textures, bit-identical parallel stamping, egui isolation,
 golden corpus, time-instant airbrush, document layer model, swap-based
 undo, blend modes measured against the reference, masks/clipping/alpha lock
 measured against the reference (0014–0017), 16-bit storage per document
-with an 8-bit default (0018).
+with an 8-bit default (0018), the `.mirae` v1 format (0019), the I/O crate
+and file workflow (0020).
 
 ## 15. Completed features
 
@@ -174,16 +187,18 @@ summarized in the changelog).
 [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md): no physical tablet validation,
 8-bit default storage and 8-bit masks and display (16-bit documents
 optional), GPU texture size limit, undo history uncompressed in memory,
-no I/O, UI edits not persisted, goldens verified on one machine.
+UI edits not persisted, synchronous saving (no autosave), transparent
+export refused where D-4C-1 applies, goldens verified on one machine.
 
 ## 17. Risks
 
 - Real pens may behave differently from synthetic injection (pressure
   curves, batching, timestamps, tilt).
 - Golden tolerances vs. other CPUs/compilers are unverified.
-- 16-bit documents double pixel and history memory; the file format (4F)
-  must store the depth, and 16-bit import rounding differs from the
-  reference (parity D-4E-2).
+- 16-bit documents double pixel and history memory.
+- `.mirae` v1 is now a compatibility promise: any format change needs a
+  version decision (docs/formats/mirae-v1.md, ADR 0019) and must keep
+  the v1 fixtures loading.
 - The UI crate will grow; keep it free of authoritative state.
 
 ## 18. Hardware validated

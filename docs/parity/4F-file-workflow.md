@@ -98,3 +98,76 @@ itself is not inspected), PSD details beyond the export entries (F11).
   how far it gets is measured below. 16-bit PNGs are rounded or kept
   instead of truncated (F18), deliberately.
 - No malformed file may crash Mirae or lose the open document (F19–F20).
+
+## Part 2 — Mirae
+
+### Design derived from the observations (ADR 0019, 0020)
+
+| Obs. | Mirae 4F |
+|---|---|
+| F1 | A new document is clean; the title is `Mirae — <name>`, with `*` while modified ("Untitled" until saved). |
+| F2, F3 | Modified means `Document::revision() != saved`: steps, undo, redo and visibility changes count; selecting a layer or the edit target does not. Showing a hidden layer again stays modified, as in the reference. |
+| F4 | Deliberately different: undoing (or redoing) back to the saved state is unmodified again (the revision returns). |
+| F5, F6 | Ctrl+S saves in place, or asks with the native save dialog (name prefilled, `.mirae` filter, the last folder) when the document has no file yet. The title shows the file name without extension. |
+| F7, F10 | New, Open, a dropped `.mirae` and closing the window ask, when the document is modified, **Save** (default; Enter) / **Don't Save** / **Cancel** (Escape). A save that fails or is cancelled stops the action. Mirae has one document, so quitting asks once. |
+| F8, F9 | Ctrl+O opens with the native dialog (`.mirae` filter, last folder). The document is replaced only after the file has fully loaded and validated; a failed open keeps the current document. (One document per window: D-4F-1.) |
+| F11 | Ctrl+N, Ctrl+O, Ctrl+S as in the reference; Save As on Ctrl+Shift+S (owner) and Shift+Alt+S (reference). |
+| F12–F14 | Export PNG: 8-bit RGBA by default, the composite over the paper (opaque, alpha 255) or transparent; 16-bit on request; an `sRGB` chunk. |
+| F15 | Import PNG (button or a dropped `.png`): a new layer above the active one, named after the file, centred, rounded down; one undo step. |
+| F16–F18 | Any PNG colour type; premultiplied once at the document's depth: 16 bits kept in 16-bit documents, the nearest level in 8-bit ones (the reference truncates, D-4F-3). |
+| F19, F20 | Every malformed file gives an error notice naming the problem (`IoError`), never a crash; the open document stays. |
+
+### Mirae results
+
+Mirae at commit 5645f7b, Windows 11, 2560×1440.
+
+#### Measured (tests)
+
+| Check | Result |
+|---|---|
+| PNG export with the paper vs the reference's export of the same image (`png_parity.rs`, 1600 × 1200, every pixel) | **Equal** at both depths (0 pixels differ). |
+| Opaque RGB8 import, transparent export vs the reference | **Equal** at both depths. |
+| Translucent RGBA8 import, transparent export vs the reference | **Equal in 16-bit documents.** In 8-bit documents alpha and opaque pixels are equal; colour at low alpha moves (premultiplied 8-bit storage, up to 127 levels at alpha 1; D-4F-4). |
+| RGBA16 import vs the reference | One level off in exactly the 22 of 80 swatches (24 × 24 px each) where rounding and truncation disagree, at both depths (D-4F-3); equal elsewhere. |
+| Fully transparent pixels | Mirae writes (0, 0, 0, 0), the reference (255, 255, 255, 0) (D-4F-6; invisible). |
+| `png_probe read` on exports from the running app (`4F/tela_read_*.txt`) | 8-bit document, RGBA8: premultiplied-8-bit model exact (0), straight colour off by ≤ 127. 16-bit document, RGBA8: straight colour exact (0). RGBA16 at both depths: nearest level exact (0), truncation off by 1. Placement centred (1878, 1378 for 244 px in 4000 × 3000). |
+| Save → load, corruption, limits, fixtures | IO1–IO8 (docs/architecture/invariants.md). |
+
+#### Running app (mouse; a real OLE drag-and-drop from a test window; synthetic Windows Ink pen)
+
+| Check | Result |
+|---|---|
+| New document, stroke, undo, redo | Title `Untitled` → `Untitled*` → `Untitled` → `Untitled*`. |
+| Ctrl+S (no file yet) | Native "Save document" dialog, name "Untitled", type "Mirae document"; after saving the title is `t1`, status "Saved t1.mirae". |
+| Hide, show a layer | `t1*` after hiding, still `t1*` after showing (F3). |
+| Ctrl+N on a modified document | Prompt "“Untitled” has unsaved changes. Save them before creating a new document?" with Save / Don't Save / Cancel. Cancel: nothing changes. Save: the save dialog, then the new document. Don't Save: the new document. |
+| Ctrl+O | Native open dialog; the saved stroke and layers come back; history empty (Undo disabled). |
+| Opening a truncated `.mirae` | Notice "Could not open “cut.mirae”. the file is not a Mirae document, or it is damaged" (wording as of this run); the open document unchanged. |
+| Import PNG (button) | Layer `rgba8` above the active layer, centred, status "Imported rgba8.png (244 × 244)", one undo step. |
+| Export PNG, transparent, with a Screen layer | Notice "not supported: a transparent export of layers in blend modes other than Normal … export with the paper instead"; no file, no temporary file. |
+| Drag-and-drop | A dropped `.png` became a layer; a dropped `.mirae` on a modified document asked first, and Don't Save opened it. |
+| Close (Alt+F4) on a modified document | The prompt; Cancel keeps the window; Don't Save closes it. |
+| 16-bit document with a clipped, alpha-locked layer with a mask, saved and reopened | Reopened as 16-bit, the layer clipped (`>`), alpha-locked (`α`), its mask enabled and still the edit target; the clipped stroke shows only over its base. |
+| Ctrl+S on an opened file, then undo and redo | The file was rewritten in place; undo → `c16*`, redo → `c16`. |
+| Synthetic pen (`inject_pen "Mirae" pressure`) on a loaded document | Strokes arrive as pen input. |
+
+A first implementation used native message boxes for the prompt; in the
+running app they never appeared (a message box opened inside winit's
+event handler waits for an idle queue that never comes) and the app
+looked frozen. The prompt is now an egui modal (ADR 0020).
+
+### Differences
+
+| # | Difference | Kind | Status |
+|---|---|---|---|
+| D-4F-1 | Mirae edits one document per window: New, Open and a dropped `.mirae` replace it (after the unsaved-changes prompt), where the reference opens a tab and asks nothing (F8, F9). | Behavioural (architecture) | Accepted |
+| D-4F-2 | Undoing back to the saved state is unmodified in Mirae; the reference stays modified (F4). | Behavioural | Accepted — deliberate improvement (owner's brief) |
+| D-4F-3 | 16-bit PNG import: Mirae keeps 16 bits (16-bit documents) or rounds to the nearest level (8-bit documents); the reference truncates (`v >> 8`, F18). Measured: one level in 22 of 80 swatches. Resolves D-4E-2. | Quality | Accepted — deliberate quality difference, not a parity error |
+| D-4F-4 | 8-bit documents store premultiplied 8-bit pixels (ADR 0001): an imported colour at very low alpha changes (up to 127 levels at alpha 1; exact when opaque; alpha exact). The reference keeps it exactly (F16), as Mirae's 16-bit documents do. | Quality | Accepted (ADR 0001); 16-bit documents for such material |
+| D-4F-5 | Transparent export of a layer whose non-Normal mode blends with the stack is refused (the reference's rule over a translucent backdrop is D-4C-1). Export with the paper is unaffected. | Feature | Open — with D-4C-1 |
+| D-4F-6 | PNG metadata: Mirae writes an `sRGB` chunk only; the reference embeds an sRGB ICC profile, a 72 dpi `pHYs` and `tEXt` (F13). Fully transparent pixels: Mirae (0,0,0,0), the reference (255,255,255,0). Visible pixels equal. | Coverage | Accepted (no colour management or resolution yet) |
+| D-4F-7 | An imported image becomes an ordinary raster layer; the reference creates an image material layer with transform handles (F15). | Feature | Open (transform tools, phase 6) |
+| D-4F-8 | Not in Mirae: Recent files, Save copy, Revert, Close (single document), export to other formats, PSD, opening a PNG as a new document (F8, F11). | Feature | Open |
+| D-4F-9 | Prompt wording and labels are Mirae's own English ("Save / Don't Save / Cancel"); the reference's quit prompt counts several documents (F10). | UI | Accepted |
+| D-4F-10 | Corrupt input: the reference reports a corrupt `.clip` as an unsupported format and **crashed** on a corrupt PNG (F19, F20); Mirae names the problem and keeps the document. | Robustness | Accepted (Mirae must not crash) |
+| D-4F-11 | Not compared: drag-and-drop in the reference, closing a clean document, file speed (Mirae measured only, `io_bench`), what the reference's format keeps of masks and clipping. | Coverage | Open |

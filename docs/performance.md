@@ -92,6 +92,63 @@ recorded): before 0.111 / 0.112 / 0.123 ms, after 0.114 / 0.116 / 0.123 ms
 per tile, 0 allocations — within run-to-run noise. `commit_into` no longer
 allocates its 1 MiB scratch (row buffer on the stack in `commit_tile`).
 
+### Phase 4F — document I/O
+
+`cargo run --release -p tela-io --example io_bench` (Ryzen 7 5800X, NVMe,
+default compression = deflate level 2; files on the system temp
+directory). Raw = decoded pixel and mask bytes; MB/s = raw MB per second;
+peak extra = the largest allocation beyond what was live before the
+save, or beyond the loaded document, during the operation (counting
+allocator). Content: layers cycle through a painted texture (opaque
+gradient with ±3 levels of noise), translucent soft bands with gaps, and
+a flat fill.
+
+| document | bits | tiles | raw MiB | file MiB | ratio | save s | save MB/s | load s | load MB/s | save peak extra MiB | load peak extra MiB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| small 1000² ×3 | 8 | 28 | 7 | 0.9 | 7.79 | 0.02 | 337 | 0.01 | 511 | 1.7 | 1.3 |
+| small 1000² ×3 | 16 | 28 | 14 | 3.8 | 3.71 | 0.07 | 216 | 0.02 | 612 | 1.9 | 1.5 |
+| 4096² ×10 full | 8 | 2560 | 640 | 83.6 | 7.65 | 1.90 | 353 | 0.74 | 902 | 2.2 | 1.8 |
+| 4096² ×10 full | 16 | 2560 | 1280 | 314.9 | 4.06 | 6.05 | 222 | 1.57 | 856 | 2.4 | 2.0 |
+| 4096² ×10 sparse 10 % | 8 | 255 | 64 | 8.7 | 7.31 | 0.22 | 306 | 0.08 | 867 | 1.7 | 1.3 |
+| 4096² ×10 sparse 10 % | 16 | 255 | 128 | 33.0 | 3.87 | 0.62 | 216 | 0.17 | 788 | 2.0 | 1.6 |
+| 4096² ×10 full, masks + clipping | 8 | 5120 | 800 | 86.0 | 9.31 | 2.18 | 384 | 1.08 | 774 | 2.7 | 2.3 |
+| 4096² ×10 full, masks + clipping | 16 | 5120 | 1440 | 317.3 | 4.54 | 6.32 | 239 | 2.01 | 751 | 3.0 | 2.5 |
+
+Compression levels (2048² × 6 full layers, same content):
+
+| bits | compression | file MiB | ratio | save s | save MB/s | load s | load MB/s |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 8 | stored | 96.0 | 1.00 | 0.26 | 384 | 0.07 | 1379 |
+| 8 | deflate 1 | 19.1 | 5.03 | 0.20 | 508 | 0.12 | 841 |
+| 8 | **deflate 2** | 11.2 | 8.57 | 0.26 | 389 | 0.09 | 1088 |
+| 8 | deflate 3 | 9.6 | 9.96 | 0.31 | 323 | 0.09 | 1174 |
+| 8 | deflate 6 | 9.1 | 10.55 | 0.60 | 167 | 0.08 | 1217 |
+| 8 | deflate 9 | 9.0 | 10.70 | 1.95 | 52 | 0.10 | 1017 |
+| 16 | stored | 192.0 | 1.00 | 0.54 | 370 | 0.11 | 1766 |
+| 16 | deflate 1 | 53.2 | 3.61 | 0.56 | 360 | 0.21 | 955 |
+| 16 | **deflate 2** | 45.3 | 4.24 | 0.81 | 248 | 0.22 | 910 |
+| 16 | deflate 3 | 44.5 | 4.31 | 0.94 | 213 | 0.21 | 949 |
+| 16 | deflate 6 | 44.5 | 4.31 | 1.15 | 176 | 0.22 | 929 |
+| 16 | deflate 9 | 46.9 | 4.09 | 2.77 | 73 | 0.27 | 737 |
+
+- **Default level 2**: within 2–6 % of the smallest file at 40–70 % of
+  level 6's time. Level 1 doubles 8-bit files (zlib-rs's fastest level
+  matches poorly); levels above 3 cost up to 7× the time for a few
+  percent; level 9 is even larger than 6 on 16-bit data.
+- **Memory**: saving and loading stream one tile at a time: 1.3–3 MiB of
+  extra memory for every document size (0.9 MB to 1.4 GiB of pixels).
+- **Bottleneck**: deflate on one core. Stored saves at ~380 MB/s
+  including the disk; 16-bit data compresses worse (noisy low bytes). A
+  full 16-bit 4096² × 10 document takes ~6 s to save on the UI thread: the
+  case for background (and per-tile parallel) saving in a later phase.
+  Loading is 750–900 MB/s.
+- Sizes depend on content: the synthetic noise is a hard case; flat and
+  sparse layers compress far better (a blank tile is ~2.5 KB).
+- Hot paths unchanged: `stamp_bench` 0.000 allocations per dab in every
+  row; composition 0.108–0.109 ms per tile in three standalone runs
+  against 0.107 at the 4F baseline (the paper-backdrop decision became a
+  shared function; one run inside `check.ps1 -Bench`, right after the
+  build, read 0.127).
 ### Phase 4E — 16-bit storage
 
 `depth_bench` (whole documents; 2048², every tile filled with the
@@ -291,6 +348,8 @@ app with F3 (title bar) or `RUST_LOG=tela::latency=debug`.
 - Single-thread throughput bounds small/medium brushes; parallelism helps
   only when a batch spans several tiles (≥ ~250 px brushes).
 - Textured stamping costs ~2× untextured (height sampling per pixel).
+- Saving runs on the UI thread: ~2 s for a full 8-bit 4096² × 10
+  document, ~6 s at 16 bits (deflate-bound; 4F).
 - 16-bit documents double pixel and history memory (ADR 0018); the
   1 GiB history budget holds half as many 16-bit tiles.
 - CPU composition scales with layers × dirty tiles; many layers will want

@@ -97,7 +97,7 @@ color-burn too.)
 
 | # | Difference | Kind | Status |
 |---|---|---|---|
-| D-4C-1 | Blending over a translucent backdrop without paper (C4) follows W3C in Tela, not the reference. | Behavioural / quality | Open — unreachable now; must be resolved before transparent export (4F), layer groups or merge down. Data: `blend_without_paper.csv`. |
+| D-4C-1 | Blending over a translucent backdrop without paper (C4) follows W3C in Tela, not the reference. | Behavioural / quality | Open — must be resolved before layer groups or merge down. 4F does not resolve it: a transparent PNG export where it would apply is refused (D-4F-5); exports with the paper are unaffected. Data: `blend_without_paper.csv`. |
 | D-4C-2 | Modes the reference has and Tela does not (C8). | Feature | Open — each needs a public definition or a measured fit. |
 | D-4C-3 | "Merge down" not implemented (deferred: merging onto a translucent lower layer is exactly D-4C-1). | Feature | Deferred |
 | D-4C-4 | Only 8-bit sRGB documents compared; the reference's colour-managed documents were not probed. | Coverage | Open for colour management; 16-bit: the reference has no 16-bit documents (parity 4E, E1), and Tela's 16-bit documents match its 8-bit data within 2/255 (D-4E-7) |

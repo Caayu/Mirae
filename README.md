@@ -33,9 +33,14 @@ and the pressure curve; the layer panel on the right creates, selects,
 hides, locks, reorders and deletes layers, sets their opacity and blend
 mode, clips a layer to the one below, locks transparent pixels, and adds,
 enables, edits (Pixels / Mask) and deletes layer masks. Above it, the
-document line shows the storage depth and offers New 8-bit, New 16-bit
-and conversion to the other depth (undoable). The pen works on the
-panels too.
+document lines show the file name (`*` while modified), Open, Save,
+Save As, Import PNG (a new centred layer) and Export PNG (with the paper
+or transparent, 8 or 16 bits), the storage depth with New 8-bit, New
+16-bit and conversion to the other depth (undoable). Documents are saved
+as `.mirae` files (docs/formats/mirae-v1.md); dropping a `.mirae` on the
+window opens it, dropping a `.png` imports it. Before anything replaces
+or closes a modified document, Mirae asks Save / Don't Save / Cancel.
+The pen works on the panels too.
 
 | Input | Action |
 |---|---|
@@ -52,6 +57,10 @@ panels too.
 | T | Toggle start/end tapers |
 | O | Toggle pressure → opacity |
 | C | Clear the active layer |
+| Ctrl+N | New document (8-bit, same size) |
+| Ctrl+O | Open a document |
+| Ctrl+S | Save |
+| Ctrl+Shift+S, Shift+Alt+S | Save As |
 | Ctrl+Shift+N | New layer above the active one |
 | Ctrl+Z | Undo |
 | Ctrl+Y, Ctrl+Shift+Z | Redo |
@@ -67,6 +76,7 @@ synthetic Windows Ink pen (see [docs/testing.md](docs/testing.md#hardware-tests)
 tablet (input, FFI) ──► app ──► brush (presets, dynamics, pipeline, dabs, stroke buffer)
                          │ ──► document (layers, per-tile composition; stroke as overlay)
                          │ ──► renderer (wgpu display texture)  ◄── ui (egui overlay)
+                         │ ──► io (.mirae files, PNG) ──► document
 color, canvas: shared foundations          corpus: goldens + benchmarks
 ```
 
@@ -79,18 +89,19 @@ enforced by a test. Read [docs/architecture/ARCHITECTURE.md](docs/architecture/A
 | `tela-color` | Straight/premultiplied RGBA, Porter-Duff over, sRGB |
 | `tela-canvas` | Sparse 256×256 tiles, dirty sets, view transform |
 | `tela-brush` | Presets (versioned JSON), effectors, stabilizers, interpolation, spacing, tips, textures, scatter, airbrush, stroke buffer |
-| `tela-document` | Raster layers and per-tile composition |
+| `tela-document` | Layer stack, masks, clipping, blend modes, 8/16-bit storage, undo/redo, per-tile composition |
+| `tela-io` | `.mirae` documents (save atomically, load hostile input safely), PNG import/export |
 | `tela-renderer` | wgpu presentation: mipmapped display texture, overlay hook |
 | `tela-tablet` | Input samples, Windows Ink backend, input clock |
-| `tela-ui` | egui brush panel and curve editor |
+| `tela-ui` | egui panels (brush, layers, document, history), curve editor, prompts |
 | `tela-corpus` | Golden brush sheets, image diff, stamping benchmark |
 | `tela-app` | Window, event loop, wiring (binary `tela`) |
 
 ## Tests
 
-207 tests: unit, integration, property (`proptest`), golden images of every
+Over 380 tests: unit, integration, property (`proptest`), golden images of every
 built-in preset, GPU display tests (skipped without a GPU) and crate
-boundary checks. Benchmarks are separate examples. See
+boundary checks, file-format corruption and compatibility tests. Benchmarks are separate examples. See
 [docs/testing.md](docs/testing.md) and [docs/golden-tests.md](docs/golden-tests.md).
 
 ## Documentation
@@ -100,6 +111,8 @@ boundary checks. Benchmarks are separate examples. See
 | [docs/AI_HANDOFF.md](docs/AI_HANDOFF.md) | Start here when continuing the project |
 | [docs/architecture/](docs/architecture/ARCHITECTURE.md) | Architecture, crate graph, invariants, concurrency, unsafe, errors, UI |
 | [docs/adr/](docs/adr/README.md) | Architecture decision records |
+| [docs/formats/mirae-v1.md](docs/formats/mirae-v1.md) | The `.mirae` document format |
+| [docs/PARITY.md](docs/PARITY.md) | Parity with the reference, per subsystem |
 | [docs/performance.md](docs/performance.md) | Hot paths and current numbers |
 | [docs/STATUS.md](docs/STATUS.md), [docs/ROADMAP.md](docs/ROADMAP.md), [docs/TECHNICAL_DEBT.md](docs/TECHNICAL_DEBT.md) | Where the project stands and goes |
 | [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md), [CHANGELOG.md](CHANGELOG.md) | How to work on it; history |

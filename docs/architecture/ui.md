@@ -33,10 +33,17 @@ What matters is where it sits in the architecture.
    Controls the document would refuse are greyed out (delete on a locked
    or last layer, opacity on a locked or hidden layer), mirroring the
    reference application; the document remains the authority. The
-   document bar (`document_bar`) gets a `DocumentInfo` (size, bits per
-   channel) and returns a `DocumentCommand` (`New(bits)`,
-   `Convert(bits)`); the app maps bits to `PixelDepth` and ignores the
-   command during a stroke.
+   document bar (`document_bar`) gets a `DocumentInfo` (file name,
+   modified, size, bits per channel, the last file status) and the app's
+   `ExportChoice` (transparent, 16-bit), and returns a `DocumentCommand`
+   (`New(bits)`, `Convert(bits)`, `Open`, `Save`, `SaveAs`, `ImportPng`,
+   `ExportPng`); the app ignores it during a stroke. The unsaved-changes
+   prompt and error notices (`prompt::unsaved_prompt`, `prompt::notice`)
+   are egui modals drawn while the app says a question is open; they
+   return the answer (`PanelAction::Prompt`, `DismissNotice`) and the
+   area they block (added to the passthrough regions). They are egui, not
+   native message boxes, because a message box opened inside winit's
+   event handler is never shown (ADR 0020).
 4. **Domain rules stay in the domain crates.** The UI calls the same APIs as
    any other caller, e.g. `StrokeOverrides::edit_resolved` for stroke
    settings (the "editing a setting drops the preset's override" rule lives
