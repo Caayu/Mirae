@@ -20,6 +20,7 @@
 //! outside the document are cleared at composition (they may exist in
 //! layers).
 
+mod blend;
 mod compose;
 mod document;
 mod error;
@@ -29,7 +30,8 @@ mod layer;
 #[cfg(test)]
 mod properties;
 
+pub use blend::BlendMode;
 pub use compose::{ComposeScratch, Overlay};
 pub use document::{Document, HistoryAction, HistoryLimits, Placement};
 pub use error::LayerError;
-pub use layer::{BlendMode, LayerId, RasterLayer};
+pub use layer::{LayerId, RasterLayer};

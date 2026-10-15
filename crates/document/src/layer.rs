@@ -2,7 +2,8 @@ use std::fmt;
 use std::num::NonZeroU32;
 
 use tela_canvas::TiledSurface;
-use tela_color::PremulRgba;
+
+use crate::BlendMode;
 
 /// Stable identity of a layer within one [`Document`](crate::Document).
 ///
@@ -29,30 +30,6 @@ impl LayerId {
 impl fmt::Display for LayerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "layer #{}", self.0)
-    }
-}
-
-/// How a layer combines with what is below it. Only `Normal` exists until the
-/// layer phase adds the rest.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum BlendMode {
-    /// Porter-Duff source-over.
-    #[default]
-    Normal,
-}
-
-impl BlendMode {
-    /// Blends `src` (scaled by `opacity`) onto `dst` in place.
-    pub fn composite(self, src: &[PremulRgba], opacity: f32, dst: &mut [PremulRgba]) {
-        match self {
-            BlendMode::Normal => {
-                for (d, s) in dst.iter_mut().zip(src) {
-                    if s.a > 0.0 {
-                        *d = s.scale(opacity).over(*d);
-                    }
-                }
-            }
-        }
     }
 }
 

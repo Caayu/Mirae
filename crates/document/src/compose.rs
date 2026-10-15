@@ -1,7 +1,7 @@
 use tela_canvas::{TILE_SIZE, TileCoord};
 use tela_color::PremulRgba;
 
-use crate::{Document, LayerId};
+use crate::{BlendMode, Document, LayerId};
 
 /// Content drawn directly above one layer while compositing, e.g. the
 /// preview of a stroke that has not been committed yet.
@@ -17,9 +17,17 @@ pub struct Overlay<'a> {
 }
 
 impl Document {
-    /// Composites every visible layer (and the overlay) for one tile, over
-    /// transparency. Returns `None` when nothing is there, so callers can
-    /// skip or free the tile. Pixels outside the document are cleared.
+    /// Composites every visible layer (and the overlay) for one tile.
+    /// Returns `None` when nothing is there, so callers can skip or free
+    /// the tile. Pixels outside the document are cleared.
+    ///
+    /// The backdrop is transparency when every layer drawn in the tile is
+    /// `Normal` (the display puts the paper underneath; this path is
+    /// bit-identical to the compositor before blend modes). When any
+    /// non-Normal layer is drawn in the tile, the paper colour is the
+    /// opaque bottom backdrop, as in the reference application, where the
+    /// paper is a layer that blend modes see (Screen over empty paper is
+    /// white; parity record 4C) — the tile then comes out opaque.
     ///
     /// Allocates; interactive callers should use [`Document::compose_tile_into`].
     pub fn compose_tile(
@@ -53,8 +61,19 @@ impl Document {
             return false;
         }
 
+        let blends_here = self.layers().any(|l| {
+            l.visible()
+                && l.blend_mode() != BlendMode::Normal
+                && (l.pixels().tile(coord).is_some() || overlay.is_some_and(|o| o.target == l.id()))
+        });
+        let backdrop = if blends_here {
+            self.background().premultiply()
+        } else {
+            PremulRgba::TRANSPARENT
+        };
+
         let ComposeScratch { acc, layer, out } = scratch;
-        acc.fill(PremulRgba::TRANSPARENT);
+        acc.fill(backdrop);
         for l in self.layers().filter(|l| l.visible()) {
             let tile = l.pixels().tile(coord);
             let draws_overlay = overlay.is_some_and(|o| o.target == l.id());
@@ -325,5 +344,111 @@ mod tests {
         assert_eq!(committed[40 * 256 + 40], [54, 18, 9, 77], "70% erased");
         let diff = max_diff(&preview, &committed);
         assert!(diff <= 1, "preview differs from commit by {diff}");
+    }
+
+    /// A stack with a coloured base and a target layer in `mode`.
+    fn blend_stack(mode: BlendMode) -> (Document, LayerId) {
+        let mut d = Document::new(256, 256);
+        let base = d.active_layer();
+        let mut tile = DirtyTiles::new();
+        tile.mark(TileCoord { x: 0, y: 0 });
+        d.modify_tiles(base, &tile, |_, t| {
+            for y in 0..128 {
+                for x in 0..256 {
+                    *t.get_mut(x, y) = [180, 90, 40, 255];
+                }
+            }
+            for y in 128..192 {
+                for x in 0..256 {
+                    *t.get_mut(x, y) = [20, 60, 50, 128];
+                }
+            }
+        })
+        .unwrap();
+        let top = d.add_layer(Placement::Top).unwrap();
+        d.set_opacity(top, 0.7).unwrap();
+        d.set_blend_mode(top, mode).unwrap();
+        (d, top)
+    }
+
+    #[test]
+    fn preview_matches_commit_in_every_mode() {
+        for mode in BlendMode::ALL {
+            let (mut d, top) = blend_stack(mode);
+            // Crosses the opaque, translucent and empty parts of the base.
+            let mut preset = BrushPreset::plain(30.0);
+            preset.properties.opacity = BrushProperty::constant(0.8);
+            let mut e = tela_brush::BrushEngine::new(preset);
+            e.begin_stroke(
+                BrushInput::from_position(Vec2::new(60.0, 40.0), 0.0),
+                1.0,
+                0,
+            );
+            e.add_input_at(BrushInput::from_position(Vec2::new(60.0, 240.0), 1.0), 1.0);
+            let stroke = e.end_stroke().unwrap();
+            let coord = TileCoord { x: 0, y: 0 };
+            let paint = |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px);
+            let covers = |c: TileCoord| stroke.touched().contains(c);
+            let o = Overlay {
+                target: top,
+                paint: &paint,
+                covers: &covers,
+            };
+            let preview = d.compose_tile(coord, Some(&o)).unwrap();
+            commit(&mut d, top, &stroke);
+            let committed = d.compose_tile(coord, None).unwrap();
+            let diff = max_diff(&preview, &committed);
+            assert!(diff <= 1, "{mode:?}: preview differs from commit by {diff}");
+        }
+    }
+
+    #[test]
+    fn normal_only_tiles_keep_a_transparent_backdrop() {
+        let (mut d, top) = blend_stack(BlendMode::Normal);
+        set_pixel(&mut d, top, 10, 250, [40, 40, 40, 255]);
+        let t = d.compose_tile(TileCoord { x: 0, y: 0 }, None).unwrap();
+        assert_eq!(t[255 * 256 + 255], [0; 4], "empty pixels stay transparent");
+        assert_eq!(
+            t[150 * 256 + 5],
+            [20, 60, 50, 128],
+            "translucent base untouched"
+        );
+    }
+
+    #[test]
+    fn blend_layers_see_the_paper() {
+        // Screen over empty paper shows the paper (the reference's paper is
+        // a layer); Multiply over white shows the layer colour.
+        let (mut d, top) = blend_stack(BlendMode::Screen);
+        set_pixel(&mut d, top, 10, 250, [40, 40, 40, 255]);
+        let t = d.compose_tile(TileCoord { x: 0, y: 0 }, None).unwrap();
+        assert_eq!(t[250 * 256 + 10], [255; 4]);
+        assert_eq!(t[255 * 256 + 255], [255; 4], "the whole tile is over paper");
+        d.set_blend_mode(top, BlendMode::Multiply).unwrap();
+        d.set_opacity(top, 1.0).unwrap();
+        let t = d.compose_tile(TileCoord { x: 0, y: 0 }, None).unwrap();
+        assert_eq!(t[250 * 256 + 10], [40, 40, 40, 255]);
+        // A blend layer with nothing in this tile leaves it Normal-only.
+        d.clear_layer(top).unwrap();
+        let t = d.compose_tile(TileCoord { x: 0, y: 0 }, None).unwrap();
+        assert_eq!(t[255 * 256 + 255], [0; 4]);
+    }
+
+    #[test]
+    fn blend_mode_changes_are_undoable() {
+        let (mut d, top) = blend_stack(BlendMode::Normal);
+        set_pixel(&mut d, top, 10, 10, [40, 200, 40, 255]);
+        let coord = TileCoord { x: 0, y: 0 };
+        let normal = d.compose_tile(coord, None).unwrap();
+        d.set_blend_mode(top, BlendMode::Difference).unwrap();
+        let difference = d.compose_tile(coord, None).unwrap();
+        assert_ne!(normal, difference);
+        assert_eq!(d.next_undo(), Some(crate::HistoryAction::BlendMode));
+        let dirty = d.undo().unwrap();
+        assert!(dirty.contains(coord));
+        assert_eq!(d.layer(top).unwrap().blend_mode(), BlendMode::Normal);
+        assert_eq!(d.compose_tile(coord, None).unwrap(), normal);
+        d.redo().unwrap();
+        assert_eq!(d.compose_tile(coord, None).unwrap(), difference);
     }
 }

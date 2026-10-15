@@ -15,6 +15,7 @@ tela-canvas.workspace = true
 tela-brush.workspace = true
 glam.workspace = true
 proptest.workspace = true
+png.workspace = true
 
 [lints]
 workspace = true
