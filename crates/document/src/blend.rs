@@ -97,57 +97,98 @@ impl BlendMode {
         }
     }
 
-    /// Blends `src` (scaled by `opacity`) onto `dst` in place. The mode is
-    /// matched once; each arm runs its own monomorphized pixel loop.
-    pub fn composite(self, src: &[PremulRgba], opacity: f32, dst: &mut [PremulRgba]) {
-        self.blend::<Over>(src, opacity, dst);
-    }
-
     /// Blends a **clipped** layer onto its clipping group in place:
     /// source-atop (the group keeps its alpha) with the blend function's
     /// result replacing the source colour as if the group were opaque,
     /// `co = αs·αb·B(Cb, Cs) + (1 − αs)·cb`, `αo = αb`. This is what the
     /// reference application does (docs/parity/4D-masks-clipping-alpha-lock.md,
     /// K1; ADR 0017); the W3C source-atop mix does not match it.
+    ///
+    /// Same blend functions as [`BlendMode::composite`], in loops of its
+    /// own: sharing the loops through a generic made `composite` up to
+    /// 16 % slower in several modes (measured with `blend_bench`).
     pub fn clip_atop(self, src: &[PremulRgba], opacity: f32, dst: &mut [PremulRgba]) {
-        self.blend::<Atop>(src, opacity, dst);
-    }
-
-    fn blend<F: Formula>(self, src: &[PremulRgba], opacity: f32, dst: &mut [PremulRgba]) {
         match self {
             BlendMode::Normal => {
                 for (d, s) in dst.iter_mut().zip(src) {
-                    if F::applies(*s, *d) {
-                        *d = F::normal(s.scale(opacity), *d);
+                    if s.a > 0.0 && d.a > 0.0 {
+                        let s = s.scale(opacity);
+                        let keep = 1.0 - s.a;
+                        *d = PremulRgba::new(
+                            s.r * d.a + d.r * keep,
+                            s.g * d.a + d.g * keep,
+                            s.b * d.a + d.b * keep,
+                            d.a,
+                        );
                     }
                 }
             }
-            BlendMode::Multiply => separable::<F>(src, opacity, dst, |b, s| b * s),
-            BlendMode::Screen => separable::<F>(src, opacity, dst, screen),
-            BlendMode::Overlay => separable::<F>(src, opacity, dst, |b, s| hard_light(s, b)),
-            BlendMode::Darken => separable::<F>(src, opacity, dst, f32::min),
-            BlendMode::Lighten => separable::<F>(src, opacity, dst, f32::max),
-            BlendMode::ColorDodge => separable::<F>(src, opacity, dst, color_dodge),
-            BlendMode::ColorBurn => separable::<F>(src, opacity, dst, color_burn),
-            BlendMode::HardLight => separable::<F>(src, opacity, dst, hard_light),
-            BlendMode::SoftLight => separable::<F>(src, opacity, dst, soft_light),
-            BlendMode::Difference => separable::<F>(src, opacity, dst, |b, s| (b - s).abs()),
-            BlendMode::Exclusion => separable::<F>(src, opacity, dst, |b, s| b + s - 2.0 * b * s),
-            BlendMode::Add => separable::<F>(src, opacity, dst, |b, s| (b + s).min(1.0)),
+            BlendMode::Multiply => separable_atop(src, opacity, dst, |b, s| b * s),
+            BlendMode::Screen => separable_atop(src, opacity, dst, screen),
+            BlendMode::Overlay => separable_atop(src, opacity, dst, |b, s| hard_light(s, b)),
+            BlendMode::Darken => separable_atop(src, opacity, dst, f32::min),
+            BlendMode::Lighten => separable_atop(src, opacity, dst, f32::max),
+            BlendMode::ColorDodge => separable_atop(src, opacity, dst, color_dodge),
+            BlendMode::ColorBurn => separable_atop(src, opacity, dst, color_burn),
+            BlendMode::HardLight => separable_atop(src, opacity, dst, hard_light),
+            BlendMode::SoftLight => separable_atop(src, opacity, dst, soft_light),
+            BlendMode::Difference => separable_atop(src, opacity, dst, |b, s| (b - s).abs()),
+            BlendMode::Exclusion => {
+                separable_atop(src, opacity, dst, |b, s| b + s - 2.0 * b * s);
+            }
+            BlendMode::Add => separable_atop(src, opacity, dst, |b, s| (b + s).min(1.0)),
             BlendMode::Hue => {
-                non_separable::<F>(src, opacity, dst, |b, s| {
+                non_separable_atop(src, opacity, dst, |b, s| {
                     set_lum(set_sat(s, sat(b)), lum(b))
                 });
             }
             BlendMode::Saturation => {
-                non_separable::<F>(src, opacity, dst, |b, s| {
+                non_separable_atop(src, opacity, dst, |b, s| {
                     set_lum(set_sat(b, sat(s)), lum(b))
                 });
             }
-            BlendMode::Color => non_separable::<F>(src, opacity, dst, |b, s| set_lum(s, lum(b))),
+            BlendMode::Color => non_separable_atop(src, opacity, dst, |b, s| set_lum(s, lum(b))),
             BlendMode::Luminosity => {
-                non_separable::<F>(src, opacity, dst, |b, s| set_lum(b, lum(s)))
+                non_separable_atop(src, opacity, dst, |b, s| set_lum(b, lum(s)));
             }
+        }
+    }
+
+    /// Blends `src` (scaled by `opacity`) onto `dst` in place. The mode is
+    /// matched once; each arm runs its own monomorphized pixel loop.
+    pub fn composite(self, src: &[PremulRgba], opacity: f32, dst: &mut [PremulRgba]) {
+        match self {
+            BlendMode::Normal => {
+                for (d, s) in dst.iter_mut().zip(src) {
+                    if s.a > 0.0 {
+                        *d = s.scale(opacity).over(*d);
+                    }
+                }
+            }
+            BlendMode::Multiply => separable(src, opacity, dst, |b, s| b * s),
+            BlendMode::Screen => separable(src, opacity, dst, screen),
+            BlendMode::Overlay => separable(src, opacity, dst, |b, s| hard_light(s, b)),
+            BlendMode::Darken => separable(src, opacity, dst, f32::min),
+            BlendMode::Lighten => separable(src, opacity, dst, f32::max),
+            BlendMode::ColorDodge => separable(src, opacity, dst, color_dodge),
+            BlendMode::ColorBurn => separable(src, opacity, dst, color_burn),
+            BlendMode::HardLight => separable(src, opacity, dst, hard_light),
+            BlendMode::SoftLight => separable(src, opacity, dst, soft_light),
+            BlendMode::Difference => separable(src, opacity, dst, |b, s| (b - s).abs()),
+            BlendMode::Exclusion => separable(src, opacity, dst, |b, s| b + s - 2.0 * b * s),
+            BlendMode::Add => separable(src, opacity, dst, |b, s| (b + s).min(1.0)),
+            BlendMode::Hue => {
+                non_separable(src, opacity, dst, |b, s| {
+                    set_lum(set_sat(s, sat(b)), lum(b))
+                });
+            }
+            BlendMode::Saturation => {
+                non_separable(src, opacity, dst, |b, s| {
+                    set_lum(set_sat(b, sat(s)), lum(b))
+                });
+            }
+            BlendMode::Color => non_separable(src, opacity, dst, |b, s| set_lum(s, lum(b))),
+            BlendMode::Luminosity => non_separable(src, opacity, dst, |b, s| set_lum(b, lum(s))),
         }
     }
 }
@@ -190,106 +231,33 @@ fn general(
     )
 }
 
-/// How a blended source combines with its backdrop: [`Over`] for layers
-/// blended onto the stack, [`Atop`] for clipped layers. Zero-sized; the
-/// pixel loops are monomorphized per formula.
-trait Formula {
-    /// Whether the pixel changes at all (identity skipped).
-    fn applies(s: PremulRgba, d: PremulRgba) -> bool;
-    /// `Normal` with `s` already scaled by the opacity.
-    fn normal(s: PremulRgba, d: PremulRgba) -> PremulRgba;
-    /// Any other mode, given the blend function's result `blend` = B(Cb, Cs).
-    fn mix(s: PremulRgba, opacity: f32, d: PremulRgba, cs: [f32; 3], blend: [f32; 3])
-    -> PremulRgba;
-}
-
-/// Source-over with the W3C general formula (ADR 0016).
-struct Over;
-
-impl Formula for Over {
-    #[inline]
-    fn applies(s: PremulRgba, _: PremulRgba) -> bool {
-        s.a > 0.0
-    }
-
-    #[inline]
-    fn normal(s: PremulRgba, d: PremulRgba) -> PremulRgba {
-        s.over(d)
-    }
-
-    #[inline]
-    fn mix(
-        s: PremulRgba,
-        opacity: f32,
-        d: PremulRgba,
-        cs: [f32; 3],
-        blend: [f32; 3],
-    ) -> PremulRgba {
-        general(s, opacity, d, cs, blend)
-    }
-}
-
-/// Source-atop with `Cs' = B(Cb, Cs)` (clipping, ADR 0017).
-struct Atop;
-
-impl Formula for Atop {
-    #[inline]
-    fn applies(s: PremulRgba, d: PremulRgba) -> bool {
-        s.a > 0.0 && d.a > 0.0
-    }
-
-    #[inline]
-    fn normal(s: PremulRgba, d: PremulRgba) -> PremulRgba {
-        let keep = 1.0 - s.a;
-        PremulRgba::new(
-            s.r * d.a + d.r * keep,
-            s.g * d.a + d.g * keep,
-            s.b * d.a + d.b * keep,
-            d.a,
-        )
-    }
-
-    #[inline]
-    fn mix(s: PremulRgba, opacity: f32, d: PremulRgba, _: [f32; 3], blend: [f32; 3]) -> PremulRgba {
-        let a_s = s.a * opacity;
-        let keep = 1.0 - a_s;
-        let k = a_s * d.a;
-        PremulRgba::new(
-            k * blend[0] + keep * d.r,
-            k * blend[1] + keep * d.g,
-            k * blend[2] + keep * d.b,
-            d.a,
-        )
-    }
-}
-
 #[inline]
-fn separable<F: Formula>(
+fn separable(
     src: &[PremulRgba],
     opacity: f32,
     dst: &mut [PremulRgba],
     f: impl Fn(f32, f32) -> f32,
 ) {
     for (d, s) in dst.iter_mut().zip(src) {
-        if F::applies(*s, *d) {
+        if s.a > 0.0 {
             let (cs, cb) = (straight(*s), straight(*d));
             let blend = [f(cb[0], cs[0]), f(cb[1], cs[1]), f(cb[2], cs[2])];
-            *d = F::mix(*s, opacity, *d, cs, blend);
+            *d = general(*s, opacity, *d, cs, blend);
         }
     }
 }
 
 #[inline]
-fn non_separable<F: Formula>(
+fn non_separable(
     src: &[PremulRgba],
     opacity: f32,
     dst: &mut [PremulRgba],
     f: impl Fn([f32; 3], [f32; 3]) -> [f32; 3],
 ) {
     for (d, s) in dst.iter_mut().zip(src) {
-        if F::applies(*s, *d) {
+        if s.a > 0.0 {
             let (cs, cb) = (straight(*s), straight(*d));
-            *d = F::mix(*s, opacity, *d, cs, f(cb, cs));
+            *d = general(*s, opacity, *d, cs, f(cb, cs));
         }
     }
 }
@@ -389,6 +357,52 @@ fn set_sat(c: [f32; 3], s: f32) -> [f32; 3] {
         out[max] = s;
     }
     out
+}
+
+/// Source-atop given the blended colour `blend` = B(Cb, Cs): the clipping
+/// rule of [`BlendMode::clip_atop`].
+#[inline]
+fn atop(s: PremulRgba, opacity: f32, d: PremulRgba, blend: [f32; 3]) -> PremulRgba {
+    let a_s = s.a * opacity;
+    let keep = 1.0 - a_s;
+    let k = a_s * d.a;
+    PremulRgba::new(
+        k * blend[0] + keep * d.r,
+        k * blend[1] + keep * d.g,
+        k * blend[2] + keep * d.b,
+        d.a,
+    )
+}
+
+#[inline]
+fn separable_atop(
+    src: &[PremulRgba],
+    opacity: f32,
+    dst: &mut [PremulRgba],
+    f: impl Fn(f32, f32) -> f32,
+) {
+    for (d, s) in dst.iter_mut().zip(src) {
+        if s.a > 0.0 && d.a > 0.0 {
+            let (cs, cb) = (straight(*s), straight(*d));
+            let blend = [f(cb[0], cs[0]), f(cb[1], cs[1]), f(cb[2], cs[2])];
+            *d = atop(*s, opacity, *d, blend);
+        }
+    }
+}
+
+#[inline]
+fn non_separable_atop(
+    src: &[PremulRgba],
+    opacity: f32,
+    dst: &mut [PremulRgba],
+    f: impl Fn([f32; 3], [f32; 3]) -> [f32; 3],
+) {
+    for (d, s) in dst.iter_mut().zip(src) {
+        if s.a > 0.0 && d.a > 0.0 {
+            let (cs, cb) = (straight(*s), straight(*d));
+            *d = atop(*s, opacity, *d, f(cb, cs));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -552,5 +566,47 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), BlendMode::ALL.len());
+    }
+
+    #[test]
+    fn clip_atop_keeps_the_group_alpha_in_every_mode() {
+        let group = PremulRgba::new(0.3, 0.2, 0.1, 0.5);
+        let src = PremulRgba::new(0.1, 0.4, 0.6, 0.8);
+        for mode in BlendMode::ALL {
+            let mut d = [group];
+            mode.clip_atop(&[src], 0.7, &mut d);
+            assert_eq!(d[0].a, group.a, "{mode:?}");
+            assert!(d[0].r <= d[0].a && d[0].g <= d[0].a && d[0].b <= d[0].a);
+        }
+    }
+
+    #[test]
+    fn clip_atop_uses_the_blend_result_as_if_the_group_were_opaque() {
+        // Reference K1: black Multiply over a 50 % base gives black at 50 %;
+        // white Multiply leaves the base colour.
+        let base = PremulRgba::new(0.4, 0.3, 0.1, 0.5);
+        let mut d = [base];
+        BlendMode::Multiply.clip_atop(&[PremulRgba::new(0.0, 0.0, 0.0, 1.0)], 1.0, &mut d);
+        assert_eq!(d[0], PremulRgba::new(0.0, 0.0, 0.0, 0.5));
+        let mut d = [base];
+        BlendMode::Multiply.clip_atop(&[PremulRgba::new(1.0, 1.0, 1.0, 1.0)], 1.0, &mut d);
+        assert!((d[0].r - base.r).abs() < 1e-6 && (d[0].g - base.g).abs() < 1e-6);
+        // Normal: source-atop.
+        let mut d = [base];
+        let s = PremulRgba::new(0.5, 0.0, 0.0, 0.5);
+        BlendMode::Normal.clip_atop(&[s], 1.0, &mut d);
+        let want = PremulRgba::new(0.5 * 0.5 + 0.4 * 0.5, 0.15, 0.05, 0.5);
+        assert!((d[0].r - want.r).abs() < 1e-6 && (d[0].g - want.g).abs() < 1e-6);
+    }
+
+    #[test]
+    fn clip_atop_leaves_transparent_groups_and_sources_alone() {
+        for mode in BlendMode::ALL {
+            let mut d = [PremulRgba::TRANSPARENT, PremulRgba::new(0.2, 0.2, 0.2, 0.4)];
+            let src = [PremulRgba::new(0.9, 0.1, 0.5, 1.0), PremulRgba::TRANSPARENT];
+            mode.clip_atop(&src, 1.0, &mut d);
+            assert_eq!(d[0], PremulRgba::TRANSPARENT, "{mode:?}");
+            assert_eq!(d[1], PremulRgba::new(0.2, 0.2, 0.2, 0.4), "{mode:?}");
+        }
     }
 }
