@@ -36,6 +36,8 @@ rayon = "1"
 png = "0.18"
 # ZIP container of .mirae documents: stored and deflate only (pure Rust
 # zlib-rs backend); no encryption, no other codecs, no timestamps.
+# Native file and message dialogs; used only by the app.
+rfd = "0.17"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 egui = "0.36"
 egui-wgpu = "0.36"

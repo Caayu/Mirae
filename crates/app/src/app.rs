@@ -18,8 +18,11 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+mod files;
+
 use crate::stats::LatencyStats;
 use crate::tools::Tools;
+use files::{FileState, Pending};
 use tela_ui::{
     BrushPanel, DocumentCommand, DocumentInfo, HistoryButtons, HistoryCommand, LayerAction,
     LayerRow, PanelAction, PanelModel, UiLayer, egui,
@@ -77,6 +80,8 @@ pub struct App {
     tools: Tools,
     panel: BrushPanel,
     last_title: String,
+    /// The document's file, save point and the file commands' status.
+    file: FileState,
 }
 
 /// What a stroke edits, captured when it begins so that nothing changed
@@ -108,10 +113,12 @@ impl StrokeTarget {
 impl App {
     pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
         let (w, h) = DOCUMENT_SIZE;
+        let document = Document::new(w, h);
         Self {
             proxy,
             gpu: None,
-            document: Document::new(w, h),
+            file: FileState::new(&document),
+            document,
             view: ViewTransform::default(),
             engine: BrushEngine::new(BrushPreset::default()),
             stale: DirtyTiles::new(),
@@ -145,7 +152,14 @@ impl App {
             let doc = Vec2::new(self.document.width() as f32, self.document.height() as f32);
             // Fit into the area the side panels leave free.
             let size = gpu.renderer.size();
-            let occupied = gpu.ui.occupied();
+            // Side panels only: a modal question covers the whole window.
+            let occupied: Vec<[f32; 4]> = gpu
+                .ui
+                .occupied()
+                .iter()
+                .copied()
+                .filter(|r| r[2] - r[0] < size.x * 0.5)
+                .collect();
             let left = occupied
                 .iter()
                 .filter(|r| r[0] <= 1.0)
@@ -179,7 +193,9 @@ impl App {
             .iter()
             .any(|e| e.enabled && e.source == DynamicsSource::Pressure);
         let mut title = format!(
-            "Tela — {}-bit | {} {:.0}px | stab {} {:.0} | {} | taper {taper} | opacity×pressure {} | {}",
+            "Mirae — {}{} — {}-bit | {} {:.0}px | stab {} {:.0} | {} | taper {taper} | opacity×pressure {} | {}",
+            self.document_name(),
+            if self.is_modified() { "*" } else { "" },
             self.document.depth().bits(),
             s.name,
             s.properties.size.base,
@@ -367,8 +383,38 @@ impl App {
         if !pressed || self.engine.is_stroking() {
             return;
         }
-        if self.modifiers.control_key() {
-            let shift = self.modifiers.shift_key();
+        // While a question is open, keys belong to it.
+        if self.file.asking.is_some() || self.file.notice.is_some() {
+            return;
+        }
+        let (ctrl, shift, alt) = (
+            self.modifiers.control_key(),
+            self.modifiers.shift_key(),
+            self.modifiers.alt_key(),
+        );
+        // File commands: Ctrl+N, Ctrl+O, Ctrl+S, Save As on Ctrl+Shift+S
+        // and on the reference's Shift+Alt+S (parity record 4F, F11).
+        let file = match event.physical_key {
+            PhysicalKey::Code(KeyCode::KeyN) if ctrl && !shift && !alt => {
+                Some(DocumentCommand::New(8))
+            }
+            PhysicalKey::Code(KeyCode::KeyO) if ctrl && !shift && !alt => {
+                Some(DocumentCommand::Open)
+            }
+            PhysicalKey::Code(KeyCode::KeyS) if ctrl && !shift && !alt => {
+                Some(DocumentCommand::Save)
+            }
+            PhysicalKey::Code(KeyCode::KeyS) if shift && (ctrl != alt) => {
+                Some(DocumentCommand::SaveAs)
+            }
+            _ => None,
+        };
+        if let Some(c) = file {
+            self.apply_document(c);
+            self.request_redraw();
+            return;
+        }
+        if ctrl {
             let command = match event.physical_key {
                 PhysicalKey::Code(KeyCode::KeyN) if shift => {
                     self.apply_layer(LayerAction::Add);
@@ -451,9 +497,10 @@ impl App {
         }
     }
 
-    /// Replaces the document with an empty one of either depth, or converts
-    /// its depth (one undoable step). Ignored while a stroke is in
-    /// progress, like layer commands.
+    /// Document and file commands: new documents of either depth, depth
+    /// conversion (one undoable step), open, save, save as, PNG import and
+    /// export (see `files`). Ignored while a stroke is in progress, like
+    /// layer commands.
     fn apply_document(&mut self, command: DocumentCommand) {
         if self.engine.is_stroking() {
             return;
@@ -463,18 +510,21 @@ impl App {
             _ => PixelDepth::Rgba8,
         };
         match command {
-            DocumentCommand::New(bits) => {
-                // What the old document showed must be cleared on screen.
-                self.stale.extend(&self.document.content_tiles());
-                let (w, h) = (self.document.width(), self.document.height());
-                self.document = Document::with_depth(w, h, depth(bits));
-                log::info!("new {bits}-bit document");
-            }
+            DocumentCommand::New(bits) => self.request(Pending::New(depth(bits))),
             DocumentCommand::Convert(bits) => {
                 let dirty = self.document.convert_depth(depth(bits));
                 self.stale.extend(&dirty);
                 log::info!("converted to {bits}-bit");
             }
+            DocumentCommand::Open => self.request(Pending::Open),
+            DocumentCommand::Save => {
+                self.save();
+            }
+            DocumentCommand::SaveAs => {
+                self.save_as();
+            }
+            DocumentCommand::ImportPng => self.import_png(),
+            DocumentCommand::ExportPng => self.export_png(),
         }
         self.update_title();
     }
@@ -591,6 +641,8 @@ impl App {
 
     /// Builds the brush panel for this frame and returns what it asked for.
     fn build_ui(&mut self) -> PanelAction {
+        let name = self.document_name();
+        let modified = self.is_modified();
         let Some(gpu) = &mut self.gpu else {
             return PanelAction::None;
         };
@@ -628,6 +680,9 @@ impl App {
             redo: self.document.next_redo().map(history_label),
         };
         let info = DocumentInfo {
+            name: &name,
+            modified,
+            status: self.file.status.as_deref(),
             width: self.document.width(),
             height: self.document.height(),
             bits: self.document.depth().bits(),
@@ -637,11 +692,16 @@ impl App {
         let mut history_command = None;
         let mut document_command = None;
         let (tools, engine, panel) = (&mut self.tools, &mut self.engine, &mut self.panel);
+        let export = &mut self.file.export;
+        let asking = self.file.asking.as_ref().map(Pending::doing);
+        let notice = self.file.notice.as_deref();
+        let mut prompt = None;
+        let mut dismissed = false;
         let repaint = gpu.ui.build(&gpu.window, |ui| {
             let layers = egui::Panel::right("layer-panel")
                 .default_size(230.0)
                 .show(ui, |ui| {
-                    document_command = tela_ui::document_bar(ui, &info);
+                    document_command = tela_ui::document_bar(ui, &info, export);
                     ui.separator();
                     history_command = tela_ui::history_bar(ui, &history);
                     ui.separator();
@@ -662,7 +722,18 @@ impl App {
                         },
                     );
                 });
-            vec![r.response.rect, layers.response.rect]
+            let mut occupied = vec![r.response.rect, layers.response.rect];
+            // Questions block the whole window (the pen goes to them too).
+            if let Some(doing) = asking {
+                let (choice, area) = tela_ui::unsaved_prompt(ui.ctx(), &name, doing);
+                prompt = choice;
+                occupied.push(area);
+            } else if let Some(text) = notice {
+                let (done, area) = tela_ui::notice(ui.ctx(), text);
+                dismissed = done;
+                occupied.push(area);
+            }
+            occupied
         });
         #[cfg(windows)]
         if let Some(ink) = &gpu.ink {
@@ -670,6 +741,12 @@ impl App {
         }
         if repaint {
             gpu.window.request_redraw();
+        }
+        if let Some(choice) = prompt {
+            return PanelAction::Prompt(choice);
+        }
+        if dismissed {
+            return PanelAction::DismissNotice;
         }
         match (document_command, history_command, layer_action) {
             (Some(c), _, _) => PanelAction::Document(c),
@@ -688,6 +765,11 @@ impl App {
             PanelAction::Layer(a) => self.apply_layer(a),
             PanelAction::History(c) => self.apply_history(c),
             PanelAction::Document(c) => self.apply_document(c),
+            PanelAction::Prompt(choice) => {
+                self.answer(choice);
+                self.update_title();
+            }
+            PanelAction::DismissNotice => self.file.notice = None,
         }
         self.request_redraw();
     }
@@ -795,7 +877,7 @@ impl ApplicationHandler<AppEvent> for App {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title("Tela")
+            .with_title("Mirae")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -868,7 +950,20 @@ impl ApplicationHandler<AppEvent> for App {
             }
         }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            // Never discard work silently: a modified document asks first
+            // (reference F7, F10); Cancel keeps the window open.
+            WindowEvent::CloseRequested => {
+                if !self.engine.is_stroking() {
+                    self.request(Pending::Close);
+                }
+            }
+            WindowEvent::DroppedFile(path) => {
+                if !self.engine.is_stroking() {
+                    self.dropped(path);
+                    self.update_title();
+                    self.request_redraw();
+                }
+            }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.renderer.resize(size.width, size.height);
@@ -894,6 +989,9 @@ impl ApplicationHandler<AppEvent> for App {
                 self.request_redraw();
             }
             _ => {}
+        }
+        if self.file.quit {
+            event_loop.exit();
         }
     }
 }

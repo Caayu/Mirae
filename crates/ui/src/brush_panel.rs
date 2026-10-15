@@ -35,6 +35,10 @@ pub enum PanelAction {
     History(crate::HistoryCommand),
     /// From the document bar.
     Document(crate::DocumentCommand),
+    /// The answer to the unsaved-changes prompt.
+    Prompt(crate::PromptChoice),
+    /// A notice was dismissed.
+    DismissNotice,
 }
 
 /// Persistent panel state.

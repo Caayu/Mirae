@@ -5,7 +5,7 @@
 //! input/output plumbing ([`UiLayer`]) and
 //! reporting which screen regions the UI covers (pen passthrough).
 //! **Does not:** own any authoritative state. It edits data it is lent for
-//! one frame ([`PanelModel`], [`LayerRow`], [`DocumentInfo`]) and returns
+//! one frame ([`PanelModel`], [`LayerRow`], [`DocumentInfo`], [`ExportChoice`]) and returns
 //! requests it cannot fulfil ([`PanelAction`], [`LayerAction`],
 //! [`DocumentCommand`]). **Depends on:** brush, renderer, egui, egui-wgpu,
 //! egui-winit, wgpu, winit. **Used by:** app only.
@@ -20,14 +20,16 @@ pub mod curve_editor;
 pub mod document_bar;
 pub mod history_bar;
 pub mod layer_panel;
+pub mod prompt;
 
 pub use brush_panel::{BrushPanel, PanelAction, PanelModel};
-pub use document_bar::{DocumentCommand, DocumentInfo, document_bar};
+pub use document_bar::{DocumentCommand, DocumentInfo, ExportChoice, document_bar};
 pub use egui;
 use egui::{ClippedPrimitive, TexturesDelta, ViewportId};
 use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
 pub use history_bar::{HistoryButtons, HistoryCommand, history_bar};
 pub use layer_panel::{LayerAction, LayerRow, layer_panel};
+pub use prompt::{PromptChoice, notice, unsaved_prompt};
 use tela_renderer::FrameOverlay;
 use winit::window::Window;
 

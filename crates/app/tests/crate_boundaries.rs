@@ -68,6 +68,8 @@ const ALLOWED: &[(&str, &[&str])] = &[
             "tela-renderer",
             "tela-tablet",
             "tela-ui",
+            "tela-io",
+            "rfd",
             "winit",
             "glam",
             "pollster",

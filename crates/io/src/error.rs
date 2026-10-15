@@ -50,7 +50,9 @@ impl fmt::Display for IoError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             IoError::Filesystem(e) => write!(f, "file system error: {e}"),
-            IoError::NotADocument => f.write_str("the file is not a Mirae document"),
+            IoError::NotADocument => {
+                f.write_str("the file is not a Mirae document, or it is damaged")
+            }
             IoError::MalformedArchive(m) => write!(f, "the document file is damaged: {m}"),
             IoError::UnsupportedVersion { found, supported } => write!(
                 f,

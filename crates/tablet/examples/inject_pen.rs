@@ -296,7 +296,7 @@ mod inject {
 #[cfg(windows)]
 fn main() {
     let mut args = std::env::args().skip(1);
-    let title = args.next().unwrap_or_else(|| "Tela".into());
+    let title = args.next().unwrap_or_else(|| "Mirae".into());
     let pattern = args.next().unwrap_or_else(|| "all".into());
     inject::run(&title, &pattern);
 }
