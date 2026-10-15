@@ -9,7 +9,8 @@ Approved by the owner on 2026-10-14 (sequence 4A → 4B → 4C → 4D → 4E →
 | 4B | **Complete** (parity gate: [parity/4B-undo-redo.md](../parity/4B-undo-redo.md); ADR 0015) |
 | 4C | **Complete** (parity gate: [parity/4C-blend.md](../parity/4C-blend.md); ADR 0016; merge down deferred) |
 | 4D | **Complete** (parity gate: [parity/4D-masks-clipping-alpha-lock.md](../parity/4D-masks-clipping-alpha-lock.md); ADR 0017) |
-| 4E–4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
+| 4E | **Complete** (parity gate: [parity/4E-16bit.md](../parity/4E-16bit.md); ADR 0018) |
+| 4F–4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
 starts**, and each ends with a parity gate ([PARITY.md](../PARITY.md)).
 
 ## Rules for the whole phase
@@ -183,6 +184,18 @@ ADR 0003, extends invariant P2). ADR 0017. Parity gate on all of the above.
 
 ## 4E — 16-bit storage
 
+**As built** (ADR 0018): the reference was observed first and has no
+16-bit documents, no depth conversion and 8-bit exports (parity 4E,
+E1–E3); a 16-bit image opens there with its low byte dropped. Tela
+implements the plan as written: per-document `PixelDepth`, `[u16; 4]`
+premultiplied in the current encoding (`StoragePixel` in `color`,
+`LayerPixels` in `document`), generic `commit_tile` and
+`modify_tiles` (an edit for the other depth is refused), 8-bit masks,
+renderer unchanged, 8 → 16 exact (composite bit-identical), 16 → 8 to
+the nearest level, `convert_depth` one heavy step. Banding, memory and
+speed measured (`banding`, `depth_bench`); D12 decided: **8-bit
+default**, 16-bit one command away. Original plan text follows.
+
 Per-document depth, `[u16; 4]` premultiplied in the current encoding;
 `StoragePixel` trait in `color`; generic `commit_tile`; renderer
 unchanged; masks stay 8-bit. 8 → 16 exact, 16 → 8 rounded;
@@ -224,9 +237,9 @@ real-app scenarios; documentation and phase report; final parity summary.
 | D9 | Blend-sheet golden in `document/tests` | Approved |
 | D10 | Merge down in 4C; duplicate layer out | Approved |
 | D11 | Clipping semantics | Determined by observation (parity 4D K1–K11, C1–C5): isolated group, opaque-blend source-atop, ADR 0017 |
-| D12 | 8-bit default | Approved as temporary; re-evaluate after 4E |
+| D12 | 8-bit default | **Decided in 4E** after measuring (ADR 0018): 8-bit default (reference parity, half the memory and history; 8 → 16 is lossless at any time); the owner may switch it |
 | D13 | 8-bit masks | Approved for this phase |
-| D14 | `convert_depth` as a heavy undo step | Approved |
+| D14 | `convert_depth` as a heavy undo step | Approved; built in 4E (costed at the larger depth) |
 | D15 | Mask painting/erasing/pressure; eraser with alpha lock | Determined by observation (parity 4D M2–M5, A3): stroke alpha reveals, eraser hides, colour ignored; the eraser ignores alpha lock; pressure not observable on this machine (D-4D-1) |
 | D16 | File dialogs | Fixed path/drag-and-drop during development; full desktop workflow in the 4F DoD; dialog crate only in `app` |
 | D17 | Corrupt tile on load is an error | Approved |

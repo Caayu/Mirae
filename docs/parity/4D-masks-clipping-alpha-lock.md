@@ -222,5 +222,5 @@ measured tests, and the running app checks what alpha shows.
 | D-4D-4 | Masks with a stored rectangle and an outside default (K6) have no Tela equivalent; behaviour inside the document is the same. | Representation | Accepted (only reachable through imported files; revisit with 4F import) |
 | D-4D-5 | Colour-dependent clip/blend combinations are verified by the measured tests, not in the running app (it paints black only). | Coverage | Open until a colour picker exists |
 | D-4D-6 | A non-Normal **base** over a translucent backdrop without paper follows W3C (D-4C-1); not reachable in Tela. | Behavioural | Open with D-4C-1 |
-| D-4D-7 | Not compared: target after undo/redo of mask creation (Tela: pixels when the mask is gone, unchanged otherwise), commands during a stroke (A7), masks on 16-bit or colour-managed documents, speed against the reference. | Coverage | Open |
+| D-4D-7 | Not compared: target after undo/redo of mask creation (Tela: pixels when the mask is gone, unchanged otherwise), commands during a stroke (A7), masks on colour-managed documents, speed against the reference. (16-bit: the reference has none; parity 4E.) | Coverage | Open |
 | D-4D-8 | Panel: Tela shows text markers ("> " for clipped, "α", "[mask]", "[editing mask]") instead of the reference's clip bar and mask thumbnails. | UI | Accepted (own identity) |

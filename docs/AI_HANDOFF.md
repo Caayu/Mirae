@@ -25,9 +25,10 @@ measured performance, documented decisions.
 
 Phase 4 (layers and document) is approved as a plan
 ([phase4/PLAN.md](phase4/PLAN.md)) and runs subphase by subphase:
-**4A** (layer API), **4B** (undo/redo), **4C** (blend modes) and **4D**
-(masks, clipping, alpha lock) are complete. Every later subphase (4E…4G) needs the owner's explicit
-approval before it starts, and every subphase ends with
+**4A** (layer API), **4B** (undo/redo), **4C** (blend modes), **4D**
+(masks, clipping, alpha lock) and **4E** (16-bit storage) are complete.
+Every later subphase (4F, 4G) needs the owner's explicit approval before
+it starts, and every subphase ends with
 a **parity gate** recorded in [PARITY.md](PARITY.md). Facts:
 [STATUS.md](STATUS.md).
 
@@ -60,7 +61,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 288 tests, ~15 s after build
+cargo test --workspace --release        # 324 tests, ~20 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -74,6 +75,8 @@ powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # fmt, clippy, test
 
 ```sh
 cargo run --release -p tela-corpus --example stamp_bench        # ~1 min
+cargo run --release -p tela-corpus --example depth_bench        # 8 vs 16-bit, ~20 s
+cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit banding, ~2 s
 cargo run --release -p tela-brush --example stabilizer_bench
 cargo run --release -p tela-brush --example interpolation_bench
 ```
@@ -144,6 +147,9 @@ easily broken:
    parallel path only has rayon's amortized queue blocks; composition is
    allocation-free.
 8. Crate boundaries (brush ⟂ tablet/UI/GPU/document; renderer ⟂ document).
+9. One depth per document; pixel edits name their depth (`modify_tiles::<P>`,
+   `with_pixel_type!`) and the other depth is refused; 8 → 16 is exact and
+   composes bit-identically; masks stay 8-bit (ADR 0018, DP1–DP7).
 
 ## 14. Architectural decisions
 
@@ -153,7 +159,8 @@ centripetal Catmull–Rom, counter-based RNG, versioned JSON presets,
 canvas-space textures, bit-identical parallel stamping, egui isolation,
 golden corpus, time-instant airbrush, document layer model, swap-based
 undo, blend modes measured against the reference, masks/clipping/alpha lock
-measured against the reference (0014–0017).
+measured against the reference (0014–0017), 16-bit storage per document
+with an 8-bit default (0018).
 
 ## 15. Completed features
 
@@ -165,7 +172,8 @@ summarized in the changelog).
 ## 16. Limitations
 
 [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md): no physical tablet validation,
-8-bit storage, GPU texture size limit, undo history uncompressed in memory,
+8-bit default storage and 8-bit masks and display (16-bit documents
+optional), GPU texture size limit, undo history uncompressed in memory,
 no I/O, UI edits not persisted, goldens verified on one machine.
 
 ## 17. Risks
@@ -173,8 +181,9 @@ no I/O, UI edits not persisted, goldens verified on one machine.
 - Real pens may behave differently from synthetic injection (pressure
   curves, batching, timestamps, tilt).
 - Golden tolerances vs. other CPUs/compilers are unverified.
-- Phase 4 touches storage (16-bit) and the document API at once; keep
-  those changes in separate, measured steps.
+- 16-bit documents double pixel and history memory; the file format (4F)
+  must store the depth, and 16-bit import rounding differs from the
+  reference (parity D-4E-2).
 - The UI crate will grow; keep it free of authoritative state.
 
 ## 18. Hardware validated

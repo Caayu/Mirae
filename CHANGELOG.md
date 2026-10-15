@@ -3,6 +3,45 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 4E — 16-bit storage
+
+### Added
+- `depth_probe` (16-bit test images in public formats: PSD in both layer
+  layouts, PNG; reads the reference's exports against three models) and
+  `docs/parity/4E-16bit.md` part 1: the reference observed before
+  implementing; `psd` writer gains 16-bit samples (04ba25e).
+- `tela_color::{StoragePixel, PixelDepth, widen8, narrow16, unorm16,
+  with_pixel_type!}`, `PremulRgba::{from_rgba16, to_rgba16}`: exact
+  8 → 16, nearest-level 16 → 8, 16-bit decode that keeps widened values
+  bit-identical (57b66f0, 32967fa).
+- Per-document depth: `Document::{with_depth, depth, convert_depth}`,
+  `LayerPixels` (read-only, typed views), `LayerError::WrongDepth`,
+  `HistoryAction::ConvertDepth`; tests for both depths, the 4D preview ==
+  commit matrix and the 4C/4D parity data in 16-bit documents,
+  `depth_properties.rs` (32967fa); ADR 0018.
+- Document bar in the right panel: depth, New 8-bit, New 16-bit,
+  To 8/16-bit; depth in the window title (41d5632).
+- `tela_corpus::banding`, the `banding` example and test (371c9a2);
+  `depth_bench` (1df2a26).
+
+### Changed
+- `StrokeBuffer::commit_tile` / `commit_into` are generic over
+  `StoragePixel`; `Document::modify_tiles` is generic and refuses an edit
+  for the other depth; `RasterLayer::pixels()` returns `&LayerPixels`.
+- History keeps tile backups at their recorded depth and counts their
+  real size (512 KiB per 16-bit tile).
+- Composition decodes each layer tile in its own loop: 8-bit composition
+  4–23 % faster, output unchanged.
+
+### Decided
+- D12: 8-bit stays the default for new documents (measured; ADR 0018).
+
+### Parity
+- 4E gate recorded: the reference has no 16-bit documents, no depth
+  conversion and 8-bit exports; Tela adds 16-bit storage beyond it,
+  keeps 8-bit content exact, and measures banding objectively (16-bit
+  within 0.75 level of exact where 8-bit is off by 25–136 levels).
+
 ## Phase 4D — layer masks, clipping, alpha lock
 
 ### Added

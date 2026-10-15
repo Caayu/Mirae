@@ -79,7 +79,8 @@ table above for the parallel path).
 
 ### Composition
 
-2 layers + stroke overlay: **0.107 ms** per 256×256 tile (phase 3: 0.113 ms),
+2 layers + stroke overlay: **0.107 ms** per 256×256 tile (phase 3: 0.113 ms;
+phase 4E: 0.107–0.110 ms),
 0 allocations in 840 tiles.
 
 ### Phase 4A
@@ -90,6 +91,71 @@ machine state (this machine was slower that day than when 0.107 ms was
 recorded): before 0.111 / 0.112 / 0.123 ms, after 0.114 / 0.116 / 0.123 ms
 per tile, 0 allocations — within run-to-run noise. `commit_into` no longer
 allocates its 1 MiB scratch (row buffer on the stack in `commit_tile`).
+
+### Phase 4E — 16-bit storage
+
+`depth_bench` (whole documents; 2048², every tile filled with the
+`blend_bench` filler; two runs, medians of 5 repetitions; ms per composed
+256×256 tile):
+
+| stack | 8-bit | 16-bit | 16 / 8 | allocations |
+|---|---:|---:|---:|---:|
+| 1 layer | 0.335 / 0.316 | 0.330 / 0.321 | 0.99 / 1.02 | 0 |
+| 10 layers, Normal | 1.528 / 1.497 | 1.617 / 1.552 | 1.06 / 1.04 | 0 |
+| 10 layers, Multiply | 3.469 / 3.394 | 3.584 / 3.616 | 1.03 / 1.07 | 0 |
+| 2 layers, top Screen | 0.701 / 0.677 | 0.692 / 0.668 | 0.99 / 0.99 | 0 |
+| 2 layers, top Luminosity | 0.998 / 0.941 | 1.003 / 0.950 | 1.01 / 1.01 | 0 |
+| 1 layer + fully stored mask | 0.379 / 0.366 | 0.386 / 0.387 | 1.02 / 1.06 | 0 |
+| base + 1 clipped, Normal | 0.468 / 0.460 | 0.485 / 0.473 | 1.04 / 1.03 | 0 |
+| base + 9 clipped, Multiply | 2.496 / 2.457 | 2.541 / 2.519 | 1.02 / 1.03 | 0 |
+
+Strokes on a filled layer (soft round across the diagonal; commit
+includes the history copy of the touched tiles):
+
+| brush | tiles | bits | preview ms/tile | commit ms | commit, alpha locked ms | undo µs | redo µs | history held |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 8 px | 17 | 8 | 0.37 / 0.34 | 5.18 / 5.08 | 5.18 / 5.07 | 3–4 | 2 | 4.0 MiB |
+| 8 px | 17 | 16 | 0.34 / 0.34 | 6.69 / 6.52 | 6.65 / 6.49 | 4 | 2 | 8.0 MiB |
+| 200 px | 28 | 8 | 0.28 / 0.28 | 8.69 / 9.07 | 8.37 / 9.02 | 5 | 3 | 5.5 MiB (reserved 6.8) |
+| 200 px | 28 | 16 | 0.28 / 0.35 | 10.24 / 13.45 | 10.35 / 12.98 | 4–5 | 3 | 11.0 MiB (reserved 13.5) |
+
+Depth conversion of a 10-layer 2048² document (640 tiles): 8 → 16
+**96.8 ms**, 16 → 8 **92.2 ms** (800 allocations: one tile buffer per
+tile plus the surfaces), history reserves 320 MiB (the 16-bit size of the
+larger direction); undoing either takes ~0.09 ms (swap).
+
+Memory:
+
+| item | 8-bit | 16-bit |
+|---|---:|---:|
+| pixel tile 256 × 256 × 4 channels | 256 KiB | 512 KiB |
+| mask tile (8-bit at every depth) | 64 KiB | 64 KiB |
+| `ComposeScratch` (f32 at every depth) | 3.50 MiB | 3.50 MiB |
+| 1 full 4000 × 3000 layer (192 tiles; computed) | 48 MiB | 96 MiB |
+| 10 / 50 / 100 full layers (computed) | 480 MiB / 2.3 GiB / 4.7 GiB | 960 MiB / 4.7 GiB / 9.4 GiB |
+| 10 / 50 / 100 sparse layers, one 200 px stroke each (27 tiles per layer; measured) | 68 / 338 / 675 MiB | 135 / 675 / 1350 MiB |
+| history of a stroke over painted tiles | 256 KiB per tile | 512 KiB per tile |
+
+Regressions, measured interleaved against the end of 4D (fb73bd3), two
+runs each: `stamp_bench` within noise (e.g. hard 500 px 493 → 488 dabs/s,
+soft 100 px 9211 → 9351), **allocs/dab 0.000**, composition line
+0.116 / 0.110 → 0.110 / 0.107 ms; `blend_bench` **4–23 % faster** in
+every mode (Normal 2 layers 0.505 / 0.510 → 0.445 / 0.440 ms, 10 layers
+1.806 → 1.475 ms; decoding now runs in its own loop before blending), 0
+allocations; `mask_clip_bench` 10–23 % faster (1 layer 0.353 → 0.313,
+base + 5 clipped Normal 1.304 → 1.003), commits equal (0.333 → 0.330
+ms/tile); `history_bench` within noise (huge brush on painted tiles
+25.46 / 24.99 → 24.98 / 24.16 ms; undo/redo µs).
+
+Banding (`cargo run --release -p tela-corpus --example banding`): the
+table is in [parity/4E-16bit.md](parity/4E-16bit.md) (section "Banding");
+it runs in under 2 s.
+
+Assessment: the phase 4 target of ≤ 1.3× was met by composition
+(≤ 1.07×) and undo/redo (equal); the stroke commit with its history copy
+costs 1.2–1.5× (twice the bytes copied and quantized), still a few ms for
+a 28-tile stroke; memory doubles. No hot path was optimized: nothing
+measured called for it.
 
 ### Phase 4D — masks, clipping, alpha lock
 
@@ -225,6 +291,8 @@ app with F3 (title bar) or `RUST_LOG=tela::latency=debug`.
 - Single-thread throughput bounds small/medium brushes; parallelism helps
   only when a batch spans several tiles (≥ ~250 px brushes).
 - Textured stamping costs ~2× untextured (height sampling per pixel).
+- 16-bit documents double pixel and history memory (ADR 0018); the
+  1 GiB history budget holds half as many 16-bit tiles.
 - CPU composition scales with layers × dirty tiles; many layers will want
   GPU composition or cached groups (phase 4+).
 - The display texture must fit the GPU's max texture size.

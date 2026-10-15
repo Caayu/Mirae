@@ -24,6 +24,7 @@ and both say so.
 | [0015](0015-undo-redo-tile-swap.md) | Undo/redo inside `Document`, swap-based steps, reference-derived semantics, byte/step limits | 4B |
 | [0016](0016-blend-modes-and-compositing-space.md) | Blend modes: W3C formulas on sRGB-encoded values (chosen by measurement), paper as backdrop for blend tiles | 4C |
 | [0017](0017-masks-clipping-alpha-lock.md) | Layer masks (inverted sparse 8-bit), isolated clipping groups with opaque-blend source-atop, alpha lock as source-atop (all measured) | 4D |
+| [0018](0018-16-bit-storage.md) | 16-bit storage: per-document depth, premultiplied sRGB-encoded `u16`, exact 8 → 16, nearest 16 → 8, 8-bit masks and display, 8-bit default (measured) | 4E |
 
 ## Writing a new ADR
 

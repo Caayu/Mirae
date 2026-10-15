@@ -791,7 +791,7 @@ impl Document {
         assert!(self.index_of(self.active).is_some(), "L4: active exists");
         for l in &self.layers {
             assert!((0.0..=1.0).contains(&l.opacity), "L5: opacity in range");
-            assert_eq!(l.pixels.depth(), self.depth, "D1: one depth per document");
+            assert_eq!(l.pixels.depth(), self.depth, "DP1: one depth per document");
             if let Some(m) = &l.mask {
                 for c in m.hidden.tile_coords() {
                     assert!(

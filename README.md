@@ -7,9 +7,9 @@ is original ([docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md)).
 
 **Status:** phases 1–3 complete (canvas, tablet input, brush engine);
 phase 3.5 (architecture audit and handoff) complete; phase 4 in progress:
-4A (layer stack), 4B (undo/redo), 4C (blend modes) and 4D (masks,
-clipping, alpha lock) complete, 4E–4G (16-bit, I/O, integration) planned.
-288 tests passing. Windows is the
+4A (layer stack), 4B (undo/redo), 4C (blend modes), 4D (masks,
+clipping, alpha lock) and 4E (16-bit storage) complete, 4F–4G (I/O,
+integration) planned. 324 tests passing. Windows is the
 primary platform (Windows Ink); no physical tablet has been validated yet.
 Details: [docs/STATUS.md](docs/STATUS.md).
 
@@ -32,8 +32,10 @@ input path. The panel on the left edits the active preset, its effectors
 and the pressure curve; the layer panel on the right creates, selects,
 hides, locks, reorders and deletes layers, sets their opacity and blend
 mode, clips a layer to the one below, locks transparent pixels, and adds,
-enables, edits (Pixels / Mask) and deletes layer masks. The pen works on
-the panels too.
+enables, edits (Pixels / Mask) and deletes layer masks. Above it, the
+document line shows the storage depth and offers New 8-bit, New 16-bit
+and conversion to the other depth (undoable). The pen works on the
+panels too.
 
 | Input | Action |
 |---|---|

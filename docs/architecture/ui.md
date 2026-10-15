@@ -32,7 +32,11 @@ What matters is where it sits in the architecture.
    stale is simply refused. `tela-ui` does not depend on `tela-document`.
    Controls the document would refuse are greyed out (delete on a locked
    or last layer, opacity on a locked or hidden layer), mirroring the
-   reference application; the document remains the authority.
+   reference application; the document remains the authority. The
+   document bar (`document_bar`) gets a `DocumentInfo` (size, bits per
+   channel) and returns a `DocumentCommand` (`New(bits)`,
+   `Convert(bits)`); the app maps bits to `PixelDepth` and ignores the
+   command during a stroke.
 4. **Domain rules stay in the domain crates.** The UI calls the same APIs as
    any other caller, e.g. `StrokeOverrides::edit_resolved` for stroke
    settings (the "editing a setting drops the preset's override" rule lives

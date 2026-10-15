@@ -31,8 +31,8 @@ Test names are `crate::module::tests::name` for unit tests and
 | # | Invariant | Protected by |
 |---|---|---|
 | P1 | The live preview (including the end-taper tail) equals the committed stroke. | `brush::engine::tests::end_taper_preview_matches_final_result`, `brush::stroke::tests::tail_is_rebuilt_from_committed_and_can_be_committed` |
-| P2 | Preview composition and commit use the same math for paint, erase and alpha-preserving paint (`paint_over`, shared by `paint_over_tile` and `commit_tile`, selected by `PixelAlpha`) and for mask strokes (`alpha_over`, shared by `paint_alpha_tile` and `commit_alpha_tile`). | `document::compose::tests::preview_matches_committed_result`, `…::eraser_preview_matches_committed_result`, `…::preview_matches_commit_across_masks_clipping_lock_and_modes`, `brush::stroke::tests::alpha_channel_preview_matches_commit`, golden sheets (rendered through `commit_tile`) |
-| P3 | A stroke previews on its own target (layer by id, its pixels or its mask, fixed when the stroke begins), under that layer's mask, opacity, clipping group **and blend mode**, exactly as after commit (within 1/255); a hidden target shows no preview, as a commit would show nothing. | `…::preview_matches_committed_result`, `…::preview_targets_its_layer_by_id_not_by_position`, `…::preview_matches_commit_in_every_mode`, `…::preview_matches_commit_across_masks_clipping_lock_and_modes` (126 cases) |
+| P2 | Preview composition and commit use the same math for paint, erase and alpha-preserving paint (`paint_over`, shared by `paint_over_tile` and `commit_tile`, selected by `PixelAlpha`) and for mask strokes (`alpha_over`, shared by `paint_alpha_tile` and `commit_alpha_tile`). At both storage depths the commit is the preview quantized once to the storage (phase 4E). | `brush::stroke::tests::commit_is_the_preview_quantized_once_at_both_depths`, `document::compose::tests::preview_matches_committed_result`, `…::eraser_preview_matches_committed_result`, `…::preview_matches_commit_across_masks_clipping_lock_and_modes`, `brush::stroke::tests::alpha_channel_preview_matches_commit`, golden sheets (rendered through `commit_tile`) |
+| P3 | A stroke previews on its own target (layer by id, its pixels or its mask, fixed when the stroke begins), under that layer's mask, opacity, clipping group **and blend mode**, exactly as after commit (within 1/255); a hidden target shows no preview, as a commit would show nothing. | `…::preview_matches_committed_result`, `…::preview_targets_its_layer_by_id_not_by_position`, `…::preview_matches_commit_in_every_mode`, `…::preview_matches_commit_across_masks_clipping_lock_and_modes` (126 cases), `…::preview_matches_commit_in_16_bit_documents` (the same 126 cases at 16 bits) |
 
 ## Document (layer stack)
 
@@ -51,7 +51,7 @@ plain reference model.
 | L6 | An operation that returns an error leaves the document unchanged. | `…::unknown_ids_are_errors_and_change_nothing`, `…::lock_blocks_pixels_opacity_blend_and_removal_only`, property test (model unchanged on error) |
 | L7 | Moving, removing or re-inserting layers never copies tile buffers. | `…::moving_keeps_identity_selection_and_tile_memory`, property test (buffer addresses) |
 | L8 | Composition does not depend on id values, only on order and properties. | `document::compose::tests::composition_does_not_depend_on_id_values` |
-| L9 | Pixels change only through `modify_tiles` (exactly the declared tiles; newly allocated tiles left blank are released) and `clear_layer`. | Privacy of `RasterLayer::pixels`; `…::modify_tiles_touches_only_declared_tiles_and_stays_sparse` |
+| L9 | Pixels change only through `modify_tiles` (exactly the declared tiles; newly allocated tiles left blank are released), `clear_layer` and `convert_depth`. | Privacy of `RasterLayer::pixels`; `…::modify_tiles_touches_only_declared_tiles_and_stays_sparse` |
 
 ## History (undo/redo)
 
@@ -81,7 +81,7 @@ Added in phase 4B (ADR 0015). Unit tests in
 |---|---|---|
 | T1 | Tiles never written are not allocated; absent tiles read as default. | `canvas::tile::tests::surface_is_sparse_and_reads_default`, `brush::engine::tests::stroke_lifecycle` |
 | T2 | Tile addressing is exact for any coordinate, including negative. | `properties.rs::containing_tile_holds_the_pixel`, `properties.rs::rect_tiles_cover_exactly` (canvas) |
-| T3 | Compositing uses premultiplied alpha; `over` is associative; RGBA8 round trips exactly. | `color::tests::over_is_associative`, `color::tests::rgba8_round_trip_is_exact` |
+| T3 | Compositing uses premultiplied alpha; `over` is associative; RGBA8 and RGBA16 round trip exactly through f32 (phase 4E). | `color::tests::over_is_associative`, `color::tests::rgba8_round_trip_is_exact`, `color::storage::tests::every_16_bit_value_round_trips_through_f32` |
 | T4 | A stroke's alpha never exceeds the largest opacity that touched a pixel. | `brush::stroke::tests::opacity_caps_overlapping_dabs`, `…::lighter_dab_never_lightens_existing_paint`, `…::flow_builds_up_gradually` |
 | T5 | The view transform round-trips and zoom/rotate keep the anchor fixed. | `canvas::view::tests::*`, `properties.rs::view_round_trips_and_pins_the_anchor` |
 | T6 | The display is seam-free when minified and rotated; magnified texels are flat squares. | `display_quality.rs::no_seams_when_minified_and_rotated`, `display_quality.rs::magnified_texels_are_flat_squares` |
@@ -122,6 +122,28 @@ and history test `document::history_properties::history_matches_a_stack_of_snaps
 | CL4 | Undo/redo restore clip flags and therefore groups; structural edits invalidate every layer whose group changes. | `…::mask_edits_undo_and_redo_bit_exactly`, history property test, `document::document::tests::group_changes_invalidate_the_clipped_layers_too` |
 | CL5 | Over and without its paper, Tela matches the reference's measured mask and clipping results within 2/255 for every probed swatch. | `crates/document/tests/clip_parity.rs` (2 × 2 176 swatches) |
 | CL6 | Composites with masks and clipping stay valid premultiplied pixels and allocation-free. | property test `composites_stay_valid_premultiplied`, `mask_clip_bench` (allocations column) |
+
+## Storage depth (phase 4E, ADR 0018)
+
+Also checked by the layer-stack model test (depth, wrong-depth edits,
+conversions) and the history property test (conversions among random
+edits, undo and redo).
+
+| # | Invariant | Protected by |
+|---|---|---|
+| DP1 | A document has one depth; every raster layer stores its pixels at it (new layers included). | `check_invariants` after every model step, `document::document::tests::documents_store_one_depth_and_refuse_edits_for_the_other` |
+| DP2 | 8 → 16 is exact (`v · 257`) and widened content composes **bit-identically** (every mode, masks, clipping, opacity, paper). | `color::storage::tests::widening_every_8_bit_value_is_exact`, `…::widened_values_decode_to_the_same_f32_as_8_bit`, `document::compose::tests::widened_8_bit_content_composes_identically_in_every_mode`, `depth_properties.rs::widened_8_bit_stacks_compose_identically` |
+| DP3 | 16 → 8 moves each channel to the nearest level (≤ ½ level); 8 → 16 → 8 is the identity; premultiplied order (`rgb ≤ a`) survives both. | `color::storage::tests::narrowing_rounds_to_the_nearest_level_like_unorm8`, `…::premultiplied_order_survives_both_conversions`, `depth_properties.rs::narrowing_is_the_nearest_level_and_undoable` |
+| DP4 | `convert_depth` is one history step; undo and redo restore each depth bit-exactly (moving surfaces, no copy); ids, order, properties, masks and the sparse layout do not change; converting to the current depth records nothing. | `document::document::tests::widening_keeps_structure_composite_and_masks_and_is_one_step`, `…::history::tests::depth_conversion_undoes_and_redoes_through_later_steps`, `depth_properties.rs::conversion_keeps_structure_and_undoes_exactly` |
+| DP5 | A pixel edit is written for one depth; an edit for the other depth is refused (`WrongDepth`) and changes nothing, history included. | `…::documents_store_one_depth_and_refuse_edits_for_the_other`, `depth_properties.rs::edits_for_the_other_depth_change_nothing`, model test |
+| DP6 | Masks are 8-bit at every depth; conversion never touches them. | Type (`TiledSurface<u8>`), `…::widening_keeps_structure_composite_and_masks_and_is_one_step` |
+| DP7 | Composition outputs RGBA8 for display at every depth and stays allocation-free; history counts tiles at their real size (512 KiB at 16 bits). | `depth_bench` (allocations column), `…::history::tests::sixteen_bit_tiles_cost_twice_as_much_history`, `…::the_byte_budget_counts_16_bit_tiles_at_their_size` |
+
+H1–H11, M1–M5, A1–A3 and CL1–CL6 hold at both depths: the history unit
+and property tests, `brush/tests/properties.rs::preserved_alpha_never_changes_alpha_at_16_bits`,
+`clip_parity.rs::masks_and_clipping_match_the_reference_in_16_bit_documents`
+and `depth_properties.rs::sixteen_bit_composites_stay_valid_premultiplied`
+run them in 16-bit documents.
 
 ## Robustness
 

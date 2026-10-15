@@ -43,10 +43,10 @@ paint/
 
 | Crate | Owns | Must not |
 |---|---|---|
-| `tela-color` | `Rgba` (straight), `PremulRgba`, `over`, RGBA8 quantization, sRGB curves | know about space or devices |
+| `tela-color` | `Rgba` (straight), `PremulRgba`, `over`, RGBA8/RGBA16 quantization, stored formats (`StoragePixel`, `PixelDepth`, `with_pixel_type!`), sRGB curves | know about space or devices |
 | `tela-canvas` | `TiledSurface<P>`, `Tile<P>`, `TileCoord`, `DirtyTiles`, `IRect`, `ViewTransform` | know about layers, colors or brushes |
 | `tela-brush` | the whole stroke engine up to the stroke mask | read devices, own documents, know UI/GPU |
-| `tela-document` | authoritative pixels and the layer stack: `Document` (layer ids, rules, the only pixel-mutation path), `RasterLayer`, composition, `Overlay` | know brushes, input, view, GPU |
+| `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay` | know brushes, input, view, GPU |
 | `tela-renderer` | GPU device/surface, display texture + mips, canvas shader, `FrameOverlay` | see the document |
 | `tela-tablet` | `TabletSample`/`TabletEvent`, unit normalization, input clock, Windows Ink | know brushes or canvas space |
 | `tela-ui` | brush panel, curve editor, egui plumbing | own authoritative state |
@@ -61,7 +61,7 @@ All authoritative state lives in `tela-app`'s `App`:
 
 | State | Owner | Notes |
 |---|---|---|
-| `Document` (layers, pixels) | `App.document` | Changed only through `Document` methods (ADR 0014): layer commands from the panel and shortcuts, `modify_tiles` + `StrokeBuffer::commit_tile` at the end of a stroke, `clear_layer`. Every call returns the tiles it invalidated and is recorded in the document's undo history (ADR 0015). |
+| `Document` (depth, layers, pixels) | `App.document` | Changed only through `Document` methods (ADR 0014): layer commands from the panel and shortcuts, `modify_tiles` + `StrokeBuffer::commit_tile` at the end of a stroke, `clear_layer`, `convert_depth` and the document bar (new document of either depth, ADR 0018). Every call returns the tiles it invalidated and is recorded in the document's undo history (ADR 0015). |
 | View (`ViewTransform`) | `App.view` | Screen↔canvas mapping. |
 | Presets being edited, selection, eraser mode | `App.tools` (`Tools`) | The UI edits the active preset in place, lent for one frame. |
 | User stroke settings, pressure curve, paint color | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
@@ -144,7 +144,9 @@ or per dab once buffers have grown (measured, see performance.md).
 5. The app commits into the target it fixed when the stroke began
    (`StrokeTarget`: layer id, its pixels or its mask, alpha free or
    preserved): pixels with
-   `document.modify_tiles(layer, stroke.touched(), |c, t| stroke.commit_tile(c, t, alpha))`,
+   `with_pixel_type!(document.depth(), P => document.modify_tiles(layer, stroke.touched(), |c, t: &mut Tile<P>| stroke.commit_tile(c, t, alpha)))`
+   (the pixel type is chosen once per stroke; the document refuses an
+   edit for the other depth),
    a mask with `document.modify_mask(layer, …, |c, t| stroke.commit_alpha_tile(c, t))`,
    and marks the returned tiles stale. Strokes do not start on hidden or
    locked layers or disabled masks (`Document::paint_target`), and layer
@@ -165,7 +167,10 @@ layer's alpha lock (`PixelAlpha::Preserved`) paint is source-atop
 layer mask the stroke's alpha applies to the reveal value: paint
 `a + m(1 − a)`, erase `a(1 − m)`, colour ignored (ADR 0017). Preview and commit
 share each rule (`paint_over_tile` / `commit_tile`, `paint_alpha_tile` /
-`commit_alpha_tile`; ADR 0003, invariants P2, M4, A3).
+`commit_alpha_tile`; ADR 0003, invariants P2, M4, A3). The
+stroke is the same f32 mask at every document depth; only the commit
+decodes and quantizes, once, to the layer's storage (`StoragePixel`,
+ADR 0018).
 
 ## 6. Presets, effectors, tips, textures, scatter, airbrush
 
@@ -232,7 +237,9 @@ reference application (docs/parity/4B-undo-redo.md): selecting and
 showing/hiding layers are not steps, add/remove undos restore the active
 layer, consecutive opacity edits of one layer merge, and the app ignores
 undo/redo during a stroke. Limits: 200 steps and 1 GiB by default
-(`HistoryLimits`).
+(`HistoryLimits`), counted at the real tile size (256 KiB per 8-bit
+tile, 512 KiB per 16-bit tile). A depth conversion is one step that
+holds every layer's previous pixels (ADR 0018).
 
 ## 8. Composition and rendering
 
@@ -279,6 +286,16 @@ result replacing the colour as if the base were opaque), and the group
 meets the stack through the base's opacity and blend mode. Only group
 bases decide whether a tile needs the paper backdrop.
 
+Storage depth (ADR 0018): a document stores its layers at 8 or 16 bits
+per channel (`PixelDepth`, 8-bit by default), the same premultiplied
+sRGB-encoded values at two precisions; masks are 8-bit at every depth.
+`LayerPixels` decodes a tile to the same f32 composition at either depth
+and is the only code that matches on the depth (generic per-pixel code
+is monomorphized; `with_pixel_type!` picks the instance once per call).
+8 → 16 is exact (widened content composes bit-identically), 16 → 8
+rounds to the nearest level. The composite handed to the renderer is
+RGBA8 at every depth: storage precision is not display precision.
+
 ## 9. UI overlay
 
 `tela-ui::UiLayer` runs egui each frame and implements the renderer's
@@ -320,8 +337,8 @@ composition cost. See [golden-tests.md](../golden-tests.md) and
 ## 12. Architectural limits (today)
 
 - Flat layer stack (no groups; clipping groups only); masks without apply/selection; 17 blend modes; blending over a translucent backdrop without paper does not match the reference (D-4C-1, unreachable today).
-- Undo history is in memory only, uncompressed, 256 KiB per changed tile per step (ADR 0015).
-- 8-bit layer storage; display texture limited to the GPU's max texture size.
+- Undo history is in memory only, uncompressed, 256 KiB (8-bit) or 512 KiB (16-bit) per changed tile per step (ADR 0015, 0018).
+- 8- or 16-bit layer storage per document, 8-bit masks, 8-bit display (no dithering, no HDR); display texture limited to the GPU's max texture size.
 - Document I/O does not exist.
 - The UI is functional, not designed; preset edits are not persisted.
 

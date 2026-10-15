@@ -1,15 +1,15 @@
 # Status
 
-Factual state of the project at the end of **phase 4D** (layer masks,
-clipping, alpha lock). Update this file at the end of every subphase.
+Factual state of the project at the end of **phase 4E** (16-bit
+storage). Update this file at the end of every subphase.
 
 ## Summary
 
 | | |
 |---|---|
-| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A, 4B, 4C and 4D complete** (parity gates recorded); 4E–4G await approval |
+| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A, 4B, 4C, 4D and 4E complete** (parity gates recorded); 4F–4G await approval |
 | Parity | Tracked in [PARITY.md](PARITY.md); nothing compared with the reference before phase 4 |
-| Tests | **288** passing, 0 failing (4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Tests | **324** passing, 0 failing (4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -36,6 +36,7 @@ clipping, alpha lock). Update this file at the end of every subphase.
 | Blend modes (4C) | Normal + 16 modes (multiply, screen, overlay, darken, lighten, color dodge/burn, hard/soft light, difference, exclusion, hue, saturation, color, luminosity, add); W3C formulas on sRGB-encoded values, paper as backdrop for blend tiles (ADR 0016); matches the reference's measured results within 1–2/255; selector in the layer panel; undoable |
 | Masks, clipping, alpha lock (4D) | One mask per layer (sparse 8-bit, new mask reveals all; paint reveals by stroke alpha, erase hides; enable/disable; delete), clipping groups (isolated, source-atop with the blend result, base opacity/mode/mask apply to the group; new layers inside a group are clipped), lock transparent pixels (source-atop paint, eraser unaffected); all measured against the reference and matching within 2/255 (ADR 0017); panel controls; undoable |
 | Undo/redo (4B) | Linear, swap-based history inside `Document` (ADR 0015): strokes, clear, create/delete/reorder layers, lock, rename, blend mode, opacity (consecutive edits merge); selection and visibility not recorded; add/remove undos restore the active layer; ignored during a stroke; 200 steps / 1 GiB by default; Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Undo/Redo buttons |
+| 16-bit storage (4E) | Per-document depth (8 or 16 bits per channel; 8-bit default), premultiplied sRGB-encoded `u16` (ADR 0018); exact 8 → 16 (composite unchanged), nearest-level 16 → 8, conversion as one undoable step; masks 8-bit; display 8-bit; New 8-bit / New 16-bit / To 8/16-bit in the panel; banding measured (16-bit within 0.75 level of exact where 8-bit is off by 25–136 levels) |
 
 ## Hardware validation
 
@@ -49,8 +50,9 @@ clipping, alpha lock). Update this file at the end of every subphase.
 ## Current limitations
 
 See [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) for the full list with
-priorities. Most relevant: no physical tablet validation; 8-bit storage
-(banding); document size bounded by GPU texture size; undo history uncompressed in memory; no
+priorities. Most relevant: no physical tablet validation; 8-bit default
+storage and 8-bit masks (16-bit documents optional), 8-bit display;
+document size bounded by GPU texture size; undo history uncompressed in memory; no
 document I/O; preset edits not persisted; UI unpolished.
 
 ## Phase 3.5 outcome
@@ -60,6 +62,16 @@ Ink API without raw handles, smaller brush API, preset hardening, domain
 rule moved out of app/UI, golden hygiene, property tests, enforced crate
 boundaries, crate/API docs, architecture docs, ADRs, handoff docs, check
 script. Details: [CHANGELOG.md](../CHANGELOG.md).
+
+## Phase 4E outcome
+
+16-bit storage per document with the reference observed first (it has no
+16-bit documents, no conversion, 8-bit exports; a 16-bit image opens
+there with its low byte dropped), parity gate recorded
+([parity/4E-16bit.md](parity/4E-16bit.md)); banding measured objectively
+(`banding` example and test), memory and speed measured (`depth_bench`:
+composition 0.99–1.07×, commit 1.2–1.5×, memory 2×); 8-bit composition
+4–23 % faster than at the end of 4D; D12 decided (8-bit default).
 
 ## Phase 4D outcome
 
@@ -96,6 +108,7 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-4E (16-bit storage) — **only after the owner explicitly approves it**;
-its reference behaviours (banding, depth conversion) must be observed
-before implementing. See [phase4/PLAN.md](phase4/PLAN.md).
+4F (document I/O) — **only after the owner explicitly approves it**; its
+reference behaviours (file workflow, PNG fidelity, 16-bit import
+rounding, D-4E-2) must be observed before implementing. See
+[phase4/PLAN.md](phase4/PLAN.md).
