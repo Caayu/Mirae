@@ -1,5 +1,6 @@
 use std::fmt;
 
+use tela_canvas::TileCoord;
 use tela_color::PixelDepth;
 
 use crate::LayerId;
@@ -26,6 +27,9 @@ pub enum LayerError {
     HasMask(LayerId),
     /// A disabled mask cannot be painted on (reference behaviour).
     MaskDisabled(LayerId),
+    /// Pixels addressing a tile outside the representable range
+    /// ([`MAX_TILE_COORD`](crate::MAX_TILE_COORD)).
+    TileOutOfRange(TileCoord),
     /// A pixel edit was written for another depth than the document's
     /// (`document` is the depth the document stores).
     WrongDepth {
@@ -46,6 +50,7 @@ impl fmt::Display for LayerError {
             LayerError::NoMask(id) => write!(f, "{id} has no mask"),
             LayerError::HasMask(id) => write!(f, "{id} already has a mask"),
             LayerError::MaskDisabled(id) => write!(f, "the mask of {id} is disabled"),
+            LayerError::TileOutOfRange(c) => write!(f, "tile ({}, {}) is out of range", c.x, c.y),
             LayerError::WrongDepth { document, edit } => write!(
                 f,
                 "the document stores {}-bit pixels, not {}-bit",

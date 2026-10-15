@@ -1,4 +1,5 @@
 mod history;
+mod parts;
 
 use std::num::NonZeroU32;
 
@@ -6,7 +7,8 @@ use tela_canvas::{DirtyTiles, IRect, Tile, TileCoord};
 use tela_color::{PixelDepth, Rgba, StoragePixel};
 
 use self::history::{Change, History, layer_bytes, mask_bytes, pixels_bytes};
-pub use self::history::{HistoryAction, HistoryLimits};
+pub use self::history::{HistoryAction, HistoryLimits, Revision};
+pub use self::parts::{DocumentParts, LayerParts, MAX_TILE_COORD, MaskParts, PartsError};
 use crate::layer::LayerMask;
 use crate::pixels::{TileBackup, tile_bytes};
 use crate::{BlendMode, LayerError, LayerId, LayerPixels, RasterLayer};
@@ -224,6 +226,43 @@ impl Document {
         Ok(id)
     }
 
+    /// Adds a layer that already has pixels (an imported image) at `at`,
+    /// named `name`, and makes it active: one history step, like
+    /// [`Document::add_layer`] followed by a stroke would be two. The same
+    /// placement and clipping rules apply. Refused when the pixels are not
+    /// at the document's depth or address tiles out of range
+    /// ([`MAX_TILE_COORD`]). Returns the new id and the tiles to redraw.
+    pub fn add_layer_with_pixels(
+        &mut self,
+        at: Placement,
+        name: impl Into<String>,
+        pixels: LayerPixels,
+    ) -> Result<(LayerId, DirtyTiles), LayerError> {
+        let index = self.placement_index(at)?;
+        if pixels.depth() != self.depth {
+            return Err(LayerError::WrongDepth {
+                document: self.depth,
+                edit: pixels.depth(),
+            });
+        }
+        if let Some(c) = pixels.tile_coords().find(|&c| !parts::tile_in_range(c)) {
+            return Err(LayerError::TileOutOfRange(c));
+        }
+        let raw = self.next_id.ok_or(LayerError::IdsExhausted)?;
+        let id = LayerId::new(raw);
+        let mut layer = RasterLayer::new(id, name.into(), self.depth);
+        layer.clipped = self.layers.get(index).is_some_and(|l| l.clipped);
+        layer.pixels = pixels;
+        let cost = layer_bytes(&layer);
+        self.next_id = raw.checked_add(1);
+        self.layers.insert(index, layer);
+        let before = std::mem::replace(&mut self.active, id);
+        self.active_part = LayerPart::Pixels;
+        let change = Change::Presence { index, layer: None };
+        self.record(HistoryAction::ImportLayer, vec![change], before, cost);
+        Ok((id, self.group_tiles(index)))
+    }
+
     /// Removes a layer. If it was active, the layer below becomes active,
     /// or the one above when it was the bottom layer. Locked layers and the
     /// last layer cannot be removed.
@@ -291,7 +330,10 @@ impl Document {
             return Ok(DirtyTiles::new());
         }
         layer.visible = visible;
-        Ok(layer.tiles())
+        let dirty = layer.tiles();
+        // Not a history step, but what a file keeps (reference F3).
+        self.history.unrecorded += 1;
+        Ok(dirty)
     }
 
     /// Sets the layer opacity, clamped to `0..=1`. Refused on locked layers
@@ -313,7 +355,10 @@ impl Document {
             return Ok(DirtyTiles::new());
         }
         self.layers[i].opacity = opacity;
-        if !self.opacity_merges(id) {
+        if self.opacity_merges(id) {
+            // The merged step now leads elsewhere (a new revision).
+            self.renew_newest_step();
+        } else {
             let change = Change::Opacity {
                 layer: id,
                 other: old,

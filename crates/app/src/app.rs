@@ -766,6 +766,7 @@ fn history_label(action: HistoryAction) -> &'static str {
         HistoryAction::MaskEnabled => "enable mask",
         HistoryAction::PaintMask => "paint mask",
         HistoryAction::ConvertDepth => "convert depth",
+        HistoryAction::ImportLayer => "import image",
     }
 }
 

@@ -49,6 +49,17 @@ impl Default for HistoryLimits {
     }
 }
 
+/// A document's persistent content at one moment, see
+/// [`Document::revision`]. Opaque; only equality is meaningful.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Revision {
+    /// Serial of the newest undoable step (or of the newest step dropped,
+    /// when nothing is left to undo). Serials are never reused.
+    step: u64,
+    /// Count of non-recorded changes to persistent state.
+    unrecorded: u64,
+}
+
 /// What a history step did, e.g. to label undo/redo buttons.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryAction {
@@ -74,6 +85,9 @@ pub enum HistoryAction {
     PaintMask,
     /// The document changed depth ([`Document::convert_depth`]).
     ConvertDepth,
+    /// A layer added with pixels ([`Document::add_layer_with_pixels`],
+    /// an imported image).
+    ImportLayer,
 }
 
 impl HistoryAction {
@@ -81,7 +95,10 @@ impl HistoryAction {
     /// with them; every other undo/redo keeps the current selection
     /// (reference observations U4–U8, U10).
     fn restores_active(self) -> bool {
-        matches!(self, HistoryAction::AddLayer | HistoryAction::RemoveLayer)
+        matches!(
+            self,
+            HistoryAction::AddLayer | HistoryAction::RemoveLayer | HistoryAction::ImportLayer
+        )
     }
 }
 
@@ -206,6 +223,9 @@ pub(super) fn mask_bytes(mask: &LayerMask) -> usize {
 #[derive(Clone, Debug)]
 pub(super) struct Step {
     action: HistoryAction,
+    /// Unique within the document (never reused): identifies the state
+    /// this step leads to, see [`Document::revision`].
+    serial: u64,
     changes: Vec<Change>,
     active_before: LayerId,
     active_after: LayerId,
@@ -234,6 +254,14 @@ pub(super) struct History {
     /// by any other recorded step, undo, redo or a change of the active
     /// layer (reference observations U14–U17).
     pub(super) opacity_chain: Option<LayerId>,
+    /// Last serial handed to a step.
+    serial: u64,
+    /// Serial of the newest step dropped from the undo end (0 if none):
+    /// the state the document is in when nothing is left to undo.
+    base: u64,
+    /// Changes to persistent state that are not history steps (showing or
+    /// hiding a layer), counted so that [`Document::revision`] sees them.
+    pub(super) unrecorded: u64,
 }
 
 impl History {
@@ -248,7 +276,10 @@ impl History {
                 return;
             }
             let dropped = match self.undo.pop_front() {
-                Some(s) => s,
+                Some(s) => {
+                    self.base = s.serial;
+                    s
+                }
                 None => self.redo.remove(0),
             };
             self.reserved -= dropped.cost;
@@ -370,8 +401,10 @@ impl Document {
         }
         let cost = cost + size_of::<Step>();
         h.reserved += cost;
+        h.serial += 1;
         h.undo.push_back(Step {
             action,
+            serial: h.serial,
             changes,
             active_before,
             active_after: self.active,
@@ -379,6 +412,35 @@ impl Document {
         });
         h.opacity_chain = None;
         h.enforce();
+    }
+
+    /// Identifies the document's persistent content (what a file keeps)
+    /// at this moment: it changes with every recorded step, undo, redo and
+    /// non-recorded change of persistent state (visibility), and comes
+    /// back when undo or redo returns to an earlier state. Selecting a
+    /// layer or the edit target does not change it (reference F2).
+    ///
+    /// The app keeps the revision of its last save (its save point): the
+    /// document is modified while `revision() != saved`. Undoing back to
+    /// the saved state is clean again; a visibility change counts until
+    /// the next save even if it is reverted (no save point exists for
+    /// state outside the history, as in the reference, F3).
+    pub fn revision(&self) -> Revision {
+        let h = &self.history;
+        Revision {
+            step: h.undo.back().map_or(h.base, |s| s.serial),
+            unrecorded: h.unrecorded,
+        }
+    }
+
+    /// The newest step's content changed in place (an opacity edit merged
+    /// into it): it now leads to a new state, so it gets a new serial.
+    pub(super) fn renew_newest_step(&mut self) {
+        let h = &mut self.history;
+        if let Some(step) = h.undo.back_mut() {
+            h.serial += 1;
+            step.serial = h.serial;
+        }
     }
 
     /// Whether a new opacity value for `id` merges into the newest step.

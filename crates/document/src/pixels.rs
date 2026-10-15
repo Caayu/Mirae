@@ -64,6 +64,22 @@ impl LayerPixels {
         Self { storage }
     }
 
+    /// Pixels made of a stored surface (e.g. decoded from a file or an
+    /// image), at the depth `P` stores. A document accepts them only at
+    /// its own depth ([`Document::from_parts`](crate::Document::from_parts),
+    /// [`Document::add_layer_with_pixels`](crate::Document::add_layer_with_pixels)).
+    pub fn from_surface<P: StoragePixel>(surface: TiledSurface<P>) -> Self {
+        let any: Box<dyn Any> = Box::new(surface);
+        let storage = match any.downcast::<TiledSurface<[u8; 4]>>() {
+            Ok(s) => Storage::Rgba8(*s),
+            Err(any) => Storage::Rgba16(
+                *any.downcast::<TiledSurface<[u16; 4]>>()
+                    .expect("StoragePixel is implemented for [u8; 4] and [u16; 4] only"),
+            ),
+        };
+        Self { storage }
+    }
+
     /// Bits per channel of the stored pixels (the document's depth).
     pub fn depth(&self) -> PixelDepth {
         match self.storage {

@@ -160,6 +160,14 @@ impl LayerMask {
         255 - self.hidden.pixel(x, y)
     }
 
+    /// What one stored tile shows, row-major (255 shows the layer), or
+    /// `None` where the mask stores nothing there (it shows everything).
+    pub fn reveal_tile(&self, c: TileCoord) -> Option<impl ExactSizeIterator<Item = u8> + '_> {
+        self.hidden
+            .tile(c)
+            .map(|t| t.pixels().iter().map(|h| 255 - h))
+    }
+
     /// Tiles that hide something (the rest of the mask reveals).
     pub fn tile_count(&self) -> usize {
         self.hidden.tile_count()

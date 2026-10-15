@@ -637,3 +637,99 @@ fn depth_conversion_undoes_and_redoes_through_later_steps() {
     assert_eq!(d.digest(), last);
     d.check_invariants();
 }
+
+#[test]
+fn undo_and_redo_return_to_the_saved_revision() {
+    let mut d = Document::new(512, 512);
+    let l = d.active_layer();
+    let saved = d.revision();
+    stroke(&mut d, l, &[A], 1, 1);
+    let one = d.revision();
+    assert_ne!(one, saved, "a step is a modification");
+    d.undo().unwrap();
+    assert_eq!(
+        d.revision(),
+        saved,
+        "undoing back to the save point is clean"
+    );
+    d.redo().unwrap();
+    assert_eq!(d.revision(), one);
+    // A new branch never matches the discarded one, but undoing it
+    // returns to the common state.
+    d.undo().unwrap();
+    stroke(&mut d, l, &[A], 2, 2);
+    assert_ne!(d.revision(), one);
+    assert_ne!(d.revision(), saved);
+    d.undo().unwrap();
+    assert_eq!(d.revision(), saved);
+}
+
+#[test]
+fn merged_opacity_edits_are_new_revisions() {
+    let mut d = Document::new(512, 512);
+    let l = d.active_layer();
+    let saved = d.revision();
+    d.set_opacity(l, 0.5).unwrap();
+    let half = d.revision();
+    d.set_opacity(l, 0.25).unwrap();
+    assert_eq!(d.history_len(), 1, "merged into one step");
+    assert_ne!(d.revision(), half, "but the content changed");
+    d.undo().unwrap();
+    assert_eq!(d.revision(), saved);
+}
+
+#[test]
+fn visibility_is_a_modification_and_selection_is_not() {
+    let mut d = Document::new(512, 512);
+    let l1 = d.active_layer();
+    let l2 = d.add_layer(Placement::Top).unwrap();
+    d.add_mask(l2).unwrap();
+    let saved = d.revision();
+    // Reference F2: selecting a layer or the edit target changes nothing.
+    d.set_active_layer(l1).unwrap();
+    d.set_active_layer(l2).unwrap();
+    d.set_active_part(LayerPart::Mask).unwrap();
+    d.set_active_part(LayerPart::Pixels).unwrap();
+    assert_eq!(d.revision(), saved);
+    // Reference F3: hiding is a modification, and showing it again keeps
+    // it one (visibility is outside the history, so no save point).
+    d.set_visible(l1, false).unwrap();
+    let hidden = d.revision();
+    assert_ne!(hidden, saved);
+    d.set_visible(l1, true).unwrap();
+    assert_ne!(d.revision(), saved);
+    assert_ne!(d.revision(), hidden);
+    // A refused or no-op call changes nothing.
+    let now = d.revision();
+    d.set_visible(l1, true).unwrap();
+    assert!(d.set_opacity(l1, f32::NAN).is_err());
+    assert_eq!(d.revision(), now);
+}
+
+#[test]
+fn dropped_steps_never_make_an_older_revision_reappear() {
+    let mut d = Document::new(512, 512);
+    let l = d.active_layer();
+    d.set_history_limits(HistoryLimits {
+        max_steps: 2,
+        ..HistoryLimits::default()
+    });
+    let saved = d.revision();
+    for k in 1..=3 {
+        stroke(&mut d, l, &[A], k, 9);
+    }
+    while d.undo().is_some() {}
+    // The first stroke can no longer be undone: this state is not the
+    // saved (empty) one, and the revision says so.
+    assert_eq!(d.layer(l).unwrap().pixels().tile_count(), 1);
+    assert_ne!(d.revision(), saved);
+    // With history disabled every edit is still a new revision.
+    d.set_history_limits(HistoryLimits {
+        max_steps: 0,
+        ..HistoryLimits::default()
+    });
+    let before = d.revision();
+    stroke(&mut d, l, &[B], 1, 1);
+    assert!(!d.can_undo());
+    assert_ne!(d.revision(), before);
+}

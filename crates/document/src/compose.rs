@@ -110,18 +110,7 @@ impl Document {
             return false;
         }
 
-        // Only group bases (and base-less clipped layers) blend with the
-        // stack; their modes decide whether the paper is the backdrop.
-        let mut blends_here = false;
-        let (mut i, mut based) = (0, false);
-        while i < layers.len() {
-            let end = group_end(layers, i, based);
-            based |= !layers[i].clipped();
-            let base = &layers[i];
-            blends_here |= base.blend_mode() != BlendMode::Normal && draws(base);
-            i = end;
-        }
-        let backdrop = if blends_here {
+        let backdrop = if blends_with_paper(layers, &draws) {
             self.background().premultiply()
         } else {
             PremulRgba::TRANSPARENT
@@ -179,6 +168,33 @@ impl Document {
         }
         true
     }
+
+    /// Whether [`Document::compose_tile_into`] composes tile `coord` (with
+    /// no overlay) over the opaque paper: a visible non-Normal layer that
+    /// blends with the stack draws there. Such a tile has no transparent
+    /// composite to export: blending over a translucent backdrop without
+    /// the paper is the reference behaviour not yet known (D-4C-1).
+    pub fn paper_backdrop(&self, coord: TileCoord) -> bool {
+        let draws = |l: &RasterLayer| l.visible() && l.pixels().has_tile(coord);
+        blends_with_paper(self.layer_slice(), &draws)
+    }
+}
+
+/// Whether a non-Normal layer blends with the stack where `draws` holds:
+/// only group bases (and base-less clipped layers) blend with the stack,
+/// so only their modes decide whether the paper is the backdrop.
+fn blends_with_paper(layers: &[RasterLayer], draws: &impl Fn(&RasterLayer) -> bool) -> bool {
+    let (mut i, mut based) = (0, false);
+    while i < layers.len() {
+        let end = group_end(layers, i, based);
+        based |= !layers[i].clipped();
+        let base = &layers[i];
+        if base.blend_mode() != BlendMode::Normal && draws(base) {
+            return true;
+        }
+        i = end;
+    }
+    false
 }
 
 /// One layer's tile as it enters blending: its pixels, the overlay drawn
@@ -245,6 +261,15 @@ impl Default for ComposeScratch {
 }
 
 impl ComposeScratch {
+    /// The composite of the last [`Document::compose_tile_into`] that
+    /// returned `true`, before quantization: premultiplied `f32`, row-major
+    /// (pixels outside the document are not cleared here, only in
+    /// [`ComposeScratch::out`]). For exports that keep more than 8 bits or
+    /// add the paper in `f32`.
+    pub fn premultiplied(&self) -> &[PremulRgba] {
+        &self.acc
+    }
+
     pub fn new() -> Self {
         let n = (TILE_SIZE * TILE_SIZE) as usize;
         Self {
@@ -895,5 +920,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn paper_backdrop_and_premultiplied_follow_composition() {
+        let coord = TileCoord { x: 0, y: 0 };
+        let (mut d, base, top) = two_layers();
+        assert!(
+            !d.paper_backdrop(coord),
+            "Normal only: transparent backdrop"
+        );
+        let mut scratch = ComposeScratch::new();
+        assert!(d.compose_tile_into(coord, None, &mut scratch));
+        let quantized: Vec<[u8; 4]> = scratch
+            .premultiplied()
+            .iter()
+            .map(|p| p.to_rgba8())
+            .collect();
+        assert_eq!(quantized, scratch.out, "out is the quantized composite");
+        d.set_blend_mode(top, BlendMode::Screen).unwrap();
+        assert!(d.paper_backdrop(coord));
+        d.set_visible(top, false).unwrap();
+        assert!(!d.paper_backdrop(coord), "hidden layers do not blend");
+        // A clipped layer blends inside its group: only the base decides.
+        d.set_visible(top, true).unwrap();
+        d.set_clipped(top, true).unwrap();
+        assert!(!d.paper_backdrop(coord));
+        d.set_blend_mode(base, BlendMode::Multiply).unwrap();
+        assert!(d.paper_backdrop(coord));
+        assert!(!d.paper_backdrop(TileCoord { x: 5, y: 5 }), "nothing there");
     }
 }

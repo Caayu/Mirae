@@ -202,6 +202,9 @@ proptest! {
         let mut removed = Vec::new();
         let (mut past, mut future): (Vec<Entry>, Vec<Entry>) = (Vec::new(), Vec::new());
         let mut chain: Option<u32> = None;
+        // Every moment seen: equal revisions must mean equal content (a
+        // modified document never looks saved).
+        let mut seen: Vec<(crate::Revision, Digest)> = vec![(d.revision(), d.digest())];
         for op in &ops {
             let before = d.digest();
             let len_before = d.history_len();
@@ -268,6 +271,13 @@ proptest! {
             prop_assert_eq!(d.redo_len(), future.len());
             prop_assert!(d.history_bytes() <= d.history_reserved_bytes());
             prop_assert_eq!(d.next_undo().is_some(), !past.is_empty());
+            let now = (d.revision(), d.digest());
+            for (r, state) in &seen {
+                if *r == now.0 {
+                    prop_assert!(same_content(now.1.clone(), state), "equal revisions, different content after {:?}", op);
+                }
+            }
+            seen.push(now);
         }
     }
 
