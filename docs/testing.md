@@ -75,6 +75,14 @@ README, method in docs/parity/4C-blend.md). To re-measure:
 `blend_probe psd`, open and export in the reference as described in the
 parity record, `blend_probe read`.
 
+`crates/document/tests/clip_parity.rs` does the same for masks and
+clipping: the 34 `clip_probe` scenarios (2 × 2 176 swatches, with and
+without the reference's paper) built through the public `Document` API,
+within 2/255 (method in docs/parity/4D-masks-clipping-alpha-lock.md;
+`clip_probe psd`, export, `clip_probe read`; `clip_probe fit` compares
+the candidate clipping models). `mask_clip_properties.rs` property-tests
+mask and clipping composition over random stacks.
+
 ### Visual / golden tests
 
 `crates/corpus/tests/golden.rs` compares every built-in preset's sheet
@@ -91,6 +99,7 @@ cargo run --release -p tela-corpus --example stamp_bench        # stamping, allo
 cargo run --release -p tela-corpus --example history_bench      # commit/undo/redo time, history memory per stroke
 cargo run --release -p tela-corpus --example blend_bench        # composition ms/tile per blend mode, 2 and 10 layers
 cargo run --release -p tela-corpus --example blend_fit          # sRGB-encoded vs linear blending against the reference data
+cargo run --release -p tela-corpus --example mask_clip_bench    # masks, clipping groups, alpha lock: compose, preview, commit, mask history
 cargo run --release -p tela-brush --example stabilizer_bench     # phase 2 stabilizer table
 cargo run --release -p tela-brush --example interpolation_bench  # phase 2 interpolator table
 ```

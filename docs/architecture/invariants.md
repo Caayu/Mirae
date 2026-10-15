@@ -31,8 +31,8 @@ Test names are `crate::module::tests::name` for unit tests and
 | # | Invariant | Protected by |
 |---|---|---|
 | P1 | The live preview (including the end-taper tail) equals the committed stroke. | `brush::engine::tests::end_taper_preview_matches_final_result`, `brush::stroke::tests::tail_is_rebuilt_from_committed_and_can_be_committed` |
-| P2 | Preview composition and commit use the same math (`paint_over`, shared by `paint_over_tile` and `commit_tile`), for paint and erase. | `document::compose::tests::preview_matches_committed_result`, `document::compose::tests::eraser_preview_matches_committed_result`, golden sheets (rendered through `commit_tile`) |
-| P3 | A stroke previews on its own layer (named by id), under that layer's opacity **and blend mode**, exactly as after commit; a hidden target shows no preview, as a commit would show nothing. | `document::compose::tests::preview_matches_committed_result`, `…::preview_targets_its_layer_by_id_not_by_position`, `…::preview_matches_commit_in_every_mode` |
+| P2 | Preview composition and commit use the same math for paint, erase and alpha-preserving paint (`paint_over`, shared by `paint_over_tile` and `commit_tile`, selected by `PixelAlpha`) and for mask strokes (`alpha_over`, shared by `paint_alpha_tile` and `commit_alpha_tile`). | `document::compose::tests::preview_matches_committed_result`, `…::eraser_preview_matches_committed_result`, `…::preview_matches_commit_across_masks_clipping_lock_and_modes`, `brush::stroke::tests::alpha_channel_preview_matches_commit`, golden sheets (rendered through `commit_tile`) |
+| P3 | A stroke previews on its own target (layer by id, its pixels or its mask, fixed when the stroke begins), under that layer's mask, opacity, clipping group **and blend mode**, exactly as after commit (within 1/255); a hidden target shows no preview, as a commit would show nothing. | `…::preview_matches_committed_result`, `…::preview_targets_its_layer_by_id_not_by_position`, `…::preview_matches_commit_in_every_mode`, `…::preview_matches_commit_across_masks_clipping_lock_and_modes` (126 cases) |
 
 ## Document (layer stack)
 
@@ -68,7 +68,7 @@ Added in phase 4B (ADR 0015). Unit tests in
 | H3 | Recording a step after an undo discards the redoable steps. | `new_edits_discard_redo`, property test |
 | H4 | The history respects `HistoryLimits`: at most `max_steps` steps; reserved bytes ≤ `max_bytes` unless a single step is kept alone; held bytes ≤ reserved bytes. | `step_limit_drops_the_oldest_steps`, `byte_limit_keeps_an_oversized_step_alone`, `history_stays_within_small_limits` |
 | H5 | Undo and redo copy no tile: buffers, surfaces and layers are swapped. | `undo_and_redo_swap_tiles_instead_of_copying_them`, `clearing_moves_the_surface_into_history`, `removed_layers_come_back_with_their_id_position_and_pixels` (buffer addresses) |
-| H6 | Every public mutation is recorded, except the documented non-historical `set_active_layer` and `set_visible`; no-ops and refused calls record nothing. | Privacy (history is a private submodule of `document`); `every_recorded_mutation_is_one_step_and_the_others_none` |
+| H6 | Every public mutation is recorded, except the documented non-historical `set_active_layer`, `set_active_part` and `set_visible`; no-ops and refused calls record nothing. | Privacy (history is a private submodule of `document`); `every_recorded_mutation_is_one_step_and_the_others_none` |
 | H7 | One `modify_tiles` call (one stroke) is one step. | `stroke_undo_redo_is_bit_exact_and_restores_absent_tiles`, property test |
 | H8 | Consecutive opacity edits of one layer form one step until something else is recorded, undone/redone, or the active layer changes (reference behaviour). | `opacity_edits_merge_until_something_interrupts_them`, property test |
 | H9 | A tile absent before a step is absent again after undoing it. | `stroke_undo_redo_is_bit_exact_and_restores_absent_tiles`, property test (digests list tiles) |
@@ -93,13 +93,35 @@ Added in phase 4B (ADR 0015). Unit tests in
 | C1 | `Normal` composition is bit-identical to the pre-4C compositor (same code path); tiles where only Normal layers draw keep a transparent backdrop. | `document::compose::tests::normal_only_tiles_keep_a_transparent_backdrop`, existing compose tests, brush goldens |
 | C2 | A fully transparent source pixel leaves the destination unchanged in every mode. | `document::blend::tests::transparent_source_is_the_identity_in_every_mode`, property test `transparent_source_never_changes_the_destination` |
 | C3 | Every mode outputs finite, valid premultiplied pixels (components in [0,1], colour ≤ alpha) with the W3C alpha `αs + αb(1 − αs)`. | property test `every_mode_yields_valid_premultiplied_pixels` |
-| C4 | Blending uses the published W3C formula and blend functions on sRGB-encoded values; a tile drawing a non-Normal layer has the paper as opaque bottom backdrop. | `opaque_results_follow_the_published_blend_functions`, `non_separable_modes_keep_the_published_components`, `blend_layers_see_the_paper` |
+| C4 | Blending uses the published W3C formula and blend functions on sRGB-encoded values; a tile in which a non-Normal layer blends with the stack (a group base or a base-less layer; clipped layers blend inside their group) has the paper as opaque bottom backdrop. | `opaque_results_follow_the_published_blend_functions`, `non_separable_modes_keep_the_published_components`, `blend_layers_see_the_paper` |
 | C5 | Over its paper, Tela matches the reference's measured blend results within 1/255 (2/255 Color, Luminosity) for every probed combination. | `crates/document/tests/blend_parity.rs` (3 400 combinations) |
 | C6 | The blend sheet renders deterministically and equal to its reviewed golden (± 1/255). | `crates/document/tests/blend_sheet.rs` |
 | C7 | Composition stays allocation-free in every mode. | `blend_bench` (allocations column), `stamp_bench` |
 
 T3 (`over` is associative) holds for Normal only; the other modes are not
 associative, so the stack order matters.
+
+## Masks, clipping, alpha lock (phase 4D, ADR 0017)
+
+Also checked by the extended model test `document::properties::layer_stack_matches_the_reference_model`
+and history test `document::history_properties::history_matches_a_stack_of_snapshots`.
+
+| # | Invariant | Protected by |
+|---|---|---|
+| M1 | A layer without a mask, or with a new one, composes exactly as before masks existed. | `document::compose::tests::a_new_mask_changes_nothing_and_allocates_nothing`, existing compose tests and goldens |
+| M2 | A disabled mask is exactly equivalent to no mask. | `…::a_disabled_mask_is_the_same_as_no_mask`, property test `mask_clip_properties.rs::disabled_masks_equal_absent_masks` |
+| M3 | An absent mask tile is exactly the default state (reveals everything): a new mask stores no tile, and no stored tile reveals everything. | `document::document::tests::masks_start_revealing_everything_and_become_the_target`, `…::modify_mask_shows_reveal_values_and_keeps_the_mask_sparse`, `check_invariants` after every model step |
+| M4 | A mask stroke previews exactly as it commits (within 1/255). | `brush::stroke::tests::alpha_channel_preview_matches_commit`, `document::compose::tests::preview_matches_commit_across_masks_clipping_lock_and_modes` |
+| M5 | Undo/redo of mask edits (add, remove, enable, strokes) is bit-exact and swaps tiles (no copies). | `document::document::history::tests::mask_edits_undo_and_redo_bit_exactly`, `…::mask_undo_swaps_tiles_and_restores_absent_ones`, history property test |
+| A1 | With alpha lock, a paint stroke never changes any pixel's alpha. | `brush::stroke::tests::preserved_alpha_paints_atop_and_never_changes_alpha`, property test `brush/tests/properties.rs::preserved_alpha_never_changes_alpha` |
+| A2 | With alpha lock, no pixel appears where alpha was 0. | same |
+| A3 | Preview with alpha lock equals the commit; the eraser erases with or without the lock (reference A3). | `…::preview_matches_commit_across_masks_clipping_lock_and_modes`, `brush::stroke::tests::preserved_alpha_does_not_stop_the_eraser` |
+| CL1 | Clipped content shows only inside its base's (masked) alpha: hiding clipped layers never changes the composite's coverage; a hidden base hides its group. | `document::compose::tests::clipped_layers_show_only_inside_the_base_alpha`, property test `clipped_layers_never_change_coverage`, `blend::tests::clip_atop_keeps_the_group_alpha_in_every_mode` |
+| CL2 | Clipped layers apply in stack order, deterministically; a clipped layer with no base is ordinary. | `clip_parity.rs` (`two_clips`, `three_clips`, `clips_swapped`, `orphan_clip`), `…::a_clipped_layer_without_a_base_is_ordinary` |
+| CL3 | Turning clipping off restores exactly the ordinary composition. | `…::unclipping_restores_the_ordinary_composition` |
+| CL4 | Undo/redo restore clip flags and therefore groups; structural edits invalidate every layer whose group changes. | `…::mask_edits_undo_and_redo_bit_exactly`, history property test, `document::document::tests::group_changes_invalidate_the_clipped_layers_too` |
+| CL5 | Over and without its paper, Tela matches the reference's measured mask and clipping results within 2/255 for every probed swatch. | `crates/document/tests/clip_parity.rs` (2 × 2 176 swatches) |
+| CL6 | Composites with masks and clipping stay valid premultiplied pixels and allocation-free. | property test `composites_stay_valid_premultiplied`, `mask_clip_bench` (allocations column) |
 
 ## Robustness
 

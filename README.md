@@ -7,8 +7,9 @@ is original ([docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md)).
 
 **Status:** phases 1–3 complete (canvas, tablet input, brush engine);
 phase 3.5 (architecture audit and handoff) complete; phase 4 in progress:
-4A (layer stack), 4B (undo/redo) and 4C (blend modes) complete, 4D–4G
-(masks, 16-bit, I/O) planned. 255 tests passing. Windows is the
+4A (layer stack), 4B (undo/redo), 4C (blend modes) and 4D (masks,
+clipping, alpha lock) complete, 4E–4G (16-bit, I/O, integration) planned.
+288 tests passing. Windows is the
 primary platform (Windows Ink); no physical tablet has been validated yet.
 Details: [docs/STATUS.md](docs/STATUS.md).
 
@@ -29,8 +30,10 @@ powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # full local gate
 Pen (Windows Ink: pressure, tilt, rotation, eraser end) and mouse share one
 input path. The panel on the left edits the active preset, its effectors
 and the pressure curve; the layer panel on the right creates, selects,
-hides, locks, reorders and deletes layers and sets their opacity. The pen
-works on the panels too.
+hides, locks, reorders and deletes layers, sets their opacity and blend
+mode, clips a layer to the one below, locks transparent pixels, and adds,
+enables, edits (Pixels / Mask) and deletes layer masks. The pen works on
+the panels too.
 
 | Input | Action |
 |---|---|

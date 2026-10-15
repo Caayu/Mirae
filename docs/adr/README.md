@@ -23,6 +23,7 @@ and both say so.
 | [0014](0014-document-layer-model.md) | Document layer model: stable ids, relative placement, one pixel-mutation path | 4A |
 | [0015](0015-undo-redo-tile-swap.md) | Undo/redo inside `Document`, swap-based steps, reference-derived semantics, byte/step limits | 4B |
 | [0016](0016-blend-modes-and-compositing-space.md) | Blend modes: W3C formulas on sRGB-encoded values (chosen by measurement), paper as backdrop for blend tiles | 4C |
+| [0017](0017-masks-clipping-alpha-lock.md) | Layer masks (inverted sparse 8-bit), isolated clipping groups with opaque-blend source-atop, alpha lock as source-atop (all measured) | 4D |
 
 ## Writing a new ADR
 

@@ -25,8 +25,8 @@ measured performance, documented decisions.
 
 Phase 4 (layers and document) is approved as a plan
 ([phase4/PLAN.md](phase4/PLAN.md)) and runs subphase by subphase:
-**4A** (layer API), **4B** (undo/redo) and **4C** (blend modes) are
-complete. Every later subphase (4D…4G) needs the owner's explicit
+**4A** (layer API), **4B** (undo/redo), **4C** (blend modes) and **4D**
+(masks, clipping, alpha lock) are complete. Every later subphase (4E…4G) needs the owner's explicit
 approval before it starts, and every subphase ends with
 a **parity gate** recorded in [PARITY.md](PARITY.md). Facts:
 [STATUS.md](STATUS.md).
@@ -60,7 +60,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 255 tests, ~15 s after build
+cargo test --workspace --release        # 288 tests, ~15 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -135,7 +135,8 @@ easily broken:
 
 1. Same preset + seed + samples ⇒ bit-identical dabs (counter-based RNG).
 2. Dab placement independent of sample density.
-3. Preview == committed result (shared `paint_over_tile`, live tail).
+3. Preview == committed result (shared `paint_over_tile` / `paint_alpha_tile`,
+   live tail; stroke target captured at stroke start).
 4. Parallel stamping bit-identical to sequential.
 5. Airbrush independent of frame rate.
 6. Invalid presets never panic; unknown values are neutral.
@@ -150,7 +151,9 @@ easily broken:
 separate stroke buffer, CPU composition + GPU display texture, One Euro,
 centripetal Catmull–Rom, counter-based RNG, versioned JSON presets,
 canvas-space textures, bit-identical parallel stamping, egui isolation,
-golden corpus, time-instant airbrush.
+golden corpus, time-instant airbrush, document layer model, swap-based
+undo, blend modes measured against the reference, masks/clipping/alpha lock
+measured against the reference (0014–0017).
 
 ## 15. Completed features
 

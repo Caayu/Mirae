@@ -158,3 +158,69 @@ tan 215,145,90.
 Not observed: pressure on masks (M5), commands during a stroke (A7),
 undo/redo of create mask followed by the target state, masks on a
 16-bit or colour-managed document.
+
+## Tela design derived from the observations (ADR 0017)
+
+| Obs. | Tela 4D |
+|---|---|
+| K1 | `BlendMode::clip_atop`: source-atop with `Cs' = B(Cb, Cs)`; the clipping group is composed apart from the stack. |
+| K2, K3 | The group enters the stack with the base's opacity and blend mode; the base's mask scales the base before the clipped layers are applied. |
+| K4, K5 | The mask multiplies the layer's premultiplied pixels before opacity/clipping/blend; a disabled mask is skipped. |
+| K6 | Not modelled: Tela masks have no rectangle; the default (reveal) covers the whole mask, stored tiles can hold any value. |
+| K7–K10 | Hidden base skips its group; hidden clipped layers are skipped; stack order; unclipped layers end a group; base-less clipped layers are ordinary. |
+| K11 | Only group bases decide whether a tile is composed over the paper; clipping is independent of D-4C-1. |
+| A1–A3 | `PixelAlpha::Preserved` = source-atop for paint, erase unchanged; captured from the layer's `alpha_locked` when a stroke begins. |
+| A4, M1, M6, M12, C1 | Steps: `AlphaLock`, `AddMask`, `MaskEnabled`, `RemoveMask`, `PaintMask`, `Clip`. |
+| A6 | Locked layers refuse `add_mask`, `remove_mask`, `modify_mask`, `set_clipped`, `set_alpha_locked`; allow `set_mask_enabled`. |
+| M1 | A new mask stores no tile (reveals everything) and becomes the target of the active layer. |
+| M2–M4 | `paint_alpha_tile` / `commit_alpha_tile`: paint adds the stroke's alpha to the reveal value, erase removes it; colour ignored. |
+| M8, M11 | `LayerPart` target in `Document`, outside history; `set_active_layer` targets pixels. |
+| M9, M10 | `paint_target(id, LayerPart::Mask)` refuses hidden layers and disabled masks. |
+| C2, C3 | The clip flag belongs to the layer; groups are recomputed from positions at every composition. |
+| C4, C5 | `add_layer` clips the new layer iff the layer above its position is clipped. |
+| M13 | Not reproduced: "Delete mask" is its own button, without the apply question (deletion is undoable). |
+
+## Tela results
+
+Tela at commit 27499af (59eaa53 later changed only internal blend loops, results identical by test), Windows 11, 2560×1440, maximized, default
+4000×3000 document fitted to the window. The app paints black only (no
+colour picker yet), so colour-dependent combinations are covered by the
+measured tests, and the running app checks what alpha shows.
+
+### Measured tests
+
+| Check | Result |
+|---|---|
+| `clip_parity::masks_and_clipping_match_the_reference_over_its_paper` | All 2 176 swatches, built through `Document`'s public API, within 2/255 (premultiplied) of the reference. |
+| `clip_parity::masks_and_clipping_match_the_reference_without_paper` | All 2 176 swatches within 2/255. |
+| Planted bugs | Clipped layers blended as ordinary layers: 255/255 off; masks ignored: 215/255 (with paper), 255/255 (without). |
+| Preview == commit matrix | 126 combinations (pixels/mask × paint/erase × alpha lock × Normal/Multiply/Screen × mask absent/enabled/disabled × unclipped / clipped / stroke on the base) within 1/255. |
+
+### Running app (mouse; synthetic Windows Ink pen where stated)
+
+| Ref. | Tela behaviour | How verified |
+|---|---|---|
+| M1 | "Add mask": composite unchanged (stroke pixel stays 0), the row shows `[editing mask]`, the Mask target is selected. | App |
+| M3, M4 | On the mask, the eraser hides (stroke 0 → paper 255); the brush reveals (255 → 0); brushing where the layer has no pixels adds nothing. | App |
+| M5 | Synthetic pen at pressure 0.25 reveals a 7 px band, at 1.0 a 20 px band (the preset's size × pressure): the mask receives the stroke as it was drawn. The reference could not be compared (M5). | App, synthetic pen |
+| M6, M7 | Mask on/off checkbox shows/hides the effect; undo/redo walk mask strokes and the toggle exactly (pixel values at each step as expected). | App |
+| A1, A2 | Alpha lock on a layer with a 40 % black band: a full-opacity black stroke leaves the band at 153 (alpha kept) and paints nothing outside it; without the lock the same stroke gives 0 inside and outside. | App |
+| A3 | Eraser with alpha lock on: erases the band (153 → 255). | App |
+| C1 | A layer clipped to that band: its stroke shows 153 over the 40 % band, 0 over an opaque part, nothing over the erased gap or outside the base. Unclipping shows the stroke everywhere (0); undo/redo toggle it back and forth. | App |
+| K7 | Hiding the base hides the clipped stroke (153 → 255); showing it brings it back. | App |
+| K3 | A mask on the base, erased in one place, hides the clipped stroke there too. | App |
+| C4, C5 | New layer with the base active → inserted above it, clipped ("> Layer 3"); with the topmost clipped layer active → not clipped. | App |
+| A7 / mid-stroke | Not exercisable: holding the synthetic pen and clicking another layer with the mouse makes Windows end the pen contact before the click is processed. The dot was committed to the layer captured when the stroke began (it disappears when that layer is hidden). The guard itself is 4A's (O14), unchanged. | App, synthetic pen |
+
+## Differences
+
+| # | Difference | Kind | Status |
+|---|---|---|---|
+| D-4D-1 | Pressure on masks not compared: the reference ignores this machine's synthetic pen pressure (M5). Tela's mask receives the stroke's pressure dynamics like pixels do. | Coverage | Open (needs a physical tablet) |
+| D-4D-2 | Not implemented: apply mask to layer, mask from a selection (no selections yet), "show mask area", unlinking the mask from the layer. | Feature | Open |
+| D-4D-3 | Deleting a mask: the reference's delete button asks whether to apply the mask first; Tela has a separate "Delete mask" button that deletes it (undoable) without asking. | UI | Open (with D-4D-2: apply) |
+| D-4D-4 | Masks with a stored rectangle and an outside default (K6) have no Tela equivalent; behaviour inside the document is the same. | Representation | Accepted (only reachable through imported files; revisit with 4F import) |
+| D-4D-5 | Colour-dependent clip/blend combinations are verified by the measured tests, not in the running app (it paints black only). | Coverage | Open until a colour picker exists |
+| D-4D-6 | A non-Normal **base** over a translucent backdrop without paper follows W3C (D-4C-1); not reachable in Tela. | Behavioural | Open with D-4C-1 |
+| D-4D-7 | Not compared: target after undo/redo of mask creation (Tela: pixels when the mask is gone, unchanged otherwise), commands during a stroke (A7), masks on 16-bit or colour-managed documents, speed against the reference. | Coverage | Open |
+| D-4D-8 | Panel: Tela shows text markers ("> " for clipped, "α", "[mask]", "[editing mask]") instead of the reference's clip bar and mask thumbnails. | UI | Accepted (own identity) |

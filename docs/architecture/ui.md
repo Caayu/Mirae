@@ -26,7 +26,8 @@ What matters is where it sits in the architecture.
    `BrushPanel::show` returns a `PanelAction` (`SelectPreset`,
    `ToggleEraser`, `ClearLayer`, `Layer(..)`); the app applies it. The layer
    panel (`layer_panel`) gets one `LayerRow` per layer (key, name,
-   visibility, lock, opacity, active) and returns a `LayerAction`; keys are
+   visibility, lock, opacity, blend, active, clipped, alpha lock, mask
+   state, whether the mask is the edit target) and returns a `LayerAction`; keys are
    mapped back to layers with `Document::find_layer`, so a row that went
    stale is simply refused. `tela-ui` does not depend on `tela-document`.
    Controls the document would refuse are greyed out (delete on a locked
@@ -73,6 +74,11 @@ redraw:
 - The blend-mode selector receives labels and an index (`LayerRow::blend`)
   and returns `LayerAction::SetBlendMode(index)`; the app maps it to
   `BlendMode::ALL`.
+- Clipping, alpha lock and the mask (add, delete, on/off, edit pixels or
+  mask) are `LayerAction`s on the active layer (`SetClipped`,
+  `SetAlphaLocked`, `AddMask`, `RemoveMask`, `SetMaskEnabled`, `EditMask`);
+  the rows show text markers ("> " clipped, "α", "[mask]", "[mask off]",
+  "[editing mask]"), not thumbnails.
 - Undo/Redo buttons (`history_bar`) receive only labels (`HistoryButtons`)
   and return a `HistoryCommand`; the app maps document `HistoryAction`s to
   text.

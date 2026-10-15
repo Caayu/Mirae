@@ -141,11 +141,14 @@ or per dab once buffers have grown (measured, see performance.md).
 4. `end_stroke()`: flushes filters, lets the stabilizer catch up to the last
    real sample, emits the final tail and commits it; returns the
    `StrokeBuffer`.
-5. The app commits into the layer it fixed when the stroke began:
-   `document.modify_tiles(target, stroke.touched(), |c, t| stroke.commit_tile(c, t))`,
+5. The app commits into the target it fixed when the stroke began
+   (`StrokeTarget`: layer id, its pixels or its mask, alpha free or
+   preserved): pixels with
+   `document.modify_tiles(layer, stroke.touched(), |c, t| stroke.commit_tile(c, t, alpha))`,
+   a mask with `document.modify_mask(layer, …, |c, t| stroke.commit_alpha_tile(c, t))`,
    and marks the returned tiles stale. Strokes do not start on hidden or
-   locked layers (`Document::paint_target`), and layer commands are ignored
-   while a stroke is in progress.
+   locked layers or disabled masks (`Document::paint_target`), and layer
+   commands are ignored while a stroke is in progress.
 
 ### Stroke buffer
 
@@ -156,8 +159,13 @@ ceiling: `if target > m { m += (target − m) · flow · coverage }`, where
 never exceeds the largest opacity that touched a pixel; flow controls the
 build-up. The tail lives in copy-on-write tiles seeded from the committed
 mask, so it can be rebuilt every frame. Paint composites as premultiplied
-`color·m over dst`; erase as destination-out `dst·(1 − m)`. Preview and commit
-call the same `paint_over_tile` (ADR 0003, invariants).
+`color·m over dst`; erase as destination-out `dst·(1 − m)`. With the
+layer's alpha lock (`PixelAlpha::Preserved`) paint is source-atop
+`color·m·αd + dst·(1 − m)` (alpha unchanged) and erase is unchanged. On a
+layer mask the stroke's alpha applies to the reveal value: paint
+`a + m(1 − a)`, erase `a(1 − m)`, colour ignored (ADR 0017). Preview and commit
+share each rule (`paint_over_tile` / `commit_tile`, `paint_alpha_tile` /
+`commit_alpha_tile`; ADR 0003, invariants P2, M4, A3).
 
 ## 6. Presets, effectors, tips, textures, scatter, airbrush
 
@@ -235,10 +243,12 @@ App::redraw (one frame)
   stale += stroke.take_dirty()
   for tile in stale:
      document.compose_tile_into(tile, overlay = stroke preview, scratch)
-        backdrop: transparent, or the opaque paper if a non-Normal layer
-        draws in this tile; layers bottom->top in premultiplied f32, each
-        with its blend mode; the stroke is painted onto its target layer
-        before that layer's opacity and blend (preview == commit)
+        backdrop: transparent, or the opaque paper if a non-Normal group
+        base draws in this tile; layers bottom->top in premultiplied f32:
+        pixels (+ stroke preview), mask (+ mask-stroke preview), then
+        each clipping group composed apart (base, clipped layers
+        source-atop) and blended with the base's opacity and mode
+        (preview == commit)
      renderer.upload_tile(tile, rgba8)  -> CPU mip chain -> display texture
   ui.build(...)                      egui panel, returns occupied rects
   renderer.render_with(frame, overlay = UiLayer)
@@ -259,6 +269,15 @@ Because the reference's paper is a layer that blend modes see, a tile in
 which any visible non-Normal layer draws is composed over the opaque paper
 colour; Normal-only tiles keep the transparent backdrop (bit-identical to
 the pre-4C output) and get the paper in the display shader.
+
+Masks and clipping (ADR 0017, measured against the reference): a layer's
+mask (inverted sparse 8-bit, absent = reveals) scales its alpha before
+opacity and blend; a clipping group (an unclipped base and the clipped
+layers directly above it) is composed in a reusable group buffer, each
+clipped layer applied with `BlendMode::clip_atop` (source-atop, the blend
+result replacing the colour as if the base were opaque), and the group
+meets the stack through the base's opacity and blend mode. Only group
+bases decide whether a tile needs the paper backdrop.
 
 ## 9. UI overlay
 
@@ -300,7 +319,7 @@ composition cost. See [golden-tests.md](../golden-tests.md) and
 
 ## 12. Architectural limits (today)
 
-- Flat layer stack (no groups); 17 blend modes; blending over a translucent backdrop without paper does not match the reference (D-4C-1, unreachable today).
+- Flat layer stack (no groups; clipping groups only); masks without apply/selection; 17 blend modes; blending over a translucent backdrop without paper does not match the reference (D-4C-1, unreachable today).
 - Undo history is in memory only, uncompressed, 256 KiB per changed tile per step (ADR 0015).
 - 8-bit layer storage; display texture limited to the GPU's max texture size.
 - Document I/O does not exist.

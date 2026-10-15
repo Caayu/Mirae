@@ -3,6 +3,43 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 4D — layer masks, clipping, alpha lock
+
+### Added
+- `clip_probe` (PSD test documents with clipping, masks, hidden layers;
+  reads the reference's exports; `fit` compares clipping models) and the
+  reference's measured results with and without its paper; `tela-corpus`
+  gains a `psd` writer module (0fbc792).
+- `docs/parity/4D-masks-clipping-alpha-lock.md`: composition measured and
+  UI behaviour observed in the reference before implementing (8319a06).
+- `PixelAlpha` (alpha lock as source-atop; the eraser unaffected) and
+  alpha-channel strokes for masks (`paint_alpha_tile`,
+  `commit_alpha_tile`) in `StrokeBuffer` (01c388e).
+- Layer masks (`LayerMask`, `add_mask`, `remove_mask`, `set_mask_enabled`,
+  `modify_mask`), clipping (`set_clipped`, `BlendMode::clip_atop`, group
+  composition), alpha lock (`set_alpha_locked`), edit target
+  (`LayerPart`, `active_part`, `set_active_part`), all recorded in history;
+  `OverlayPaint::{Pixels, Mask}`; `clip_parity` (2 × 2 176 measured
+  swatches) and the preview == commit matrix (0fd0ab2); ADR 0017.
+- Property tests for masks, clipping and alpha lock (c898e0e).
+- Panel controls: Clip, Lock alpha, Add/Delete mask, Pixels/Mask target,
+  mask on/off; the app captures the stroke target at stroke start
+  (27499af).
+- `mask_clip_bench` (59eaa53).
+
+### Changed
+- `paint_over_tile` / `commit_tile` take a `PixelAlpha`;
+  `Document::paint_target` takes a `LayerPart`; `Overlay::paint` is an
+  `OverlayPaint`.
+- Structural edits (move, remove, clip toggle and their undo) invalidate
+  the clipped layers whose group changes.
+- Only group bases decide whether a tile is composed over the paper.
+
+### Parity
+- 4D gate recorded: clipping composed in isolation with the blend result
+  replacing the colour (measured; W3C atop and non-isolated rejected),
+  masks and alpha lock as observed; every probed swatch within 2/255.
+
 ## Phase 4C — blend modes and compositor
 
 ### Added

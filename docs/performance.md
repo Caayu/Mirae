@@ -91,6 +91,56 @@ recorded): before 0.111 / 0.112 / 0.123 ms, after 0.114 / 0.116 / 0.123 ms
 per tile, 0 allocations — within run-to-run noise. `commit_into` no longer
 allocates its 1 MiB scratch (row buffer on the stack in `commit_tile`).
 
+### Phase 4D — masks, clipping, alpha lock
+
+`mask_clip_bench` (2048² document, every tile filled with the
+`blend_bench` filler; clipped/upper layers at 80 %; ms per composed
+256×256 tile, two runs):
+
+| stack | ms/tile | allocations |
+|---|---:|---:|
+| 1 layer | 0.349 / 0.344 | 0 |
+| 1 layer + new (empty) mask, 0 tiles stored | 0.347 / 0.346 | 0 |
+| 1 layer + fully stored mask | 0.399 / 0.402 | 0 |
+| 2 layers, Normal (4C baseline) | 0.506 / 0.515 | 0 |
+| base + 1 clipped, Normal | 0.516 / 0.526 | 0 |
+| 2 layers, top Multiply | 0.725 / 0.712 | 0 |
+| base + 1 clipped, Multiply | 0.610 / 0.610 | 0 |
+| 6 layers, Normal | 1.146 / 1.137 | 0 |
+| base + 5 clipped, Normal | 1.211 / 1.206 | 0 |
+| base + 5 clipped, Multiply | 1.666 / 1.664 | 0 |
+| base and clipped layer both with stored masks | 0.622 / 0.622 | 0 |
+
+Stroke operations (120 px soft round across the diagonal, 28 tiles):
+
+| operation | ms per tile |
+|---|---:|
+| preview on pixels | 0.304 / 0.301 |
+| preview on pixels, alpha locked | 0.303 / 0.300 |
+| preview on the mask | 0.300 / 0.303 |
+| commit, alpha free (with the history copy) | 0.327 / 0.330 |
+| commit, alpha locked (with the history copy) | 0.324 / 0.317 |
+
+Mask erase stroke over a new mask (27 tiles stored): commit 3.4 ms,
+undo/redo 3–4 µs (swap), history holds 1 770 168 bytes after undo
+(27 × 64 KiB + per-entry overhead).
+
+- A new mask costs nothing (no tile); a fully stored mask adds ~15 % to a
+  single layer. A clipped Normal layer costs 2–6 % more than an ordinary
+  one (group buffer); a clipped Multiply costs less than an unclipped one
+  (the atop mix is simpler than the W3C general formula).
+- Alpha lock costs nothing measurable in preview or commit.
+- Memory: a mask tile is 64 KiB; masks store only tiles that hide
+  something; history keeps 64 KiB per changed mask tile. The compose
+  scratch grew from 2.25 MiB to 3.5 MiB (`group` 1 MiB, `mask` 256 KiB),
+  allocated once.
+- Unchanged from 4C (4C commit 552310b built in a worktree, run
+  interleaved in the same session): `blend_bench` within run-to-run
+  noise for every mode; `stamp_bench` composition 0.106 ms per tile in
+  both, allocations per dab 0.000; `history_bench` equal. A first version
+  that shared the blend loops through a generic was 5–16 % slower in
+  several modes and was replaced (ADR 0017, decision 10).
+
 ### Phase 4C — blend modes
 
 `blend_bench` (2048² document, every tile filled with mixed opaque and
