@@ -1,1 +1,4 @@
 * text=auto eol=lf
+# Binary formats: never convert line endings or diff as text.
+*.mirae binary
+*.png binary
