@@ -92,6 +92,86 @@ recorded): before 0.111 / 0.112 / 0.123 ms, after 0.114 / 0.116 / 0.123 ms
 per tile, 0 allocations — within run-to-run noise. `commit_into` no longer
 allocates its 1 MiB scratch (row buffer on the stack in `commit_tile`).
 
+### Phase 4G — integration, documents at scale
+
+`cargo run --release -p tela-corpus --example doc_bench` (full run about
+a minute; `-- --quick` takes ~3 s and is part of `check.ps1 -Bench`, which
+fails if composition allocates). Same machine; raw output of the run is
+summarised here, memory in [memory.md](memory.md).
+
+**Regression check of 4F against 4E** (composition, `stamp_bench`, three
+interleaved runs in a temporary worktree of 497b006): 4E 0.111 / 0.118 /
+0.111 ms, 4F 0.116 / 0.113 / 0.122 ms per tile — inside run-to-run noise
+(±5 %). The brush, canvas and color crates did not change in phase 4F–4G.
+`stamp_bench` in 4G: 374 666 dabs/s (5 px hard), 481 (500 px), 0.000
+allocations in all 20 rows; parallel speed-up at 500 px hard varied
+2.8–3.3× between runs (noise, not a regression). `blend_bench` and
+`history_bench` are faster than their 4C/4B records (Normal 10 layers
+1.48 vs 2.0 ms; history ~2×): machine state, not code.
+
+**One tile against the layer count** (every layer draws in the tile,
+opacity 0.85; ms per 256² tile; 0 allocations in every row):
+
+| layers' mode | bits | 1 | 10 | 50 | 100 |
+|---|---:|---:|---:|---:|---:|
+| Normal | 8 | 0.374 | 1.604 | 6.394 | 12.426 |
+| Normal | 16 | 0.331 | 1.502 | 6.894 | 13.665 |
+| Multiply | 8 | 0.527 | 3.204 | 14.982 | 29.682 |
+| Soft Light | 8 | 0.656 | 4.347 | 22.197 | 44.442 |
+| Soft Light | 16 | 0.672 | 4.643 | 23.093 | 46.034 |
+| Normal + mask | 8 | 0.373 | 1.931 | 8.970 | 18.096 |
+| clipping (every 2nd) | 8 | 0.320 | 1.479 | 6.572 | 13.248 |
+| mask + clipping | 8 | 0.383 | 2.030 | 9.435 | 18.811 |
+
+Cost is linear in layers (~125 µs per Normal layer per tile, ~300
+Multiply, ~445 Soft Light; a mask adds ~55 µs). A temporary profiling
+split (not committed) put one layer's cost per tile at: decode of the
+stored tile 64 µs (8-bit) / 69 µs (16-bit), Normal blend 65 µs, Multiply
+351 µs, Soft Light 532 µs; a plain copy 18 µs. The bottleneck is per-pixel
+`f32` work, single-threaded, with nothing cached below the stroke target
+(TECHNICAL_DEBT #33).
+
+**Realistic 4096² documents** (mostly Normal; every 10th of three layers
+in Multiply/Screen/Overlay, every 5th clipped, every 7th masked; stroke
+frame = 4 tiles):
+
+| document | layers | bits | stored tiles | pixels MiB | full redraw ms | stroke frame ms | save s | load s | file MiB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| sparse 5 % | 10 | 8 | 149 | 37 | 46 | 1.23 | 0.24 | 0.08 | 14 |
+| sparse 5 % | 10 | 16 | 149 | 74 | 48 | 1.20 | 0.96 | 0.20 | 58 |
+| sparse 5 % | 50 | 8 | 683 | 171 | 162 | 3.41 | 1.08 | 0.33 | 62 |
+| sparse 5 % | 50 | 16 | 683 | 342 | 169 | 3.43 | 4.36 | 0.90 | 263 |
+| sparse 5 % | 100 | 8 | 1 328 | 332 | 281 | 5.32 | 2.13 | 0.65 | 122 |
+| sparse 5 % | 100 | 16 | 1 328 | 664 | 296 | 5.66 | 8.42 | 1.84 | 513 |
+| partial 30 % | 10 | 8 | 765 | 191 | 192 | 3.61 | 1.25 | 0.37 | 70 |
+| partial 30 % | 10 | 16 | 765 | 382 | 185 | 3.75 | 4.97 | 1.02 | 295 |
+| partial 30 % | 50 | 8 | 3 864 | 966 | 756 | 11.26 | 6.65 | 2.05 | 356 |
+| partial 30 % | 50 | 16 | 3 864 | 1 932 | 770 | 11.68 | 25.98 | 5.48 | 1 491 |
+| dense 100 % | 10 | 8 | 2 560 | 640 | 562 | 8.82 | 4.54 | 1.34 | 233 |
+| dense 100 % | 10 | 16 | 2 560 | 1 280 | 615 | 12.41 | 16.35 | 3.60 | 984 |
+
+Masks add 0–12 MiB. Full redraw happens on opening and on visibility or
+mode changes; a stroke frame is what drawing costs per update.
+
+**History on a 4096² document** (commit includes the history copy):
+
+| operation | bits | tiles | commit ms | undo / redo ms | held MiB |
+|---|---:|---:|---:|---:|---:|
+| stroke 25 px × 1 000 px | 8 / 16 | 8 | 4.8 / 5.6 | ≤ 0.01 | 2 / 4 |
+| stroke 500 px × 3 000 px | 8 / 16 | 50 | 47.3 / 49.6 | ≤ 0.01 | 12 / 24 |
+| mask stroke 500 px × 3 000 px | 8 / 16 | 50 | 36.2 / 35.1 | ≤ 0.01 | 0 (3 reserved) |
+| clear or remove a layer | 8 / 16 | 64 | 0.0 | ≤ 0.01 | 16 / 32 |
+| convert depth | 8 → 16 / 16 → 8 | 320 | 40.6 / 43.5 | ≤ 0.08 | 80 / 160 |
+
+`io_bench` reproduced 4F (4096² × 10 full: 8-bit save 2.06 s / load
+0.82 s; 16-bit 6.36 / 1.65 s; peak extra memory 1.3–3 MiB).
+
+**What this means** (no optimization was done in 4G): typical documents
+(≤ 50 layers, mostly Normal, partial coverage) draw inside a 60 Hz budget;
+about 100 overlapping Normal layers, or 40 Soft Light layers, under a
+stroke exceed it. Saving a large 16-bit document blocks for many seconds
+(TECHNICAL_DEBT #28).
+
 ### Phase 4F — document I/O
 
 `cargo run --release -p tela-io --example io_bench` (Ryzen 7 5800X, NVMe,
@@ -352,8 +432,11 @@ app with F3 (title bar) or `RUST_LOG=tela::latency=debug`.
   document, ~6 s at 16 bits (deflate-bound; 4F).
 - 16-bit documents double pixel and history memory (ADR 0018); the
   1 GiB history budget holds half as many 16-bit tiles.
-- CPU composition scales with layers × dirty tiles; many layers will want
-  GPU composition or cached groups (phase 4+).
+- CPU composition scales with layers × dirty tiles, single-threaded:
+  ~12 ms per tile for 100 Normal layers, ~44 ms for 100 Soft Light (4G);
+  directions in TECHNICAL_DEBT #33 (cache below the stroke target,
+  parallel dirty tiles, GPU later).
+- Saving 50 partial 16-bit 4096² layers takes ~26 s (4G, `doc_bench`).
 - The display texture must fit the GPU's max texture size.
 
 ## Rules
