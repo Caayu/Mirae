@@ -7,8 +7,10 @@ conversation. Read it fully, then these, all **mandatory**:
 2. [architecture/invariants.md](architecture/invariants.md)
 3. [PARITY.md](PARITY.md) — parity goal, states, the parity gate every
    subphase must pass, and the current matrix
-4. [STATUS.md](STATUS.md), [ROADMAP.md](ROADMAP.md) and the current phase
-   plan ([phase4/PLAN.md](phase4/PLAN.md))
+4. [STATUS.md](STATUS.md), [ROADMAP.md](ROADMAP.md), the report of the
+   last phase ([phase4/README.md](phase4/README.md)) and the proposal for
+   the next ([phase5/PROPOSAL.md](phase5/PROPOSAL.md); once the owner
+   approves a phase 5 plan, that plan replaces it here)
 
 ## 1. Mission
 
@@ -24,15 +26,18 @@ measured performance, documented decisions.
 
 ## 2. Current state
 
-Phase 4 (layers and document) is approved as a plan
-([phase4/PLAN.md](phase4/PLAN.md)) and runs subphase by subphase:
-**4A** (layer API), **4B** (undo/redo), **4C** (blend modes), **4D**
-(masks, clipping, alpha lock), **4E** (16-bit storage) and **4F**
-(document I/O: the `.mirae` format, PNG, the file workflow) are complete.
-The last subphase (4G) needs the owner's explicit approval before
-it starts, and every subphase ends with
-a **parity gate** recorded in [PARITY.md](PARITY.md). Facts:
-[STATUS.md](STATUS.md).
+**Phase 4 (layers and document) is complete**: 4A (layer API), 4B
+(undo/redo), 4C (blend modes), 4D (masks, clipping, alpha lock), 4E
+(16-bit storage), 4F (document I/O: the `.mirae` format, PNG, the file
+workflow) and 4G (integration, benchmarks, hardening), each with a
+**parity gate** recorded in [PARITY.md](PARITY.md) (which ends with a
+phase-4 parity summary). Report: [phase4/README.md](phase4/README.md).
+Facts: [STATUS.md](STATUS.md).
+
+**Phase 5 is proposed, not approved, not started**
+([phase5/PROPOSAL.md](phase5/PROPOSAL.md)). A new session starts by
+asking the owner which plan to follow; it never begins phase 5 (or any
+subphase of it) on its own.
 
 ## 3. Repository
 
@@ -63,7 +68,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 386 tests, ~20 s after build
+cargo test --workspace --release        # 401 tests, ~30 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -71,12 +76,14 @@ cargo test --workspace --release        # 386 tests, ~20 s after build
 ```sh
 cargo clippy --workspace --all-targets --release -- -D warnings
 powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # fmt, clippy, test, strict doc, build
+powershell -ExecutionPolicy Bypass -File scripts\check.ps1 -Bench   # + stamp_bench, doc_bench --quick (fails if composition allocates)
 ```
 
 ## 8. Benchmarks
 
 ```sh
 cargo run --release -p tela-corpus --example stamp_bench        # ~1 min
+cargo run --release -p tela-corpus --example doc_bench          # 1-100 layers, 4096² documents, history, memory; ~1 min (--quick ~3 s)
 cargo run --release -p tela-corpus --example depth_bench        # 8 vs 16-bit, ~20 s
 cargo run --release -p tela-io --example io_bench              # .mirae save/load, ~40 s
 cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit banding, ~2 s
@@ -107,7 +114,9 @@ lists the pen devices Windows sees. Pitfalls on this machine: PowerShell swallow
 `--` argument; the pt-BR locale formats decimals with commas (use
 `[string]::Format([cultureinfo]::InvariantCulture, ...)` when generating
 numbers in PowerShell); kill a running `tela.exe` before rebuilding or the
-link step fails with "Acesso negado".
+link step fails with "Acesso negado". Ctrl+Shift+S never reaches the
+app on this machine (another program holds it as a global hotkey); use
+Shift+Alt+S for Save As.
 
 ## 10. Architecture in brief
 
@@ -177,10 +186,10 @@ and file workflow (0020).
 
 ## 15. Completed features
 
-Phases 1–3 + 3.5; see [STATUS.md](STATUS.md#features) and
+Phases 1–4 + 3.5; see [STATUS.md](STATUS.md#features) and
 [CHANGELOG.md](../CHANGELOG.md). Phase reports: [phase2](phase2/README.md),
-[phase3](phase3/README.md) (phase 1 has no separate report; it is
-summarized in the changelog).
+[phase3](phase3/README.md), [phase4](phase4/README.md) (phase 1 has no
+separate report; it is summarized in the changelog).
 
 ## 16. Limitations
 
@@ -188,7 +197,10 @@ summarized in the changelog).
 8-bit default storage and 8-bit masks and display (16-bit documents
 optional), GPU texture size limit, undo history uncompressed in memory,
 UI edits not persisted, synchronous saving (no autosave), transparent
-export refused where D-4C-1 applies, goldens verified on one machine.
+export refused where D-4C-1 applies, goldens verified on one machine,
+the app paints black only, CPU composition single-threaded and linear in
+layers (#33), over-budget depth conversions hold both copies (#34).
+Memory model: [memory.md](memory.md).
 
 ## 17. Risks
 
@@ -211,19 +223,25 @@ claim physical-tablet validation that has not happened.
 
 `crates/corpus/golden/*.png`, compared by `cargo test`. Update only
 deliberately: `TELA_UPDATE_GOLDEN=1 cargo test --release -p tela-corpus --test golden`
-(exact value `1`), after inspecting the images. [golden-tests.md](golden-tests.md).
+(exact value `1`), after inspecting the images. Also the blend sheet
+(`document/tests/blend_sheet.rs`) and the integrated session golden
+(`corpus/tests/pipeline.rs`). [golden-tests.md](golden-tests.md).
 
 ## 20. Current performance
 
 0 allocations per dab (sequential path; parallel: rayon queue blocks only); ~375 k dabs/s at 5 px, ~490 dabs/s at 500 px hard
-(single thread), ~3× parallel at 500 px; 0.107 ms per composed tile.
+(single thread), ~3× parallel at 500 px; 0.107–0.13 ms per composed tile
+(2 layers); with every layer drawing in the tile 1.6 ms (10 Normal
+layers), 12.4 ms (100), 44 ms (100 Soft Light).
 [performance.md](performance.md).
 
 ## 21. Next steps
 
-1. Follow [phase4/PLAN.md](phase4/PLAN.md) one subphase at a time
-   (4A → 4B → 4C → 4D → 4E → 4F → 4G); never start the next subphase
-   without the owner's explicit approval.
+1. Ask the owner whether the phase-5 proposal
+   ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)) is approved, changed or
+   replaced. Write the approved plan as `docs/phase5/PLAN.md` (as
+   [phase4/PLAN.md](phase4/PLAN.md) was) and follow it one subphase at a
+   time; never start a phase or subphase without explicit approval.
 2. Close every subphase with its parity gate ([PARITY.md](PARITY.md)).
    Where the reference defines a behaviour (clipping, masks, alpha lock,
    blend results), observe it **before** implementing.

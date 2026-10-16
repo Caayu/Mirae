@@ -13,17 +13,21 @@ gate.
 | 2 | Windows Ink input (pressure, tilt, rotation, history, QPC timestamps), dynamics with curves, stabilizers, interpolation, sample-rate-invariant spacing, live tapers | **Complete** ([report](phase2/README.md)) |
 | 3 | Professional brush engine: versioned presets, generic effectors, procedural/image tips, canvas-space textures, scatter, time-based airbrush, eraser, egui panel and curve editor, golden corpus, parallel stamping | **Complete** ([report](phase3/README.md)) |
 | 3.5 | Architecture audit, Rust idioms, boundaries enforced, documentation, ADRs, handoff | **Complete** (see STATUS.md) |
-| 4 | Layers and document: 4A layer API · 4B undo/redo · 4C blend modes · 4D masks, clipping, alpha lock · 4E 16-bit · 4F document I/O · 4G integration | **In progress** — plan approved ([phase4/PLAN.md](phase4/PLAN.md)); 4A–4F complete; 4G awaits approval |
-| 5 | Vector layers and editing | Planned |
-| 6 | Selections, transform, fill, gradients | Planned |
-| 7 | Rulers, symmetry, perspective | Planned |
-| 8 | Wet media, color mixing, advanced brushes | Planned |
+| 4 | Layers and document: 4A layer API · 4B undo/redo · 4C blend modes · 4D masks, clipping, alpha lock · 4E 16-bit · 4F document I/O · 4G integration | **Complete** ([report](phase4/README.md), [plan](phase4/PLAN.md)) |
+| 5 | **Proposed** (not approved): editing fundamentals — 5A colour · 5B layer workflow + translucent-backdrop probe, merge down · 5C selections · 5D transform · 5E fill · 5F gradients · 5G integration | Awaiting the owner ([proposal](phase5/PROPOSAL.md)) |
+| later | In the proposal's recommended order: layer folders + GPU compositing decision · vector layers · rulers, symmetry, perspective · advanced brushes (colour mixing, wet media, preset management) · comic tools, colour management | Planned |
+
+The table before phase 4G planned phase 5 as vector layers and phase 6 as
+selections/transform/fill/gradients; the proposal reorders them by
+dependency (selections and colour first, vector layers after transform).
+The owner decides.
 
 ## Phase 4
 
-The approved plan, decisions and per-subphase parity gates are in
-[phase4/PLAN.md](phase4/PLAN.md). Sequence: 4A → 4B → 4C → 4D → 4E → 4F →
-4G, each subphase approved separately.
+Complete. Plan, decisions and per-subphase parity gates in
+[phase4/PLAN.md](phase4/PLAN.md); the phase report (what was built,
+benchmarks, invariants, parity, limitations, remaining debt) in
+[phase4/README.md](phase4/README.md).
 
 ## Later goals (unordered)
 

@@ -3,6 +3,54 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 4 complete
+
+Layers and document, seven subphases, each with a parity gate: a layer
+API with stable ids (4A), undo/redo (4B), 17 measured blend modes (4C),
+masks, clipping and alpha lock (4D), 16-bit storage (4E), the `.mirae`
+format, PNG and the desktop file workflow (4F), integration and hardening
+(4G). 207 → 401 tests; ADRs 0014–0020. Report:
+[docs/phase4/README.md](docs/phase4/README.md).
+
+## Phase 4G — integration, benchmarks, hardening
+
+### Added
+- End-to-end tests in `crates/corpus/tests/`: scenarios A–G, a whole
+  drawing session with an integrated golden
+  (`tests/golden/document_session.png`), 16 seeded random sessions
+  (`MIRAE_SEED=` reruns one), stress tests; every stroke checks preview ==
+  commit, every step the public invariants, every scenario undo/redo
+  walks and save/load round trips (7caaee7).
+- `doc_bench`: composition against 1–100 layers per mode, mask and
+  clipping at both depths; realistic 4096² documents (redraw, stroke
+  frame, save, load, memory); history costs; building-block memory.
+  `check.ps1 -Bench` runs its `--quick` form and fails if composition
+  allocates (b216eea).
+- `docs/memory.md` (memory model and worst cases), `docs/phase4/README.md`
+  (phase report), `docs/parity/4G-integration.md`, `docs/phase5/PROPOSAL.md`
+  (next macrophase, not approved).
+
+### Fixed
+- PNG decoder limit errors reported `found: u64::MAX` and the default
+  limit instead of the configured one; `IoError::LimitExceeded.found` is
+  now `Option<u64>` (c3b2b85).
+- A refused PNG import was only logged; the app now shows a notice
+  (c3b2b85).
+- The `unsafe` inventory lacked the allocators of `mask_clip_bench` and
+  `depth_bench` (since 4D/4E) (c3b2b85).
+
+### Measured
+- No regression of 4F against 4E (A/B composition within noise).
+  Composition is linear in layers: 12.4 ms per tile for 100 Normal
+  layers, 44 ms for 100 Soft Light (TECHNICAL_DEBT #33); depth conversion
+  of a huge document holds both copies (#34).
+
+### Parity
+- 4G gate recorded: no new comparison; every 4C–4F dataset re-run in the
+  integrated stack; a real 8- and 16-bit session in the running app;
+  every recorded difference reviewed (D-4A-7, D-4E-2, D-4E-3 resolved by
+  earlier subphases). Phase-4 parity summary in `docs/PARITY.md`.
+
 ## Phase 4F — document I/O (the product is now named Mirae)
 
 ### Added

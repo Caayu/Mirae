@@ -11,7 +11,9 @@ Approved by the owner on 2026-10-14 (sequence 4A → 4B → 4C → 4D → 4E →
 | 4D | **Complete** (parity gate: [parity/4D-masks-clipping-alpha-lock.md](../parity/4D-masks-clipping-alpha-lock.md); ADR 0017) |
 | 4E | **Complete** (parity gate: [parity/4E-16bit.md](../parity/4E-16bit.md); ADR 0018) |
 | 4F | **Complete** (parity gate: [parity/4F-file-workflow.md](../parity/4F-file-workflow.md); ADR 0019, 0020) |
-| 4G | Awaiting the owner's approval | **Each subphase needs the owner's explicit approval before it
+| 4G | **Complete** (parity gate: [parity/4G-integration.md](../parity/4G-integration.md)); phase report: [README.md](README.md) |
+
+**Each subphase needs the owner's explicit approval before it
 starts**, and each ends with a parity gate ([PARITY.md](../PARITY.md)).
 
 ## Rules for the whole phase
@@ -237,6 +239,14 @@ End-to-end headless scenarios (layers, modes, masks, clipping, undo,
 save/load); `doc_bench` (layers × modes × depth, undo memory, save/load);
 real-app scenarios; documentation and phase report; final parity summary.
 
+As built: `crates/corpus/tests/` (`scenarios.rs` A–G, `pipeline.rs` with
+an integrated golden, `random_sessions.rs`, `stress.rs`) and
+`crates/corpus/examples/doc_bench.rs` (its `--quick` run gates
+`check.ps1 -Bench`); [memory.md](../memory.md); performance, testing,
+invariants, debt and parity summaries rewritten for the end of the phase.
+No architecture changed; three audit fixes (PNG limit errors, import
+refusals as notices, the `unsafe` inventory).
+
 ## Decisions
 
 | # | Decision | Status |
@@ -266,6 +276,7 @@ real-app scenarios; documentation and phase report; final parity summary.
 1. Preview == commit across modes × masks × clipping × lock × depth.
 2. Undo memory with large brushes and 16-bit.
 3. The file format becomes a permanent compatibility promise.
-4. CPU composition scaling with many layers (measured in 4G; solved later).
+4. CPU composition scaling with many layers (measured in 4G: linear,
+   ~12 ms per tile for 100 Normal layers; TECHNICAL_DEBT #33; solved later).
 5. UI crate growth.
 6. Still no physical tablet.

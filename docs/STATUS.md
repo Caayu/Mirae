@@ -1,15 +1,15 @@
 # Status
 
-Factual state of the project at the end of **phase 4F** (document
-I/O). The product is named **Mirae** (crates keep their `tela-` names). Update this file at the end of every subphase.
+Factual state of the project at the end of **phase 4** (4G: integration
+and hardening). The product is named **Mirae** (crates keep their `tela-` names). Update this file at the end of every subphase.
 
 ## Summary
 
 | | |
 |---|---|
-| Current phase | Phase 4 plan approved ([phase4/PLAN.md](phase4/PLAN.md)); **4A, 4B, 4C, 4D, 4E and 4F complete** (parity gates recorded); 4G awaits approval |
-| Parity | Tracked in [PARITY.md](PARITY.md); nothing compared with the reference before phase 4 |
-| Tests | **386** passing, 0 failing (4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Current phase | **Phase 4 complete** (4A–4G, parity gates recorded; [phase4/README.md](phase4/README.md)); phase 5 proposed ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)), **not started**, awaits the owner |
+| Parity | Tracked in [PARITY.md](PARITY.md) (phase-4 summary: validated, known differences, not measured); nothing compared with the reference before phase 4 |
+| Tests | **401** passing, 0 failing (4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -31,7 +31,7 @@ I/O). The product is named **Mirae** (crates keep their `tela-` names). Update t
 | Eraser | Destination-out through the same engine; stylus eraser end switches automatically; `E` for the mouse |
 | UI | egui side panel: presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
-| Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile |
+| Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile (2 layers); per tile with every layer drawing: 1.6 ms (10 Normal layers), 12.4 ms (100), 44 ms (100 Soft Light); 0 allocations in composition ([performance.md](performance.md), [memory.md](memory.md)) |
 | Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. no file I/O |
 | Blend modes (4C) | Normal + 16 modes (multiply, screen, overlay, darken, lighten, color dodge/burn, hard/soft light, difference, exclusion, hue, saturation, color, luminosity, add); W3C formulas on sRGB-encoded values, paper as backdrop for blend tiles (ADR 0016); matches the reference's measured results within 1–2/255; selector in the layer panel; undoable |
 | Masks, clipping, alpha lock (4D) | One mask per layer (sparse 8-bit, new mask reveals all; paint reveals by stroke alpha, erase hides; enable/disable; delete), clipping groups (isolated, source-atop with the blend result, base opacity/mode/mask apply to the group; new layers inside a group are clipped), lock transparent pixels (source-atop paint, eraser unaffected); all measured against the reference and matching within 2/255 (ADR 0017); panel controls; undoable |
@@ -56,7 +56,26 @@ storage and 8-bit masks (16-bit documents optional), 8-bit display;
 document size bounded by GPU texture size; undo history uncompressed in memory;
 saving and loading synchronous (no autosave, recent files or background
 save); transparent export refused for non-Normal stack blending (D-4C-1);
-preset edits not persisted; UI unpolished.
+CPU composition single-threaded and linear in layers (TECHNICAL_DEBT #33);
+the app paints black only; preset edits not persisted; UI unpolished.
+
+## Phase 4G outcome
+
+Integration and hardening, no new features. End-to-end tests drive the
+whole stack with real brush strokes (scenarios A–G, a whole drawing
+session with an integrated golden, 16 randomized sessions, stress: 300
+layers, histories past the step limit, 40 save/load cycles, fully tiled
+4096² layers); every measured parity dataset of 4C–4F re-run and passing;
+`doc_bench` measures composition against 1–100 layers, realistic 4096²
+documents (redraw, stroke frame, save, load), history and memory, and
+gates `check.ps1 -Bench` on zero composition allocations; the memory
+model is written down ([memory.md](memory.md)). No regression found
+against 4E (A/B inside noise). Audit fixes: PNG decoder limit errors
+showed nonsense numbers, import refusals were only logged, two
+benchmarks' allocators were missing from the `unsafe` inventory. A real
+8- and 16-bit session in the running app (mouse and synthetic pen)
+passed; Ctrl+Shift+S is taken by another program on the development
+machine. Parity record: [parity/4G-integration.md](parity/4G-integration.md).
 
 ## Phase 3.5 outcome
 
@@ -126,5 +145,8 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-4G (integration, benchmarks, hardening) — **only after the owner
-explicitly approves it**. See [phase4/PLAN.md](phase4/PLAN.md).
+Phase 4 is complete. Phase 5 is **proposed, not started**:
+[phase5/PROPOSAL.md](phase5/PROPOSAL.md) (recommended: editing
+fundamentals — colour, layer workflow with the translucent-backdrop probe
+and merge down, selections, transform, fill, gradients). Nothing of it
+begins until the owner approves the proposal and then each subphase.

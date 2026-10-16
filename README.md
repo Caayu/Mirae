@@ -5,11 +5,11 @@ A professional raster illustration editor written from scratch in Rust
 clean-room: behaviour may be studied from the outside, the implementation
 is original ([docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md)).
 
-**Status:** phases 1–3 complete (canvas, tablet input, brush engine);
-phase 3.5 (architecture audit and handoff) complete; phase 4 in progress:
-4A (layer stack), 4B (undo/redo), 4C (blend modes), 4D (masks,
-clipping, alpha lock) and 4E (16-bit storage) complete, 4F–4G (I/O,
-integration) planned. 324 tests passing. Windows is the
+**Status:** phases 1–4 complete (canvas, tablet input, brush engine,
+architecture audit, and layers and document: layer stack, undo/redo,
+blend modes, masks, clipping, alpha lock, 16-bit storage, `.mirae`
+files and PNG, integration). Phase 5 is proposed, not started. 401 tests
+passing. Windows is the
 primary platform (Windows Ink); no physical tablet has been validated yet.
 Details: [docs/STATUS.md](docs/STATUS.md).
 
@@ -99,9 +99,12 @@ enforced by a test. Read [docs/architecture/ARCHITECTURE.md](docs/architecture/A
 
 ## Tests
 
-Over 380 tests: unit, integration, property (`proptest`), golden images of every
+401 tests: unit, integration, property (`proptest`), golden images of every
 built-in preset, GPU display tests (skipped without a GPU) and crate
-boundary checks, file-format corruption and compatibility tests. Benchmarks are separate examples. See
+boundary checks, file-format corruption and compatibility tests, parity
+tests against data measured in the reference, and end-to-end sessions
+(scenarios, randomized sessions, stress). Benchmarks are separate
+examples (`scripts\check.ps1 -Bench` runs the gating ones). See
 [docs/testing.md](docs/testing.md) and [docs/golden-tests.md](docs/golden-tests.md).
 
 ## Documentation
@@ -113,10 +116,11 @@ boundary checks, file-format corruption and compatibility tests. Benchmarks are 
 | [docs/adr/](docs/adr/README.md) | Architecture decision records |
 | [docs/formats/mirae-v1.md](docs/formats/mirae-v1.md) | The `.mirae` document format |
 | [docs/PARITY.md](docs/PARITY.md) | Parity with the reference, per subsystem |
-| [docs/performance.md](docs/performance.md) | Hot paths and current numbers |
+| [docs/performance.md](docs/performance.md), [docs/memory.md](docs/memory.md) | Hot paths and current numbers; memory model |
 | [docs/STATUS.md](docs/STATUS.md), [docs/ROADMAP.md](docs/ROADMAP.md), [docs/TECHNICAL_DEBT.md](docs/TECHNICAL_DEBT.md) | Where the project stands and goes |
+| [docs/phase5/PROPOSAL.md](docs/phase5/PROPOSAL.md) | Proposal for the next phase (not approved) |
 | [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md), [CHANGELOG.md](CHANGELOG.md) | How to work on it; history |
-| [docs/phase2/](docs/phase2/README.md), [docs/phase3/](docs/phase3/README.md) | Phase reports with evidence |
+| [docs/phase2/](docs/phase2/README.md), [docs/phase3/](docs/phase3/README.md), [docs/phase4/](docs/phase4/README.md) | Phase reports with evidence |
 
 ## Roadmap
 
@@ -124,11 +128,9 @@ boundary checks, file-format corruption and compatibility tests. Benchmarks are 
 - [x] Phase 2 — Windows Ink input, pressure, interpolation, stabilization ([report](docs/phase2/README.md))
 - [x] Phase 3 — brush presets, effectors, tips, textures, airbrush, eraser ([report](docs/phase3/README.md))
 - [x] Phase 3.5 — architecture audit, boundaries, documentation, handoff
-- [ ] Phase 4 — layers, blend modes, undo/redo, masks, 16-bit storage, document I/O
-- [ ] Phase 5 — vector layers and editing
-- [ ] Phase 6 — selections, transform, fill, gradients
-- [ ] Phase 7 — rulers, symmetry, perspective
-- [ ] Phase 8 — wet media, color mixing, advanced brushes
+- [x] Phase 4 — layers, blend modes, undo/redo, masks, 16-bit storage, document I/O, integration ([report](docs/phase4/README.md))
+- [ ] Phase 5 — proposed: colour, layer workflow, selections, transform, fill, gradients ([proposal](docs/phase5/PROPOSAL.md), awaiting approval)
+- [ ] Later — layer folders, vector layers, rulers/symmetry/perspective, advanced brushes, comic tools, colour management ([roadmap](docs/ROADMAP.md))
 
 ## Clean-room notice
 
