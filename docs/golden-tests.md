@@ -82,6 +82,17 @@ displayed) and compares it with `crates/document/tests/golden/blend_sheet.png`
 The reference's agreement is checked separately, numerically, by
 `blend_parity.rs` against measured data (`tests/reference/`).
 
+## Integrated session (phase 4G)
+
+`crates/corpus/tests/pipeline.rs` builds one 1100 × 700 drawing session
+with real brushes through every phase-4 feature (layers, blend modes,
+clipping, a mask, alpha lock, opacity) and compares its composite over
+the paper, as the screen shows it, with
+`crates/corpus/tests/golden/document_session.png`, with the default
+thresholds above. It pins how the features combine; the brush goldens and
+the blend sheet pin them apart. Update only deliberately, after looking at
+it: `TELA_UPDATE_GOLDEN=1 cargo test --release -p tela-corpus --test pipeline`.
+
 ## Known limitation
 
 The references were produced and verified on one machine (Windows, x86-64,

@@ -11,8 +11,9 @@ already `opt-level = 1`, so plain `cargo test` also works, slower.) The full
 gate, including fmt, clippy, docs and the release build, is
 `scripts/check.ps1` (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
-Counts at the end of phase 3.5: **207 tests**, all passing (phase 3 ended
-with 188). GPU tests skip themselves when no adapter is available.
+Counts at the end of phase 4: **401 tests**, all passing (phase 3.5
+ended with 207, phase 3 with 188). GPU tests skip themselves when no
+adapter is available.
 
 ## Kinds of tests
 
@@ -49,6 +50,10 @@ clock (`tablet`), curve-editor geometry (`ui`), tools selection (`app`).
 | `io/tests/png.rs` | PNG export against the compositor, import precision for every (colour, alpha) pair, 16-bit images, centring, colour types, interlaced images, limits. |
 | `io/tests/png_parity.rs` | PNG import/export against the reference's own exports (below). |
 | `io/tests/properties.rs` | Random documents round-trip exactly; random bytes and random damage never panic or load as a different document. |
+| `corpus/tests/scenarios.rs` | End-to-end scenarios A–G (phase 4G): real strokes on combined layers, modes, masks, clipping, alpha lock, both depths, conversion, history walks and save/load (below). |
+| `corpus/tests/pipeline.rs` | One whole drawing session through every phase-4 feature, its history, conversion and files; its composite against a golden image. |
+| `corpus/tests/random_sessions.rs` | 16 seeded random sessions of the same operations; invariants after every step. |
+| `corpus/tests/stress.rs` | Hundreds of layers, many sparse 16-bit layers, histories past the step limit, repeated save/load cycles, fully tiled 4096² layers. |
 
 ### Invariant tests
 
@@ -103,6 +108,39 @@ Both parity tests also run in **16-bit documents** (phase 4E): the probe
 colours stored at 16-bit precision against the reference's 8-bit
 measurements (the reference has no 16-bit documents), within 2/255.
 
+### End-to-end tests (phase 4G)
+
+`crates/corpus/tests/` drives the whole stack through public APIs as the
+app does: `BrushEngine` strokes committed into the active target,
+`Document` commands, the history and `tela-io`. The helpers in
+`support/mod.rs` check after every step:
+
+- **preview == commit** for every stroke (composites compared; when one
+  side is empty, what is shown over the paper — see invariant I2);
+- the document's public invariants and premultiplied pixels (`check`);
+- digests of the content, of what undo restores (`history_digest`, which
+  leaves out selection, visibility and the next id, as the history does)
+  and of composites;
+- save → load → identical content, and identical bytes on a second save
+  (`round_trip`).
+
+Random sessions use a fixed SplitMix generator; a failing seed is printed
+and can be rerun alone with `MIRAE_SEED=<seed>`. The random sessions were
+checked against a planted bug (all-revealing mask tiles no longer
+released, breaking invariant M3) and caught it.
+
+Which test protects what (regression map):
+
+| Area | Unit / property | Parity data | End-to-end |
+|---|---|---|---|
+| Layers (4A) | `document` unit tests, `properties.rs` (reference model) | — | scenarios A, G; random sessions |
+| History (4B) | `history::tests`, `history_properties.rs` | — | every scenario (walk back and forth); stress |
+| Blend modes (4C) | `blend` unit tests | `blend_parity.rs`, `blend_sheet.rs` | scenarios B, D, F |
+| Masks, clipping, alpha lock (4D) | unit tests, `mask_clip_properties.rs` | `clip_parity.rs` | scenarios C, D, E |
+| 16-bit (4E) | `depth_properties.rs`, `banding.rs` | both parity tests at 16 bits | scenario F, pipeline |
+| Files (4F) | `io` unit tests, `corrupt.rs`, `properties.rs`, `fixture.rs` | `png_parity.rs` | scenarios B, C, G; stress (40 cycles) |
+| Appearance | brush goldens | — | `pipeline.rs` golden |
+
 ### Precision tests (phase 4E)
 
 `crates/corpus/tests/banding.rs` keeps the banding gate: repeated faint
@@ -131,10 +169,14 @@ cargo run --release -p tela-corpus --example blend_fit          # sRGB-encoded v
 cargo run --release -p tela-corpus --example mask_clip_bench    # masks, clipping groups, alpha lock: compose, preview, commit, mask history
 cargo run --release -p tela-corpus --example depth_bench        # 8 vs 16-bit: memory, composition, strokes, history, conversion
 cargo run --release -p tela-io --example io_bench                # .mirae save/load: time, size, MB/s, peak memory, deflate levels
+cargo run --release -p tela-corpus --example doc_bench          # 1-100 layers per mode, realistic 4096² documents, history, memory (--quick: ~3 s)
 cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit banding table
 cargo run --release -p tela-brush --example stabilizer_bench     # phase 2 stabilizer table
 cargo run --release -p tela-brush --example interpolation_bench  # phase 2 interpolator table
 ```
+
+`scripts/check.ps1 -Bench` runs `stamp_bench` and `doc_bench -- --quick`;
+the latter fails the gate if composition allocates (invariant F3).
 
 ### Manual tests (running app)
 
@@ -169,6 +211,14 @@ To 8-bit, undo, redo, To 16-bit with the profile unchanged; alpha lock,
 clipping, mask erase/reveal and layer opacity in a 16-bit document;
 undo back through the conversion; synthetic-pen strokes in a 16-bit
 document (`docs/parity/4E-16bit.md`, "Running app").
+
+Phase 4G session (8- and 16-bit, mouse and synthetic pen): layers,
+Multiply, clipping, alpha lock, mask erase, undo/redo, Ctrl+S, Save As,
+close, reopen, PNG export and re-import (`docs/parity/4G-integration.md`).
+On the development machine **Ctrl+Shift+S never reaches Mirae**: another
+program registers it as a global hotkey (`RegisterHotKey` fails with
+error 1409 for it). Use Shift+Alt+S for Save As there; try another
+machine before treating a missing shortcut as a Mirae bug.
 
 ### Hardware tests
 

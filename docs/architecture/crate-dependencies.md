@@ -76,12 +76,12 @@ depends only on `glam`.
 | `tela-renderer` | canvas, `wgpu`, `glam`, `bytemuck`, `log` | GPU presentation of finished tiles. |
 | `tela-tablet` | `glam`, `log`; Windows: `windows-sys`, `raw-window-handle` | Device input; FFI isolated here. |
 | `tela-ui` | brush, renderer, `egui`, `egui-wgpu`, `egui-winit`, `wgpu`, `winit` | The only egui user. |
-| `tela-corpus` | color, canvas, brush, `glam`, `png` (dev: document) | Golden sheets and benchmark. |
+| `tela-corpus` | color, canvas, brush, `glam`, `png` (dev: document, io) | Golden sheets, benchmarks and the end-to-end tests. |
 | `tela-app` | all workspace crates except corpus, `winit`, `glam`, `pollster`, `log`, `env_logger`, `rfd` | Composition layer; the file workflow (native dialogs). |
 
 Dev-dependencies are unrestricted but should stay minimal: `proptest`
 (brush, canvas, document, io), `pollster` (renderer GPU tests), `tela-brush`+`glam`
-(document tests), `tela-document` (corpus benchmark).
+(document tests), `tela-document` + `tela-io` (corpus benchmarks and end-to-end tests).
 
 ## Forbidden dependencies (and why)
 

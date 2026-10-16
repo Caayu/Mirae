@@ -15,6 +15,7 @@ boundaries and invariants hold. Companion documents:
 | UI boundary | [ui.md](ui.md) |
 | Decisions and their reasons | [../adr/](../adr/README.md) |
 | Hot paths and numbers | [../performance.md](../performance.md) |
+| Memory model and worst cases | [../memory.md](../memory.md) |
 | Tests, goldens | [../testing.md](../testing.md), [../golden-tests.md](../golden-tests.md) |
 
 ## 1. Workspace
@@ -344,8 +345,11 @@ trajectories (deterministic seeds, simulated time) and compares against
 `crates/corpus/golden/*.png` with tolerances. Updates are explicit
 (`TELA_UPDATE_GOLDEN=1`). `stamp_bench` measures dabs/s, Mpx/s, tiles per
 dab, allocations per dab (counting allocator), single vs parallel and
-composition cost. See [golden-tests.md](../golden-tests.md) and
-[performance.md](../performance.md).
+composition cost; `doc_bench` measures composition against 1–100 layers
+per mode and depth, realistic 4096² documents, history and memory. Its
+end-to-end tests (`crates/corpus/tests/`, phase 4G) drive brush, document,
+history and files together. See [golden-tests.md](../golden-tests.md),
+[testing.md](../testing.md) and [performance.md](../performance.md).
 
 ## 11. Extension points
 
@@ -368,7 +372,9 @@ composition cost. See [golden-tests.md](../golden-tests.md) and
 - Flat layer stack (no groups; clipping groups only); masks without apply/selection; 17 blend modes; blending over a translucent backdrop without paper does not match the reference (D-4C-1, unreachable today).
 - Undo history is in memory only, uncompressed, 256 KiB (8-bit) or 512 KiB (16-bit) per changed tile per step (ADR 0015, 0018).
 - 8- or 16-bit layer storage per document, 8-bit masks, 8-bit display (no dithering, no HDR); display texture limited to the GPU's max texture size.
+- Composition is CPU, single-threaded and linear in layers, with no cache below the stroke target: ~12 ms per 256² tile for 100 overlapping Normal layers, ~44 ms for 100 Soft Light (4G, TECHNICAL_DEBT #33).
 - Saving and loading are synchronous on the UI thread (a full 16-bit 4096² × 10 document saves in ~6 s); no autosave, recent files or background saving yet.
+- A history step larger than the budget is kept alone, so converting the depth of a huge document peaks at ~3× its 8-bit size ([memory.md](../memory.md), TECHNICAL_DEBT #34).
 - The UI is functional, not designed; preset edits are not persisted.
 
 See [TECHNICAL_DEBT.md](../TECHNICAL_DEBT.md) and [ROADMAP.md](../ROADMAP.md).

@@ -165,6 +165,27 @@ specified in [../formats/mirae-v1.md](../formats/mirae-v1.md).
 | IO9 | PNG export is the document's composite quantized once: over the paper (opaque) or un-premultiplied (transparent), within 1/255 of the screen; a transparent export where a non-Normal layer blends with the stack is refused (D-4C-1). | `png.rs::export_with_paper_is_the_composite_over_the_paper`, `…::transparent_export_is_the_unpremultiplied_composite`, `…::sixteen_bit_export_keeps_a_16_bit_composite`, `…::transparent_export_refuses_what_it_cannot_compose_honestly` |
 | IO10 | PNG import premultiplies once, at the document's depth: 16 bits kept in 16-bit documents, nearest level in 8-bit ones; an 8-bit image survives import and transparent export exactly in a 16-bit document; fully transparent tiles are not stored. | `png.rs::import_premultiplies_once_at_the_document_depth`, `…::sixteen_bit_images_keep_16_bits_or_round_to_the_nearest_level`, `…::eight_bit_images_survive_import_and_export_exactly_in_16_bit_documents` |
 
+## Integration (phase 4G)
+
+No new invariant: these rows record where the invariants above are
+checked **together**, with real brush strokes committed as the app commits
+them, across layers, modes, masks, clipping, alpha lock, both depths,
+history and files (`crates/corpus/tests/`, helpers in `support/mod.rs`).
+
+| # | Invariant | Protected by |
+|---|---|---|
+| I1 | After every step of a combined session the document's public invariants hold (L1–L9, premultiplied pixels, a valid active layer and edit target). | `scenarios.rs::scenario_a…` – `scenario_g…`, `random_sessions.rs::seeded_sessions_keep_every_invariant` (16 seeds; rerun one with `MIRAE_SEED=`), `stress.rs::*` |
+| I2 | P1–P3 hold in combination: every stroke's preview composite equals its committed composite. | `support::stroke` (checked on every stroke of every end-to-end test) |
+| I3 | Undoing a combined session to its start and redoing it to its end restores every intermediate state exactly (H1–H4 together). | `scenarios.rs` (walk back and forth), `random_sessions.rs`, `stress.rs::long_histories_respect_the_step_limit_and_stay_exact` |
+| I4 | Saving and loading any reachable document restores its content exactly, and saving is byte-deterministic (IO1–IO3 together). | `support::round_trip` in every scenario, `stress.rs::repeated_save_and_load_cycles_are_stable`, `pipeline.rs::a_whole_drawing_session_survives_history_conversion_and_files` |
+| I5 | The appearance of a combined session does not change silently. | `pipeline.rs::the_session_document_matches_its_golden_image` |
+
+Note on I2: a stroke on an **empty**, alpha-locked layer in a non-Normal
+mode previews the tile composed over the paper while the commit stores
+nothing; both show the same pixels on screen (the backdrop), so the
+helper compares what is shown over the paper when one side is empty. Not
+a defect; recorded so the comparison rule is not mistaken for one.
+
 ## Robustness
 
 | # | Invariant | Protected by |
@@ -192,7 +213,7 @@ specified in [../formats/mirae-v1.md](../formats/mirae-v1.md).
 |---|---|---|
 | F1 | No allocation per dab on the sequential stamping path (after tiles exist); the parallel path allocates only rayon's amortized injector blocks (≤ 1 per 100 samples). | `allocation.rs::processing_and_stamping_do_not_allocate_per_sample`, `stamp_bench` (allocs/dab = 0.000) |
 | F2 | No allocation per sample in the stroke processor (owned, reused buffers). | `allocation.rs::processing_and_stamping_do_not_allocate_per_sample` |
-| F3 | Composition of a dirty tile does not allocate. | `stamp_bench` composition line (0 allocations) |
+| F3 | Composition of a dirty tile does not allocate. | `stamp_bench` composition line (0 allocations), `doc_bench` (every mode, mask, clipping, 1–100 layers, both depths; exits non-zero on any allocation and runs in `check.ps1 -Bench`) |
 
 F1 and F2 are tested by `cargo test` (thread-local counting allocator);
 F3 and throughput are measured by the benchmark; run it after touching hot
