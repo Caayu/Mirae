@@ -89,10 +89,10 @@ Nothing built in phases 1–3 has been compared with the reference yet.
 | Subsystem | Feature | Behavioural | Quality | Performance | Record |
 |---|---|---|---|---|---|
 | 4A Layer stack: create, select, remove, reorder | CDK (no drag reorder, no delete confirmation, no rename field) | CDK (no paper layer: removing the bottom layer activates the one above) | — | INC | [4A](parity/4A-layers.md) |
-| 4A Layer properties: visibility, opacity, lock | CDK (whole-percent opacity, lock rules equal) | CDK (rename on a locked layer not compared) | INC (opacity rendering compared in 4C) | — | [4A](parity/4A-layers.md) |
+| 4A Layer properties: visibility, opacity, lock | CDK (whole-percent opacity, lock rules equal; no rename field) | CDK (renaming a locked layer allowed in both, compared in 4B; visibility counts as a modification in both, 4F F3) | PV — scope: layer opacity 60 % in all 17 modes over the paper, within 1–2/255 (measured in 4C, `blend_parity`) | — | [4A](parity/4A-layers.md) |
 | 4A Layer operations during a stroke | PV — scope: new-layer command during a mouse stroke | PV — same scope: command ignored, stroke stays on its layer | — | — | [4A](parity/4A-layers.md) |
 | 4B Undo/redo: strokes, clear, layer create/delete/reorder, lock, opacity | CDK (no History panel; memory budget in addition to steps) | PV — scope: observations U1–U10, U13–U18 and U20 with the mouse (steps, redo invalidation, active-layer rules, opacity merging, visibility outside history, undo ignored mid-stroke, shortcuts); the 200-step limit (U19) was not exercised in either app | PV — scope: pixel counts after undo/redo equal before/after in both apps (Tela also bit-exact by test) | INC (measured in Tela only) | [4B](parity/4B-undo-redo.md) |
-| 4B Undo/redo: rename, blend mode | CDK (no rename field; blend modes in 4C) | INC (API tested; not exercisable in the UI) | — | — | [4B](parity/4B-undo-redo.md) |
+| 4B Undo/redo: rename, blend mode | CDK (no rename field; the blend-mode selector exists since 4C) | INC (both are one step by test; the reference observed them, U11–U12; not compared in Mirae's running app) | — | — | [4B](parity/4B-undo-redo.md) |
 | 4C Blend modes (16 + Normal: multiply … luminosity, add) | CDK (11 reference modes not implemented; no merge down) | PV — scope: all 17 modes over the reference's paper, 8-bit sRGB, 100 % and 60 % opacity, opaque/translucent/transparent bottoms and tops (3 400 combinations, `blend_parity.rs`); CDK over a translucent backdrop without paper (D-4C-1, unreachable in Tela today) | PV — same scope: within 1/255 (2/255 Color, Luminosity) | INC (Tela measured only) | [4C](parity/4C-blend.md) |
 | 4C Compositing space | — | PV — sRGB-encoded blending, paper as a backdrop (measured) | PV — same scope | — | [4C](parity/4C-blend.md) |
 | 4D Layer masks: create, delete, enable, edit target, history, refusals | CDK (no apply-to-layer, mask from selection, show-area or unlink; D-4D-2) | PV — scope: M1, M6–M12 with the mouse (new mask reveals all and becomes the target, one per layer, enable/create/delete/strokes are steps, target switch is not, selection targets pixels, refusals on hidden/locked layers and disabled masks); the delete button's apply question differs (D-4D-3) | PV — scope: mask composition (K4–K6: 9 mask scenarios × 64 swatches, opacity 60 %, Multiply, Screen, disabled), with and without paper, within 2/255 | INC (Tela measured only) | [4D](parity/4D-masks-clipping-alpha-lock.md) |
@@ -127,6 +127,90 @@ Vector layers, selections, transforms, fill, gradients, rulers, symmetry,
 perspective, colour mixing / wet media, text, layer groups, reference and
 correction layers, colour management, animation: **NI**.
 
+## Phase 4 parity summary
+
+Reviewed at the end of phase 4 (4G, [parity/4G-integration.md](parity/4G-integration.md)).
+Every state above is backed by its subphase record; nothing was promoted
+because internal tests pass. "PV" always means: compared with the
+reference by a recorded procedure, within the scope written in the cell.
+
+### Parity validated (within the stated scopes)
+
+- **Layer commands during a stroke** are ignored and the stroke stays on
+  its layer (4A, mouse).
+- **Undo/redo semantics** — what is a step, redo invalidation, the active
+  layer after undo, opacity merging, visibility outside the history, undo
+  ignored mid-stroke, shortcuts (4B U1–U10, U13–U18, U20, mouse).
+- **Blend modes** — all 17 over the reference's paper, at 100 % and 60 %
+  layer opacity, 3 400 combinations within 1/255 (2/255 Color,
+  Luminosity); the sRGB-encoded compositing space and the paper as a
+  backdrop (4C).
+- **Masks** — creation, target, enable, history, refusals (M1, M6–M12);
+  mask composition with and without paper (K4–K6); painting reveals and
+  erasing hides (M2–M4) (4D, mouse).
+- **Alpha lock** (A1–A6) and **clipping** — groups, order, boundaries,
+  base-less clipped layers, new layers inside a group, undo, and the 34
+  probe scenarios (2 × 2 176 swatches) within 2/255, including opacity,
+  four clipped modes, two base modes and masks (4D).
+- **8-bit documents**: 8-bit is the only depth of the reference and
+  Mirae's default; 8-bit content survives a 16-bit round trip (4E).
+- **Unsaved-changes protection** on close and quit: Save / Don't save /
+  Cancel (4F F7, F10).
+- **PNG**: export with the paper equals the reference's own export pixel
+  for pixel at both document depths; import placement (centred, rounded
+  down); RGB8 imports, and RGBA8 imports in 16-bit documents, equal the
+  reference's (4F).
+
+### Compared, differences known
+
+Layer UI (no paper layer by design, no drag reorder, rename field or
+delete confirmation; D-4A-1…4) · no History panel (D-4B-2) · 11 reference
+blend modes missing, no merge down (D-4C-2, D-4C-3) · mask apply, mask
+from selection, show-area and unlink missing, delete-mask question
+(D-4D-2, D-4D-3) · 16-bit documents and conversion, which the reference
+lacks (D-4E-1) · 16-bit PNG import rounds or keeps 16 bits where the
+reference truncates (D-4F-3, deliberate) · premultiplied 8-bit colour at
+very low alpha after import (D-4F-4) · one document per window (D-4F-1)
+· undoing to the saved state is clean (D-4F-2, deliberate) · transparent
+export refused where a non-Normal layer blends with the stack (D-4F-5) ·
+PNG metadata (D-4F-6) · imports are plain raster layers (D-4F-7) · no
+Recent files, Revert, Save copy, PSD (D-4F-8).
+
+### Not measured yet
+
+Everything that needs a **physical tablet** (pen feel, pressure on masks:
+D-4D-1) · the reference's blending over a **translucent backdrop without
+paper** (data kept, no model: D-4C-1, D-4D-6) · **performance against the
+reference** (every Performance cell is INC: Mirae measured only) ·
+colour-dependent checks in Mirae's running app (it paints black only:
+D-4D-5) · colour-managed documents (D-4C-4) · the 200-step limit, rename
+and blend-mode undo in Mirae's UI, a few edge cases (D-4A-6, D-4B-3,
+D-4B-4, D-4D-7) · drag-and-drop and closing a clean document in the
+reference (D-4F-11) · phases 1–3 (brush engine, input, view): never
+compared.
+
+### Out of scope of phase 4
+
+Vector layers, selections, transforms, fill, gradients, text, layer
+folders, reference and correction layers, colour management, animation,
+the reference's own file format and PSD.
+
+### Regression protection
+
+What keeps each validated claim from regressing silently (all run in
+`cargo test` and therefore in `scripts/check.ps1`):
+
+| Validated claim | Automated | Manual only |
+|---|---|---|
+| 4A commands during a stroke | — (the app ignores commands while `engine.is_stroking()`) | app check (parity 4A, O14) |
+| 4B undo semantics | `document::document::history::tests` (one test per observation), `history_properties.rs`, end-to-end walks in `corpus/tests/scenarios.rs`, `random_sessions.rs` | Ctrl+Y / Ctrl+Shift+Z bindings |
+| 4C blend parity | `document/tests/blend_parity.rs` (reference data), `blend_sheet.rs` (golden) | — |
+| 4D masks, clipping, alpha lock | `document/tests/clip_parity.rs` (reference data, both depths), unit tests per observation, `mask_clip_properties.rs`, scenarios C–E | — |
+| 4E 8-bit default and exact widening | `document::document::tests::documents_store_one_depth…`, `depth_properties.rs`, `blend_parity` / `clip_parity` at 16 bits, scenario F | — |
+| 4F unsaved-changes prompt | — (app) | app check (parity 4F, part 2) |
+| 4F PNG export/import | `io/tests/png_parity.rs` (the reference's exports), `io/tests/png.rs` | — |
+| Integrated appearance | `corpus/tests/pipeline.rs` (golden of a combined session) | — |
+
 ## Gate log
 
 Newest first. Each entry: subphase, date, what was implemented, compared,
@@ -134,6 +218,7 @@ and the remaining differences (details in the linked record).
 
 | Subphase | Date | Summary |
 |---|---|---|
+| **4G gate** (end of phase 4) | 2026-10-16 | No new behaviour and no new comparison with the reference. Every measured dataset of 4C–4F re-run in the integrated stack at both depths (blend parity, clip parity, PNG parity, goldens, v1 fixtures): all pass with unchanged tolerances. New end-to-end tests (scenarios A–G, a whole-stack session with an integrated golden, 16 randomized sessions, stress) and a real 8- and 16-bit session in the running app (mouse and synthetic pen: layers, Multiply, clipping, alpha lock, mask, undo/redo, save, reopen, export, import). Review of every recorded difference: D-4A-7 resolved in 4C, D-4E-2 and D-4E-3 in 4F; the rest unchanged and assigned to debt or the phase-5 proposal. Summary of phase-4 parity [above](#phase-4-parity-summary) ([details](parity/4G-integration.md)). |
 | **4F gate** | 2026-10-15 | Reference observed first: new/modified/saved states in the title and tabs, the save and open dialogs, the close and quit prompts (Save / Don't save / Cancel), the shortcuts, PNG export settings and files (RGBA8, sRGB ICC, paper composed over white), PNG import of test images of our own (a centred new layer; straight colour kept exactly; 16-bit truncated), and corrupt files (a corrupt PNG crashed it). Mirae adds its own `.mirae` v1 format (ZIP + JSON manifest + raw tiles; ADR 0019) and `tela-io` (ADR 0020): bit-exact save/load at both depths, atomic save, explicit limits, strict versioning, hostile-input tests, v1 fixtures as a contract; the desktop workflow (Ctrl+N/O/S, Save As, native dialogs, drag-and-drop, `*` marker from the history's revision, the unsaved-changes prompt before anything replaces or closes the document). Compared: PNG export with the paper equals the reference's own export pixel for pixel at both depths; opaque imports and translucent imports in 16-bit documents equal too; workflow checked in the running app. Remaining: one document per window, undo to the saved state is clean (deliberate), 16-bit import rounds instead of truncating (deliberate), premultiplied 8-bit colour at low alpha, transparent export refused for non-Normal stack blending (D-4C-1), PNG metadata, no Recent/Revert/Save copy ([details](parity/4F-file-workflow.md#differences)). |
 | **4E gate** | 2026-10-15 | Reference observed first (new-document, properties, conversion and export UI; a 16-bit probe of our own in PSD and PNG; repeated 1 % paint, airbrush passes, gradient tool): it has **no 16-bit documents**, no depth conversion and 8-bit exports; a 16-bit PNG opens with its low byte dropped; 8-bit content survives exactly; its 8-bit accumulation shows plateaus and lost faint tails. Tela adds per-document 16-bit storage (premultiplied sRGB-encoded `u16`, masks 8-bit), exact 8 → 16 (bit-identical composite), nearest-level 16 → 8, conversion as one undoable step; 8-bit stays the default (ADR 0018). Measured: repeated faint strokes within 0.75 level of exact at 16 bits against 25–136 levels off at 8; composition 0.99–1.07×, commit 1.2–1.5×, memory 2×; the 4C/4D parity data within 2/255 in 16-bit documents; preview == commit at 16 bits (126 cases); verified in the running app with mouse and synthetic pen. Remaining: 16 → 8 rounding vs the reference's import truncation (4F), 8-bit masks, qualitative-only accumulation comparison, no dithering/gradient tool ([details](parity/4E-16bit.md#differences)). |
 | **4D gate** | 2026-10-15 | Reference observed first: a PSD probe of our own (34 clipping/mask scenarios, 2 × 2 176 swatches, with and without paper) and UI operation (mask creation/painting/erase/enable/delete, alpha lock, clip toggle, history, refusals, new layers in a group). Decision by evidence: clipping groups composed in isolation with source-atop where the blend result replaces the colour (W3C atop off by 50/255, non-isolated by up to 215/255); base opacity, mode and mask apply to the group; masks scale alpha, painting reveals by stroke alpha whatever the colour, erasing hides; alpha lock is source-atop and does not stop the eraser. Tela matches every probed swatch within 2/255 (`clip_parity`), preview == commit in 126 combinations, verified in the running app with mouse and synthetic pen. 4C paths unchanged in output and speed. Remaining: apply/selection/show-area mask features, delete-mask prompt, pressure not comparable, colour-dependent checks only by test, D-4C-1 for non-Normal bases ([details](parity/4D-masks-clipping-alpha-lock.md#differences)). |

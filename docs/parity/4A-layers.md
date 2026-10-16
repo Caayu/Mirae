@@ -94,4 +94,4 @@ is also covered by a unit or property test (named).
 | D-4A-4 | No rename field in the panel (the API supports renaming). | Feature (UI) | Open — TECHNICAL_DEBT #17 |
 | D-4A-5 | Default name prefix is "Layer" (English UI) where the reference's pt-BR UI shows "Camada"; the numbering rule is the same. | Localization | Accepted |
 | D-4A-6 | Not compared yet: deleting a hidden layer (renaming a locked layer was compared in 4B: allowed in both), layer commands other than "new layer" during a stroke, pen (instead of mouse) strokes in the reference, performance with many layers. | Coverage gap | Open |
-| D-4A-7 | Opacity rendering was not compared numerically between the two applications (different brushes). Numeric comparison of compositing belongs to the 4C gate. | Coverage gap | Deferred to 4C |
+| D-4A-7 | Opacity rendering was not compared numerically between the two applications (different brushes). Numeric comparison of compositing belongs to the 4C gate. | Coverage gap | Resolved in 4C: layer opacity at 60 % measured in every mode (`blend_parity`) |
