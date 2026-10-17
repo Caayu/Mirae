@@ -67,3 +67,11 @@ are document pixels of the drag (`m5` = −5).
   with B; A is `feather_50_rect_100_80_300_220` (S14–S16).
 - `paint_one_stroke`, `paint_two_strokes`, `mask_reveal_stroke`: strokes
   through selection A (S22, S23, S26).
+
+## Phase 5E: fill
+
+Provenance and method: [docs/parity/5E-fill.md](../../../../docs/parity/5E-fill.md).
+`fill/`: the probe documents' ink layers, the islands each fill reached at
+each tolerance (`islands.csv`) and decoded captures of fills with
+anti-aliasing, a feathered selection, alpha lock and Edit > Fill (see that
+folder's README).
