@@ -2,7 +2,8 @@
 //!
 //! **Responsibility:** the brush panel ([`BrushPanel`]), the colour panel
 //! ([`ColorPanel`]), the selection panel ([`selection_panel()`]), the fill
-//! panel ([`fill_panel()`]) and the selection outline ([`selection_outline()`]), the transform panel
+//! panel ([`fill_panel()`]), the gradient panel ([`gradient_panel()`]) and its
+//! drag guide ([`gradient_guide()`]), the selection outline ([`selection_outline()`]), the transform panel
 //! ([`transform_panel()`]) and box ([`transform_box()`]), the layer panel
 //! ([`layer_panel()`]), the document bar ([`document_bar()`]), the curve editor ([`curve_editor`]), egui
 //! input/output plumbing ([`UiLayer`]) and
@@ -23,6 +24,7 @@ pub mod color_panel;
 pub mod curve_editor;
 pub mod document_bar;
 pub mod fill_panel;
+pub mod gradient_panel;
 pub mod history_bar;
 pub mod layer_panel;
 pub mod prompt;
@@ -36,6 +38,10 @@ pub use egui;
 use egui::{ClippedPrimitive, TexturesDelta, ViewportId};
 use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
 pub use fill_panel::{FillAction, FillModel, fill_panel};
+pub use gradient_panel::{
+    GradientAction, GradientEdge, GradientGuide, GradientKind, GradientModel, GradientPreset,
+    StopColor, StopRow, gradient_guide, gradient_panel,
+};
 pub use history_bar::{HistoryButtons, HistoryCommand, history_bar};
 pub use layer_panel::{LayerAction, LayerRow, layer_panel};
 pub use prompt::{

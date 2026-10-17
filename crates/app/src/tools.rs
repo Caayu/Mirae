@@ -22,6 +22,9 @@ pub enum CanvasTool {
     /// A click fills the connected area under it (phase 5E); the stylus
     /// eraser end clears it.
     Fill,
+    /// A drag draws a gradient (phase 5F); the stylus eraser end erases
+    /// by it.
+    Gradient,
 }
 
 pub struct Tools {

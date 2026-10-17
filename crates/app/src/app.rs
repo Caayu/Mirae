@@ -8,8 +8,8 @@ use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha};
 use tela_canvas::{DirtyTiles, Tile, TileCoord, ViewTransform};
 use tela_color::{Color, PixelDepth, PremulRgba, with_pixel_type};
 use tela_document::{
-    BlendMode, ComposeScratch, Document, FillPaint, FillReference, FillTarget, HistoryAction,
-    LayerId, LayerPart, LowerMask, Overlay, OverlayPaint, Placement, Tolerance,
+    BlendMode, ComposeScratch, Document, FillPaint, FillReference, FillTarget, GradientPaint,
+    HistoryAction, LayerId, LayerPart, LowerMask, Overlay, OverlayPaint, Placement, Tolerance,
 };
 use tela_renderer::{Frame, Renderer};
 use tela_tablet::{DeviceKind, Phase, TabletEvent, TabletSample, TimestampNormalizer, clock};
@@ -26,6 +26,7 @@ mod transform;
 
 use crate::colors::{ColorState, Slot};
 use crate::filling::{self, FillTool};
+use crate::gradients::{GradientSession, GradientTool};
 use crate::selecting::{SelectionDrag, SelectionTool};
 use crate::stats::LatencyStats;
 use crate::tools::{CanvasTool, Tools};
@@ -33,8 +34,9 @@ use crate::transforming::{TransformSession, TransformTool};
 use files::{FileState, Pending};
 use tela_ui::{
     BrushPanel, ColorAction, ColorModel, ColorPanel, DocumentCommand, DocumentInfo, FillAction,
-    FillModel, HistoryButtons, HistoryCommand, LayerAction, LayerRow, MergeMaskChoice, PanelAction,
-    PanelModel, PickSource, SelectionAction, SelectionModel, TransformModel, UiLayer, egui,
+    FillModel, GradientAction, GradientModel, HistoryButtons, HistoryCommand, LayerAction,
+    LayerRow, MergeMaskChoice, PanelAction, PanelModel, PickSource, SelectionAction,
+    SelectionModel, TransformModel, UiLayer, egui,
 };
 use transform::AfterTransform;
 
@@ -61,12 +63,17 @@ enum Drag {
     Select,
     /// A transform handle (or the Move tool) being dragged.
     Transform,
+    /// A gradient being dragged (`App::gradient`).
+    Gradient,
 }
 
 /// Marching-ants speed, points per second.
 const ANTS_SPEED: f32 = 8.0;
 /// How often the ants move while the document is otherwise idle.
 const ANTS_FRAME: std::time::Duration = std::time::Duration::from_millis(125);
+/// How long one frame may spend composing a gradient preview (the tiles
+/// on screen first); the rest is composed in the next frames.
+const GRADIENT_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(12);
 
 struct Gpu {
     window: Arc<Window>,
@@ -111,6 +118,14 @@ pub struct App {
     selection: SelectionTool,
     /// Fill tool settings (session state, not saved).
     fill_tool: FillTool,
+    /// Gradient tool settings and stops (session state, not saved).
+    gradient_tool: GradientTool,
+    /// The gradient being dragged, and the tiles its preview last covered.
+    gradient: Option<GradientSession>,
+    gradient_tiles: DirtyTiles,
+    /// Which of fill and gradient G selects from another tool: the one
+    /// used last (G cycles them, 5E BK4).
+    fill_or_gradient: CanvasTool,
     /// The selection shape being drawn, in screen pixels.
     selection_drag: Option<SelectionDrag>,
     /// The selection's outline in document pixels, for the selection
@@ -199,6 +214,10 @@ impl App {
             tool: CanvasTool::Brush,
             selection: SelectionTool::default(),
             fill_tool: FillTool::default(),
+            gradient_tool: GradientTool::default(),
+            gradient: None,
+            gradient_tiles: DirtyTiles::new(),
+            fill_or_gradient: CanvasTool::Gradient,
             selection_drag: None,
             outline: None,
             ants_epoch: Instant::now(),
@@ -387,6 +406,16 @@ impl App {
             (Phase::Down, Drag::None) if self.tool == CanvasTool::Fill => {
                 self.bucket(pos, ev.sample.device_kind);
             }
+            // The gradient tool: press, drag (Shift snaps), release.
+            (Phase::Down, Drag::None) if self.tool == CanvasTool::Gradient => {
+                self.begin_gradient(pos, ev.sample.device_kind);
+            }
+            (Phase::Move | Phase::Hover, Drag::Gradient) => self.update_gradient(pos),
+            (Phase::Up, Drag::Gradient) => {
+                self.update_gradient(pos);
+                self.commit_gradient();
+            }
+            (Phase::Cancel, Drag::Gradient) => self.cancel_gradient(),
             (Phase::Down, Drag::None) => {
                 let target = StrokeTarget::active(&self.document);
                 if let Err(e) = self.document.paint_target(target.layer, target.part) {
@@ -500,10 +529,114 @@ impl App {
         }
     }
 
+    /// Begins a gradient at screen point `pos` into the edit target (the
+    /// active layer's pixels or mask), with the tool's settings and the
+    /// main and sub colours captured now; the stylus eraser end or eraser
+    /// mode erases by it. Hidden and locked targets take nothing (as
+    /// strokes and fills).
+    fn begin_gradient(&mut self, pos: Vec2, device: DeviceKind) {
+        let t = StrokeTarget::active(&self.document);
+        if let Err(e) = self.document.paint_target(t.layer, t.part) {
+            log::info!(target: "tela::gradient", "not drawing: {e}");
+            return;
+        }
+        let paint = if self.tools.eraser_mode || device == DeviceKind::Eraser {
+            GradientPaint::Erase
+        } else {
+            GradientPaint::Draw
+        };
+        let target = FillTarget {
+            layer: t.layer,
+            part: t.part,
+        };
+        self.gradient = Some(GradientSession::begin(
+            &self.gradient_tool,
+            target,
+            paint,
+            self.colors.main(),
+            self.colors.sub(),
+            self.view.to_canvas(pos),
+        ));
+        self.gradient_tiles = DirtyTiles::new();
+        self.drag = Drag::Gradient;
+    }
+
+    /// The tiles the gradient preview covers now (and covered before) are
+    /// recomposed: nothing accumulates from earlier frames (GR2).
+    fn update_gradient(&mut self, pos: Vec2) {
+        let snap = self.modifiers.shift_key();
+        let Some(session) = &mut self.gradient else {
+            return;
+        };
+        session.update(pos, snap, &self.view);
+        let g = session.gradient();
+        let covered = self
+            .document
+            .gradient_preview(session.target, &g, session.paint)
+            .map(|p| p.tiles().clone())
+            .unwrap_or_default();
+        self.stale.extend(&self.gradient_tiles);
+        self.stale.extend(&covered);
+        self.gradient_tiles = covered;
+    }
+
+    /// Draws the gradient into the document: one history step, through the
+    /// same function the preview used (GR4, GR5). A drag without length
+    /// draws nothing and records nothing (GD24).
+    fn commit_gradient(&mut self) {
+        self.drag = Drag::None;
+        let Some(session) = self.gradient.take() else {
+            return;
+        };
+        self.stale.extend(&std::mem::take(&mut self.gradient_tiles));
+        let g = session.gradient();
+        let started = Instant::now();
+        match self
+            .document
+            .apply_gradient(session.target, &g, session.paint)
+        {
+            Ok(dirty) => {
+                log::debug!(
+                    target: "tela::gradient",
+                    "{} tiles in {:.1} ms",
+                    dirty.len(),
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+                if !dirty.is_empty() && session.paint == GradientPaint::Draw {
+                    for &c in &session.colors {
+                        self.colors.remember(c);
+                    }
+                }
+                self.stale.extend(&dirty);
+            }
+            Err(e) => log::info!(target: "tela::gradient", "not drawing: {e}"),
+        }
+    }
+
+    /// Drops the gradient being dragged: the document never changed
+    /// (GR3); the preview's tiles recompose without it.
+    fn cancel_gradient(&mut self) {
+        self.drag = Drag::None;
+        self.gradient = None;
+        self.stale.extend(&std::mem::take(&mut self.gradient_tiles));
+    }
+
+    /// Gradient panel requests.
+    fn apply_gradient_action(&mut self, action: GradientAction) {
+        if action == GradientAction::Tool {
+            self.tool = CanvasTool::Gradient;
+            self.fill_or_gradient = CanvasTool::Gradient;
+        }
+        self.gradient_tool.apply(action, self.colors.active());
+    }
+
     /// Fill panel requests. Filling waits for a stroke or a drag to end.
     fn apply_fill(&mut self, action: FillAction) {
         match action {
-            FillAction::Tool => self.tool = CanvasTool::Fill,
+            FillAction::Tool => {
+                self.tool = CanvasTool::Fill;
+                self.fill_or_gradient = CanvasTool::Fill;
+            }
             FillAction::Canvas(canvas) => {
                 self.fill_tool.reference = if canvas {
                     FillReference::Composite
@@ -740,6 +873,18 @@ impl App {
         {
             return;
         }
+        // During a gradient drag only Escape (Mirae cancels; the reference
+        // ignores it, GD38) and the view keys act: the target and the
+        // document stay as they were when the drag began.
+        if self.drag == Drag::Gradient {
+            match event.logical_key {
+                Key::Named(NamedKey::Escape) => self.cancel_gradient(),
+                Key::Named(NamedKey::Home) => self.fit_view(),
+                _ => return,
+            }
+            self.request_redraw();
+            return;
+        }
         let (ctrl, shift, alt) = (
             self.modifiers.control_key(),
             self.modifiers.shift_key(),
@@ -881,9 +1026,17 @@ impl App {
                 // The Move tool (Mirae's key; the reference's Move layer
                 // tool was not observed, docs/parity/5D-transform.md).
                 "k" | "K" => self.tool = CanvasTool::Move,
-                // The reference's G (it cycles gradient and fill, 5E BK4;
-                // Mirae has no gradient tool yet).
-                "g" | "G" => self.tool = CanvasTool::Fill,
+                // The reference's G cycles gradient and fill (5E BK4, 5F
+                // GD1); from another tool it takes the one used last, the
+                // gradient at first (the reference's first G).
+                "g" | "G" => {
+                    self.tool = match self.tool {
+                        CanvasTool::Fill => CanvasTool::Gradient,
+                        CanvasTool::Gradient => CanvasTool::Fill,
+                        _ => self.fill_or_gradient,
+                    };
+                    self.fill_or_gradient = self.tool;
+                }
                 "b" | "B" => self.tool = CanvasTool::Brush,
                 // The reference's X: paint with the other colour (O2).
                 "x" | "X" => self.colors.toggle_active(),
@@ -913,7 +1066,7 @@ impl App {
     /// Undo or redo. Like layer commands, ignored while a stroke is in
     /// progress (reference behaviour, docs/parity/4B-undo-redo.md U18).
     fn apply_history(&mut self, command: HistoryCommand) {
-        if self.engine.is_stroking() || self.drag == Drag::Select {
+        if self.engine.is_stroking() || matches!(self.drag, Drag::Select | Drag::Gradient) {
             return;
         }
         // During a transform, undo and redo walk its own edits (T13).
@@ -1112,6 +1265,68 @@ impl App {
             }
             return tiles.len();
         }
+        // A gradient previews through the same per-pixel function its
+        // commit uses (GR5). A whole large canvas can take longer than a
+        // frame: the tiles on screen go first, then the rest within a
+        // budget per frame; what is left waits for the next frames.
+        if let Some(session) = &self.gradient {
+            let g = session.gradient();
+            let document = &self.document;
+            let preview = document.gradient_preview(session.target, &g, session.paint);
+            let pixels = |c: TileCoord, px: &mut [PremulRgba]| {
+                if let Ok(p) = &preview {
+                    p.pixels(c, px);
+                }
+            };
+            let mask = |c: TileCoord, r: &mut [f32]| {
+                if let Ok(p) = &preview {
+                    p.mask(c, r);
+                }
+            };
+            let covers = |c: TileCoord| preview.as_ref().is_ok_and(|p| p.covers(c));
+            let overlay = Overlay {
+                target: session.target.layer,
+                paint: match session.target.part {
+                    LayerPart::Pixels => OverlayPaint::Pixels(&pixels),
+                    LayerPart::Mask => OverlayPaint::Mask(&mask),
+                },
+                covers: &covers,
+            };
+            let size = gpu.renderer.size();
+            let corners = [
+                Vec2::ZERO,
+                Vec2::new(size.x, 0.0),
+                Vec2::new(0.0, size.y),
+                size,
+            ]
+            .map(|p| self.view.to_canvas(p));
+            let (lo, hi) = corners.iter().fold(
+                (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+                |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+            );
+            let mut visible = DirtyTiles::new();
+            visible.mark_rect(tela_canvas::IRect::enclosing(lo.x, lo.y, hi.x, hi.y));
+            let mut tiles = self.stale.take();
+            tiles.sort_by_key(|c| !visible.contains(*c));
+            let started = Instant::now();
+            let mut done = 0;
+            for &coord in &tiles {
+                if done > 0 && started.elapsed() > GRADIENT_FRAME_BUDGET {
+                    break;
+                }
+                let has = document.compose_tile_into(coord, Some(&overlay), &mut self.compose);
+                gpu.renderer
+                    .upload_tile(coord, has.then_some(self.compose.out.as_slice()));
+                done += 1;
+            }
+            if done < tiles.len() {
+                for &c in &tiles[done..] {
+                    self.stale.mark(c);
+                }
+                gpu.window.request_redraw();
+            }
+            return done;
+        }
         let stroke = self.engine.stroke();
         let target = self
             .stroke_target
@@ -1200,6 +1415,19 @@ impl App {
             has_selection: self.document.has_selection(),
         };
         let mut fill_action = None;
+        let gradient_model = GradientModel {
+            active: self.tool == CanvasTool::Gradient,
+            kind: self.gradient_tool.kind,
+            edge: self.gradient_tool.edge,
+            mixing: self.gradient_tool.mixing,
+            dither: self.gradient_tool.dither,
+            stops: self.gradient_tool.stops(),
+            selected: self.gradient_tool.selected(),
+            main: self.colors.main(),
+            sub: self.colors.sub(),
+        };
+        let mut gradient_action = None;
+        let gradient_guide = self.gradient.as_ref().map(|g| g.guide(&self.view, ppp));
         let Some(gpu) = &mut self.gpu else {
             return PanelAction::None;
         };
@@ -1273,6 +1501,9 @@ impl App {
             if let Some(b) = &transform_box {
                 tela_ui::transform_box(ui.ctx(), b);
             }
+            if let Some(g) = &gradient_guide {
+                tela_ui::gradient_guide(ui.ctx(), g);
+            }
             // A fixed width: long names and markers are truncated, so the
             // controls never move under the cursor (debt #17).
             let layers = egui::Panel::right("layer-panel")
@@ -1293,6 +1524,8 @@ impl App {
                     selection_action = tela_ui::selection_panel(ui, &selection_model);
                     ui.separator();
                     fill_action = tela_ui::fill_panel(ui, &fill_model);
+                    ui.separator();
+                    gradient_action = tela_ui::gradient_panel(ui, &gradient_model);
                     ui.separator();
                     transform_action = tela_ui::transform_panel(ui, &transform_model);
                     ui.separator();
@@ -1357,6 +1590,9 @@ impl App {
         if let Some(a) = fill_action {
             return PanelAction::Fill(a);
         }
+        if let Some(a) = gradient_action {
+            return PanelAction::Gradient(a);
+        }
         match (
             document_command,
             history_command,
@@ -1418,6 +1654,7 @@ impl App {
             }
             PanelAction::Selection(a) => self.apply_selection(a),
             PanelAction::Fill(a) => self.apply_fill(a),
+            PanelAction::Gradient(a) => self.apply_gradient_action(a),
             PanelAction::ClearLayer => self.clear_canvas(),
             PanelAction::Layer(a) => self.apply_layer(a),
             PanelAction::History(c) => self.apply_history(c),
@@ -1452,7 +1689,10 @@ impl App {
         // press would grab.
         let icon = if let Some(icon) = self.transform_cursor() {
             icon
-        } else if matches!(self.tool, CanvasTool::Selection | CanvasTool::Fill) {
+        } else if matches!(
+            self.tool,
+            CanvasTool::Selection | CanvasTool::Fill | CanvasTool::Gradient
+        ) {
             CursorIcon::Crosshair
         } else {
             CursorIcon::Default

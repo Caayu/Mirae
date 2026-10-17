@@ -47,6 +47,8 @@ pub enum PanelAction {
     Selection(crate::SelectionAction),
     /// From the fill panel.
     Fill(crate::FillAction),
+    /// From the gradient panel.
+    Gradient(crate::GradientAction),
     /// From the transform panel.
     Transform(crate::TransformAction),
     /// The answer to "Apply the transform?".
