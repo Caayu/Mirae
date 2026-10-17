@@ -794,4 +794,26 @@ mod tests {
         assert_eq!(run(7), run(7));
         assert_ne!(run(7), run(8));
     }
+
+    #[test]
+    fn a_stroke_keeps_the_colour_it_began_with() {
+        // COL2: changing the colour mid-stroke affects the next stroke only.
+        let red = Color::new(1.0, 0.0, 0.0);
+        let blue = Color::new(0.0, 0.0, 1.0);
+        let mut e = BrushEngine::new(BrushPreset::plain(10.0));
+        e.color = red;
+        e.begin_stroke(at(10.0, 10.0, 0.0), 1.0, 1);
+        e.add_input(at(100.0, 10.0, 0.05));
+        e.color = blue;
+        e.add_input(at(200.0, 10.0, 0.1));
+        e.update_preview();
+        assert_eq!(e.stroke().unwrap().color(), red, "preview");
+        let s = e.end_stroke().unwrap();
+        assert_eq!(s.color(), red);
+        let mut target = tela_canvas::TiledSurface::<[u8; 4]>::new();
+        s.commit_into(&mut target);
+        assert_eq!(target.pixel(150, 10), [255, 0, 0, 255]);
+        e.begin_stroke(at(10.0, 40.0, 0.0), 1.0, 2);
+        assert_eq!(e.end_stroke().unwrap().color(), blue, "next stroke");
+    }
 }

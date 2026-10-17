@@ -278,7 +278,10 @@ mod tests {
             Color::from_hex("#2595D5").unwrap().to_rgb8(),
             [37, 149, 213]
         );
-        assert_eq!(Color::from_hex(" 2595d5 ").unwrap().to_rgb8(), [37, 149, 213]);
+        assert_eq!(
+            Color::from_hex(" 2595d5 ").unwrap().to_rgb8(),
+            [37, 149, 213]
+        );
         assert_eq!(Color::from_rgb8([37, 149, 213]).to_hex(), "#2595D5");
         assert_eq!(Color::from_rgb8([255, 128, 0]).to_hex(), "#FF8000");
         assert_eq!(Color::BLACK.to_hex(), "#000000");
@@ -287,8 +290,20 @@ mod tests {
     #[test]
     fn malformed_hex_is_an_error_not_a_panic() {
         for bad in [
-            "", "#", "#FFF", "#FF800080", "FF80", "GG0000", "#12345G", "##123456", "+12345",
-            "-12345", "ééé", "#ééé", "12 456", "0x1234",
+            "",
+            "#",
+            "#FFF",
+            "#FF800080",
+            "FF80",
+            "GG0000",
+            "#12345G",
+            "##123456",
+            "+12345",
+            "-12345",
+            "ééé",
+            "#ééé",
+            "12 456",
+            "0x1234",
         ] {
             assert!(Color::from_hex(bad).is_err(), "{bad:?}");
         }
@@ -387,7 +402,10 @@ mod tests {
             }
         }
         for a in [0.0, -0.5, f32::NAN, f32::INFINITY] {
-            assert_eq!(Color::from_premultiplied(PremulRgba::new(0.1, 0.1, 0.1, a)), None);
+            assert_eq!(
+                Color::from_premultiplied(PremulRgba::new(0.1, 0.1, 0.1, a)),
+                None
+            );
         }
     }
 

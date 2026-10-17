@@ -704,6 +704,75 @@ mod tests {
     }
 
     #[test]
+    fn preserved_alpha_recolours_like_the_reference() {
+        // Parity record 5A, O16: blue over 220,80,40 at alpha 128 with the
+        // lock on shows 127,127,255 at full coverage and 186,148,198 at
+        // the edge pixel (coverage ≈ 0.466) over white paper; alpha never
+        // changes (COL5).
+        let blue = StrokeBuffer::new(Color::new(0.0, 0.0, 1.0), StampContext::default());
+        let dst = PremulRgba::from_rgba8([110, 40, 20, 128]);
+        let paper = PremulRgba::new(1.0, 1.0, 1.0, 1.0);
+        for (m, reference) in [(1.0, [127u8, 127, 255, 255]), (0.466, [186, 148, 198, 255])] {
+            let mut px = [dst];
+            blue.paint_over(&mut px, &[m], PixelAlpha::Preserved);
+            assert!((px[0].a - dst.a).abs() < 1e-7, "COL5");
+            let shown = px[0].over(paper).to_rgba8();
+            for (a, b) in shown.iter().zip(reference) {
+                assert!(a.abs_diff(b) <= 1, "m {m}: {shown:?} vs {reference:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn colour_never_changes_what_the_eraser_does() {
+        // COL3, with the exact pixels: red, blue and black erase alike.
+        let dst = PremulRgba::from_rgba8([110, 40, 20, 128]);
+        let ctx = StampContext {
+            mode: PaintMode::Erase,
+            ..Default::default()
+        };
+        let erased: Vec<_> = [
+            Color::new(1.0, 0.0, 0.0),
+            Color::new(0.0, 0.0, 1.0),
+            Color::BLACK,
+        ]
+        .into_iter()
+        .map(|c| {
+            let mut px = [dst; 3];
+            StrokeBuffer::new(c, ctx.clone()).paint_over(
+                &mut px,
+                &[0.3, 0.7, 1.0],
+                PixelAlpha::Free,
+            );
+            px
+        })
+        .collect();
+        assert!(erased.windows(2).all(|w| w[0] == w[1]));
+        assert_eq!(erased[0][2], PremulRgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn colored_paint_follows_the_documented_formula() {
+        // (C·m, m) over dst, channel by channel (ADR 0021).
+        let c = Color::from_rgb8([37, 149, 213]);
+        let s = StrokeBuffer::new(c, StampContext::default());
+        let dst = PremulRgba::from_rgba8([200, 50, 20, 255]);
+        let m = 0.51;
+        let mut px = [dst];
+        s.paint_over(&mut px, &[m], PixelAlpha::Free);
+        let expect = |ci: f32, di: f32| ci * m + di * (1.0 - m);
+        assert!((px[0].r - expect(c.r(), dst.r)).abs() < 1e-6);
+        assert!((px[0].g - expect(c.g(), dst.g)).abs() < 1e-6);
+        assert!((px[0].b - expect(c.b(), dst.b)).abs() < 1e-6);
+        assert!((px[0].a - 1.0).abs() < 1e-6);
+        // The reference's 51 % stroke of this colour over white paper
+        // shows 144,201,234 (parity record 5A, O15).
+        let mut px = [PremulRgba::new(1.0, 1.0, 1.0, 1.0)];
+        s.paint_over(&mut px, &[m], PixelAlpha::Free);
+        assert_eq!(px[0].to_rgba8(), [144, 201, 234, 255]);
+    }
+
+    #[test]
     fn preserved_alpha_does_not_stop_the_eraser() {
         let c = TileCoord { x: 0, y: 0 };
         let s = stroke_over(&[10.0, 20.0], 1.0, PaintMode::Erase);
