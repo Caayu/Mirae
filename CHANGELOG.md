@@ -3,6 +3,48 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 5F — gradients
+
+Approved alone (5G not started). The reference was observed first and a
+parity gate recorded ([docs/parity/5F-gradients.md](docs/parity/5F-gradients.md)).
+574 → 618 tests.
+
+### Added
+- `gradient_probe`; the reference's gradients on our own documents (40
+  decoded captures: mixing modes, brightness levels, stops, alpha, ends,
+  shapes, zoom, selections, masks, alpha lock, layer properties) kept as
+  test data; observations GD1–GD38 (bd641e0).
+- `tela_color::gradient` (ADR 0027): `GradientStop`, `GradientStops`,
+  `Mixing` (sRGB-encoded, linear light, OKLab), `ColorRamp`, the
+  reference's per-segment easing `ease`, OKLab conversions;
+  `StoragePixel::from_premul_dithered` and `dither_threshold` (Mirae's
+  8 × 8 ordered matrix) (ff82053); `RampTable` (0498cef).
+- `tela_document::gradient`: `Gradient`, `GradientGeometry`,
+  `GradientShape` (linear, radial, elliptical, angular, reflected),
+  `GradientExtend` (clamp, repeat, reflect, empty), `GradientPaint`;
+  `Document::apply_gradient` (one `HistoryAction::Gradient` step) and
+  `Document::gradient_preview` (`GradientPreview`, the compositor's
+  overlay, bit-identical to the commit) (ff82053).
+- `gradient_bench`: preview frame, commit, undo/redo, memory, 256²–4096²
+  (0498cef).
+- App: the gradient tool (G cycles fill and gradient), a live preview
+  composed on-screen first within a frame budget, a guide, Shift snapping,
+  Escape cancel, the eraser end erasing; `tela-ui`: `gradient_panel`
+  (shape, ends, mixing, dither, presets, stop editor) and
+  `gradient_guide` (3f8ad4e).
+- Gradients in the randomized sessions (ae91522); unit, parity and
+  property tests (an independent `f64` model); invariants GR1–GR12;
+  ADR 0027.
+
+### Changed
+- G cycles fill and gradient (it selected the fill only): D-5E-6
+  resolved.
+- Evaluating a gradient goes through a per-segment sampled ramp and
+  per-tile monomorphized loops (14 → 42 Mpx/s, results within half a
+  16-bit level) (0498cef).
+- New debt #43 (the reference's default perceptual mixing, the colour
+  phase, the circle/ellipse drag mapping, options, large previews).
+
 ## Phase 5E — fill
 
 Approved alone (5F–5G not started). The reference was observed first and

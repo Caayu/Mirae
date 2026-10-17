@@ -11,7 +11,7 @@ conversation. Read it fully, then these, all **mandatory**:
    last phase ([phase4/README.md](phase4/README.md)), the phase-5 plan
    ([phase5/PLAN.md](phase5/PLAN.md)) and its proposal
    ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)), and the last subphase's parity
-   record ([parity/5E-fill.md](parity/5E-fill.md))
+   record ([parity/5F-gradients.md](parity/5F-gradients.md))
 
 ## 1. Mission
 
@@ -67,9 +67,19 @@ layer or the composite without paper as reference (separate from the
 target), the selection limiting connectivity, alpha lock, masks — as one
 history step, through a sparse span flood (ADR 0026); with a parity gate
 ([parity/5E-fill.md](parity/5E-fill.md)).
-**5F–5G are proposed, not approved, not started**
+**Phase 5F (gradients) is complete** (2026-10-17): linear, radial,
+elliptical, angular and reflected gradients with clamp, repeat, reflect
+and empty ends; the reference's measured per-segment easing
+`E(u) = 0.38u + 0.62q(u)`; mixing in sRGB-encoded values, linear light
+or OKLab (the reference's three public modes; its own perceptual default
+is not reproduced, D-5F-1); straight colour and alpha, transparent stops
+without colour; Mirae's own ordered dither at the storage's precision;
+a live preview bit-identical to the one-step commit; selections, masks,
+alpha lock; G cycles fill and gradient (ADR 0027, parity record
+[parity/5F-gradients.md](parity/5F-gradients.md)).
+**5G is proposed, not approved, not started**
 ([phase5/PLAN.md](phase5/PLAN.md)). A new session asks the owner before
-starting 5F or anything else; it never begins a subphase on its own.
+starting 5G or anything else; it never begins a subphase on its own.
 
 ## 3. Repository
 
@@ -100,7 +110,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 574 tests, ~60 s after build
+cargo test --workspace --release        # 618 tests, ~70 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -123,6 +133,7 @@ cargo run --release -p tela-corpus --example layer_bench        # merge down, re
 cargo run --release -p tela-corpus --example selection_bench    # selections: shapes, operators, feather, outline, strokes, memory; ~15 s
 cargo run --release -p tela-corpus --example transform_bench    # transforms: source, preview, commit, undo, memory, 256²–4096²; ~3 min (--quick ~25 s)
 cargo run --release -p tela-corpus --example fill_bench         # fills: region, paint, undo, tiles read/written, memory, 256²–4096²; ~1 min (--quick ~5 s)
+cargo run --release -p tela-corpus --example gradient_bench     # gradients: render, preview frame, commit, undo, memory, 256²–4096²; ~2 min (--quick ~10 s)
 cargo run --release -p tela-brush --example stabilizer_bench
 cargo run --release -p tela-brush --example interpolation_bench
 ```
@@ -172,8 +183,8 @@ never sees the document; the UI owns nothing. Read
 
 ## 11. Crates
 
-`color` (the paint colour `Color`, HSV, hex; premultiplied color, storage formats), `canvas` (sparse tiles, view), `brush`
-(engine), `document` (layer stack with stable ids, composition, history),
+`color` (the paint colour `Color`, HSV, hex; premultiplied color, storage formats, gradient colours), `canvas` (sparse tiles, view), `brush`
+(engine), `document` (layer stack with stable ids, composition, history, selections, transforms, fill, gradients),
 `io` (`.mirae` files, PNG), `renderer` (wgpu), `tablet` (input, Windows
 Ink), `ui` (egui), `corpus` (goldens, benchmarks), `app` (binary `tela`;
 the file workflow).
@@ -251,6 +262,16 @@ easily broken:
     writes outside its domain, quantizes once at the depth and keeps the
     document sparse; the flood is iterative (no recursion) over per-tile
     distance maps.
+17. Gradients (ADR 0027, GR1–GR12): the easing `E(u) = 0.38u + 0.62q(u)`
+    per segment, straight colour and alpha (transparent stops carry no
+    colour) and the three mixes are the reference's measured ones
+    (`gradient::parity` keeps them). Preview and commit run **one**
+    per-pixel function and quantization (`Job::each` in
+    `document/gradients.rs`): the preview is the commit bit for bit;
+    never give the preview its own path. One step (none for a no-op),
+    the selection limits and scales but never moves the geometry, 16-bit
+    never through 8 bits (dither at the storage's precision). The ramp
+    table must stay within half a 16-bit level (tested).
 
 ## 14. Architectural decisions
 
@@ -264,11 +285,12 @@ measured against the reference (0014–0017), 16-bit storage per document
 with an 8-bit default (0018), the `.mirae` v1 format (0019), the I/O crate
 and file workflow (0020), the paint colour and colour tool state (0021),
 blending over translucent backdrops (0022), merge down and the layer
-workflow (0023), selections (0024), transforms (0025), fill (0026).
+workflow (0023), selections (0024), transforms (0025), fill (0026),
+gradients (0027).
 
 ## 15. Completed features
 
-Phases 1–4 + 3.5 and subphases 5A, 5B, 5C, 5D, 5E; see [STATUS.md](STATUS.md#features) and
+Phases 1–4 + 3.5 and subphases 5A, 5B, 5C, 5D, 5E, 5F; see [STATUS.md](STATUS.md#features) and
 [CHANGELOG.md](../CHANGELOG.md). Phase reports: [phase2](phase2/README.md),
 [phase3](phase3/README.md), [phase4](phase4/README.md) (phase 1 has no
 separate report; it is summarized in the changelog).
@@ -285,7 +307,9 @@ layers (#33), over-budget depth conversions hold both copies (#34),
 selection gaps (#37–#39: no reselect/saved selections, lasso smoothing,
 more selection tools), transforms of whole large layers slow on one core
 and the rotated-edge and interpolation gaps (#40, #41), fill gaps (no gap
-closing or area scaling, #42).
+closing or area scaling, #42), gradient gaps (the reference's default
+perceptual mixing, sub-pixel colour phase, large previews spread over
+frames, #43).
 Memory model: [memory.md](memory.md).
 
 ## 17. Risks
@@ -328,7 +352,7 @@ layers), 12.4 ms (100), 44 ms (100 Soft Light).
 
 ## 21. Next steps
 
-1. Ask the owner whether 5F (or something else) is approved; record the
+1. Ask the owner whether 5G (or something else) is approved; record the
    decision in [phase5/PLAN.md](phase5/PLAN.md) and follow it one
    subphase at a time; never start a phase or subphase without explicit
    approval.

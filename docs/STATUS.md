@@ -1,7 +1,7 @@
 # Status
 
-Factual state of the project at the end of **phase 5E** (fill), after
-**5D** (transform), after **5C** (selections),
+Factual state of the project at the end of **phase 5F** (gradients), after
+**5E** (fill), after **5D** (transform), after **5C** (selections),
 after **5B** (layer workflow,
 translucent-backdrop compositing, merge down), after **5A** (colour) and
 **phase 4** (4G: integration
@@ -11,9 +11,9 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 
 | | |
 |---|---|
-| Current phase | **Phase 5E (fill) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5E-fill.md](parity/5E-fill.md)); 5A, 5B, 5C, 5D complete; phase 4 complete ([phase4/README.md](phase4/README.md)); **5F–5G not approved, not started** |
+| Current phase | **Phase 5F (gradients) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5F-gradients.md](parity/5F-gradients.md)); 5A–5E complete; phase 4 complete ([phase4/README.md](phase4/README.md)); **5G not approved, not started** |
 | Parity | Tracked in [PARITY.md](PARITY.md) (phase-4 summary; phase-5 matrix from 5A); nothing compared with the reference before phase 4 |
-| Tests | **574** passing, 0 failing (5E started at 537; 5D started at 503; 5C started at 455 + 1 regression test for a 5B defect the baseline found; 5B started at 434; 5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Tests | **618** passing, 0 failing (5F started at 574; 5E started at 537; 5D started at 503; 5C started at 455 + 1 regression test for a 5B defect the baseline found; 5B started at 434; 5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -33,7 +33,7 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 | Scatter | Perpendicular/radial, count, rotation and scale jitter, effector-driven amount |
 | Airbrush | Time instants independent of frame rate; rest detection with delivery-lag compensation; dwell-time flow while moving |
 | Eraser | Destination-out through the same engine; stylus eraser end switches automatically; `E` for the mouse |
-| UI | egui side panels: colour (main/sub, HSV picker, RGB/HSV/hex, eyedropper, recent colours, swatches), selection (tools, mode, commands, feather), fill (bucket, fill selection, layer or canvas reference, tolerance, AA), transform (start, Move tool, flips, W/H/angle, keep aspect, Bicubic/Nearest, OK/Cancel), presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor; layers, document, history on the right |
+| UI | egui side panels: colour (main/sub, HSV picker, RGB/HSV/hex, eyedropper, recent colours, swatches), selection (tools, mode, commands, feather), fill (bucket, fill selection, layer or canvas reference, tolerance, AA), gradient (shape, ends, mixing, dither, presets, stop editor), transform (start, Move tool, flips, W/H/angle, keep aspect, Bicubic/Nearest, OK/Cancel), presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor; layers, document, history on the right |
 | Colour (5A) | Opaque `f32` paint colour without alpha captured by each stroke (ADR 0021); main/sub with an active slot (`X`), Swap, reset to black on white (`D`); HSV square + hue bar, RGB 0–255, HSV, `#RRGGBB`; eyedropper on the composite over the paper or the active layer (tool, right-click, Alt, also with the pen), document pixel at any zoom; recent colours (newest first, unique, 24) and swatches (session only); alpha lock, clipping, masks, blend modes and eraser behave with colour as measured; HSV readout, 51 % stroke, canvas picks and alpha-lock pixels match the reference |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
 | Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile (2 layers); per tile with every layer drawing: 1.6 ms (10 Normal layers), 12.4 ms (100), 44 ms (100 Soft Light); 0 allocations in composition ([performance.md](performance.md), [memory.md](memory.md)) |
@@ -42,6 +42,7 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 | Selections (5C) | Document-level 8-bit selection (ADR 0024): rectangle (snaps to pixels; screen-aligned in rotated views), ellipse, freehand lasso (even-odd), anti-aliasing per shape (rectangle off, ellipse and lasso on), New/Add/Subtract/Intersect (panel, Shift/Alt/Shift+Alt at the press; the reference's measured 8-bit rules), Select All (Ctrl+A), Deselect (Ctrl+D), Invert (Ctrl+Shift+I, button), Feather (the reference's Gaussian, within 2/255); every stroke (paint, alpha lock, erase, masks) scaled by the coverage in preview and commit; marching ants; history steps; not saved (as the reference); M selection tool, B brush |
 | Transform (5D) | Move, scale (free or proportional), rotate, flip of the active layer or the selected part of it, with the layer's mask (ADR 0025): a session (Ctrl+T, the panel, Flip H/V, the Move tool K) with a box, corner/side/rotation handles and a movable pivot at constant screen size in zoomed and rotated views, W/H/angle fields, keep aspect (Shift), Bicubic (the reference's measured default) or Nearest; Enter commits one history step, Escape cancels, undo/redo inside the session walk its edits; another layer or tool asks "Apply the transform?"; file commands wait; the selection follows the content; preview equals commit bit for bit after one quantization at 8 or 16 bits; scales within 3/255, nearest neighbour, flips and moves exactly as the reference |
 | Fill (5E) | The bucket (G) and Edit › Fill (Alt+Delete, panel) as the reference measures them (ADR 0026): a 4-connected area compared with the clicked colour by the largest straight channel difference (colour ignored at alpha 0), tolerance 0–100 % in tenths (threshold `round(2.55 t)`, at most 254), anti-aliased edge, decided on the edited layer (or a mask's own values) or on the visible canvas without the paper, limited by the selection (connectivity and coverage), alpha lock recolours keeping alpha, masks revealed or hidden, the eraser end / E erases; one history step; 8 and 16 bits; every measured island and edge of the reference reproduced (16-bit exactly, 8-bit except two translucent islands on a threshold); sparse span flood (a whole empty 4096² layer ~32 ms); no gap closing or area scaling |
+| Gradients (5F) | The gradient tool (G cycles fill and gradient; ADR 0027): linear, radial, elliptical, angular and reflected; ends extend, repeat, mirror or none (anti-aliased wraps and edges); stops from the main, sub or a fixed colour with opacity and position (presets main to sub, main to transparent; add, remove, reverse); the measured per-segment easing; sRGB, linear or OKLab (default) mixing, straight alpha; dithering on by default (Mirae's ordered pattern at the storage's precision); live preview equal to the commit bit for bit, a guide line, Shift snaps to 45°, Escape cancels; selection, feather, alpha lock, masks (by alpha), the eraser end / E erases; one history step; 8 and 16 bits; the reference's three public mixes within 1.5 levels, geometry within ~1 px |
 | Blend modes (4C) | Normal + 16 modes (multiply, screen, overlay, darken, lighten, color dodge/burn, hard/soft light, difference, exclusion, hue, saturation, color, luminosity, add); W3C formulas on sRGB-encoded values, paper as backdrop for blend tiles (ADR 0016); matches the reference's measured results within 1–2/255; selector in the layer panel; undoable |
 | Masks, clipping, alpha lock (4D) | One mask per layer (sparse 8-bit, new mask reveals all; paint reveals by stroke alpha, erase hides; enable/disable; delete), clipping groups (isolated, source-atop with the blend result, base opacity/mode/mask apply to the group; new layers inside a group are clipped), lock transparent pixels (source-atop paint, eraser unaffected); all measured against the reference and matching within 2/255 (ADR 0017); panel controls; undoable |
 | Undo/redo (4B) | Linear, swap-based history inside `Document` (ADR 0015): strokes, clear, create/delete/reorder layers, lock, rename, blend mode, opacity (consecutive edits merge); selection and visibility not recorded; add/remove undos restore the active layer; ignored during a stroke; 200 steps / 1 GiB by default; Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Undo/Redo buttons |
@@ -68,8 +69,45 @@ save); no layer thumbnails or folders (debt #17);
 CPU composition single-threaded and linear in layers (TECHNICAL_DEBT #33);
 no transparent colour, palette not persisted (debt #35, #36); transforms of
 whole large layers preview slowly on one core (debt #40); no gap closing
-or area scaling in fills (debt #42); preset edits not persisted; UI
-unpolished.
+or area scaling in fills (debt #42); the reference's default gradient
+mixing not reproduced and large gradient previews spread over frames
+(debt #43); preset edits not persisted; UI unpolished.
+
+## Phase 5F outcome
+
+Gradients, with the reference observed first
+([parity/5F-gradients.md](parity/5F-gradients.md), GD1–GD38; 40 decoded
+captures kept as test data). Probes of our own, reduced to column, ring
+and angle means, showed: every segment between stops eased by
+`E(u) = 0.38u + 0.62q(u)` (193 of 211 undithered integers exact); its
+Standard mixing on sRGB-encoded values, Linear in linear light, Perceptual
+(Photoshop-compatible) in OKLab; its default "Perceptiva" with a
+brightness correction matching no public space; straight colour and
+alpha, transparent stops carrying no colour; four end rules with
+anti-aliased wraps and edges; a deterministic ordered one-level dither
+biased half a level; source-over, source-atop with alpha lock, the
+selection limiting and scaling, masks by alpha, layer properties not
+baked, one step, a guide line only during the drag. Mirae (ADR 0027):
+`tela_color::gradient` (stops, the easing, three mixes, a per-segment
+`RampTable` within half a 16-bit level), `tela_document::gradient`
+(linear, radial, elliptical, angular, reflected; clamp, repeat, reflect,
+empty), its own mean-preserving 8 × 8 dither at the storage's precision,
+one per-pixel function for a live preview (bit-identical to the commit)
+and `Document::apply_gradient` (one step); the app's gradient tool (G
+cycles fill and gradient, Shift, Escape cancels, the eraser end), a
+panel with a stop editor and a drag guide. The reference's three public
+mixes are reproduced within 1.5 levels at both depths, circles, the
+ellipse, repeat and reverse within ~1 px of position, alpha, transparent
+stops, alpha lock, selections and masks within 1.5–2 levels; property
+tests compare with an independent `f64` model; gradients joined the
+randomized sessions. Verified in the running app (mouse and synthetic
+pen): all 20 session checks, including cancel, undo/redo, a rotated
+view, 16-bit, save/reopen and export. Costs: a 2048² preview frame ~100
+ms and commit ~80 ms; 4096² ~0.4 s and ~0.3 s (angular twice that); the
+app spreads large previews over frames (on-screen tiles first, ≤ 12 ms
+per frame). Remaining: D-5F-1…10 (the reference's default mixing, the
+colour phase, circle/ellipse drag mapping, dither pattern, options,
+large previews).
 
 ## Phase 5E outcome
 

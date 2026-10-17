@@ -56,7 +56,19 @@ What matters is where it sits in the architecture.
    5E) receives a `FillModel` (the tool active, canvas or layer
    reference, tolerance in percent, anti-aliasing, whether a selection
    exists) and returns a `FillAction`; it knows no document types (the
-   app converts to `FillReference` and `Tolerance`).
+   app converts to `FillReference` and `Tolerance`). The gradient panel
+   (`gradient_panel`, phase 5F) receives a `GradientModel` (the tool
+   active, its shape and ends as UI enums `GradientKind` /
+   `GradientEdge`, the `Mixing`, dithering, the stops as `StopRow`s with
+   a `StopColor` of main, sub or a fixed colour, the selected stop, and
+   the main and sub colours to draw them) and returns a
+   `GradientAction` (tool, shape, ends, mixing, dither, preset, select,
+   position, opacity, colour, "set to the active colour", add, remove,
+   reverse); it draws the ramp with `tela_color::gradient::ColorRamp`
+   (no document types) and owns nothing: the stops live in the app's
+   `GradientTool`. `gradient_guide` paints the drag's line and, for
+   radial and elliptical gradients, their outline from points the app
+   mapped to the screen: presentation only, like the reference's guide.
 3. **Commands the UI cannot fulfil are returned, not executed.**
    `BrushPanel::show` returns a `PanelAction` (`SelectPreset`,
    `ToggleEraser`, `ClearLayer`, `Layer(..)`); the app applies it. The layer

@@ -83,6 +83,53 @@ table above for the parallel path).
 phase 4E: 0.107–0.110 ms),
 0 allocations in 840 tiles.
 
+### Phase 5F — gradients
+
+`cargo run --release -p tela-corpus --example gradient_bench` (`-- --quick`
+without 4096²). Ryzen 7 5800X, one core, ms, 8-bit / 16-bit. The
+gradient spans the canvas diagonally (every tile changes; linear from 10 %
+to 90 % of the diagonal, radial/angular/reflected from the centre).
+"render" = `Gradient::render_tile` over every tile (positions and
+colours); "preview" = one frame: every covered tile composed through the
+compositor with the preview overlay (render + paint rule + quantization +
+composition); "commit" = `Document::apply_gradient` (one step); undo/redo
+swap the tiles.
+
+| canvas | case | tiles | render | preview frame | commit | undo / redo |
+|---:|---|---:|---:|---:|---:|---:|
+| 256² | linear, 2 stops (OKLab, dither) | 1 | 0.8 | 1.6 | 1.2 | < 0.01 |
+| 2048² | linear, 2 stops (OKLab, dither) | 64 | 50 | 101 | 82 / 87 | 0.01 |
+| 2048² | linear, 2 stops, no dither | 64 | 50 | 101 | 80 / 87 | 0.01 |
+| 2048² | linear, 8 stops | 64 | 65 | 116 | 97 / 99 | 0.01 |
+| 2048² | radial | 64 | 60 | 110 | 91 / 93 | 0.01 |
+| 2048² | angular | 64 | 144 | 194 | 175 / 178 | 0.01 |
+| 2048² | reflected | 64 | 48 | 99 | 79 / 81 | 0.01 |
+| 2048² | linear, feathered selection (half the canvas) | 36 | 50 | 47 | 47 | < 0.01 |
+| 2048² | linear, mask | 64 | 50 | 106 | 66 | 0.01 |
+| 4096² | linear, 2 stops | 256 | 199 | 401 | 325 / 345 | 0.03–0.04 |
+| 4096² | linear, 8 stops | 256 | 245 | 447 | 369 / 393 | 0.03 |
+| 4096² | radial | 256 | 220 | 422 | 345 / 367 | 0.03 |
+| 4096² | angular | 256 | 578 | 780 | 701 / 721 | 0.03–0.05 |
+| 4096² | reflected | 256 | 189 | 390 | 315 / 332 | 0.03 |
+| 4096² | linear, feathered selection | 100 | 199 | 141 | 146 / 153 | 0.01 |
+| 4096² | linear, mask | 256 | 200 | 408 | 262 / 257 | 0.02–0.03 |
+
+~42 Mpx/s through the whole preview path for linear, radial and
+reflected gradients (~24 ns per pixel: ~12 rendering, ~12 painting,
+quantizing and composing), ~22 Mpx/s angular (`atan2`). Mixing mode,
+dithering and depth change the cost by under 5 % (16-bit commits ~5 %
+slower: quantization and twice the bytes). The first version ran at
+14 Mpx/s (exact sRGB/OKLab evaluation per pixel and a per-pixel dispatch
+on shape and end rule); the per-segment `RampTable` and one monomorphized
+loop per end rule and tile tripled it with results within half a 16-bit
+level (tested). A preview frame allocates nothing (one tile scratch
+allocated when the preview starts). In the app a whole-canvas preview of
+a 4000 × 3000 document is composed over several frames: the tiles on
+screen first, at most ~12 ms per frame (D-5F-7, debt #43); in the
+running app commits took 150–530 ms on that canvas (192 tiles), 40–100 ms
+inside selections or on a layer's existing tiles. Memory:
+[memory.md](memory.md).
+
 ### Phase 5E — fill
 
 `cargo run --release -p tela-corpus --example fill_bench` (`-- --quick`

@@ -281,6 +281,29 @@ The measured region rule, anti-aliasing and paint are kept by
 16 tolerances and three seeds (16-bit exactly, 8-bit but D-5E-1), edges,
 feather, alpha lock and Edit › Fill within 2/255.
 
+## Gradients (phase 5F, ADR 0027)
+
+Named GR. Also checked by `corpus/tests/random_sessions.rs` (gradients
+among strokes, selections, transforms, fills and files). Unit tests are
+in `document::gradient::tests`, property tests in
+`document::gradient_properties` (against an independent `f64` model),
+the reference's measurements in `document::gradient::parity`.
+
+| # | Invariant | Protected by |
+|---|---|---|
+| GR1 | Deterministic: the same document, gradient (geometry, stops, mixing, ends, dither) and paint give the same document, bit for bit; the dither depends only on the document pixel. The colours are captured when the drag begins. | `gradient_properties::gradients_keep_every_invariant` (a twin document), `gradient::tests::dithering_is_deterministic_and_keeps_the_mean`, `app::gradients::tests::a_session_captures_colours_and_maps_through_the_view` |
+| GR2 | A preview never changes the document: `GradientPreview` borrows it read-only; nothing accumulates between frames (each frame recomposes from the stored tiles). | `gradient_properties::gradients_keep_every_invariant` (digest and revision after previewing), the type (`&Document`) |
+| GR3 | A cancelled gradient (Escape, a cancelled pointer, a drag without length) changes nothing, history included. | `gradient_properties::gradients_keep_every_invariant` (a dropped preview), `gradient::tests::degenerate_drags_draw_nothing`, the app session (cancel: screen identical, no step) |
+| GR4 | A gradient is one history step (`HistoryAction::Gradient`), none when it changes nothing. | `gradient::tests::a_gradient_is_one_step_that_undoes_and_redoes_bit_exactly`, `gradient_properties::gradients_keep_every_invariant`, `random_sessions.rs` |
+| GR5 | The preview is the commit: the overlay runs the commit's per-pixel function and quantization, so the composed preview equals the composed result bit for bit (pixels and masks, both depths, every shape and end, alpha lock, selection, dither). | `gradient::tests::the_preview_is_the_commit_bit_for_bit`, `…::a_mask_preview_is_its_commit_and_ignores_the_colour`, `gradient_properties::gradients_keep_every_invariant` |
+| GR6 | A pixel (or mask value) of selection coverage 0 never changes, nor any pixel off the canvas; partial coverage scales the gradient; the geometry does not depend on the selection. | `gradient_properties::gradients_keep_every_invariant`, `gradient::tests::the_selection_limits_and_scales_but_does_not_move_the_gradient`, `gradient::parity::selections_limit_and_scale_the_gradient` |
+| GR7 | With alpha lock a drawn gradient never changes any pixel's alpha (transparent pixels stay transparent); erasing is not stopped, as with the eraser. | `gradient::tests::alpha_lock_keeps_every_alpha_and_erase_removes`, `gradient_properties::gradients_keep_every_invariant`, `gradient::parity::over_existing_pixels_and_with_alpha_lock` |
+| GR8 | On a mask a gradient acts on the reveal value by its alpha (reveal `v + m(1 − v)`, hide `v(1 − m)`), whatever its colours; the pixels never change through a mask gradient and the mask never through a pixel one. | `gradient_properties::mask_gradients_ignore_the_colours`, `…::gradients_keep_every_invariant`, `gradient::tests::a_mask_preview_is_its_commit_and_ignores_the_colour`, `gradient::parity::a_mask_is_revealed_by_the_gradients_alpha` |
+| GR9 | 16-bit documents never pass through 8 bits: colours stay `f32` (the sampled ramp within half a 16-bit level) to the single quantization, dithered at 16-bit amplitude; 8- and 16-bit results agree within an 8-bit level. | `gradient::tests::sixteen_bit_documents_never_pass_through_eight_bits`, `gradient_properties::eight_and_sixteen_bits_agree`, `tela_color::gradient::tests::the_table_is_within_half_a_16_bit_level` |
+| GR10 | A refused gradient (hidden or locked layer, missing or disabled mask) changes nothing, history included; the preview is refused the same way. | `gradient::tests::refusals_and_untouched_properties`, `gradient_properties::gradients_keep_every_invariant` (hidden copy) |
+| GR11 | Every stored pixel stays premultiplied-valid (`rgb ≤ a ≤ 1`): the paint rules clamp and every channel of a pixel uses the same dither threshold (monotone quantization). | `gradient_properties::gradients_keep_every_invariant`, `tela_color` `dithering_keeps_the_mean_and_premultiplied_order`, `Document::check_invariants` |
+| GR12 | Undo restores every tile bit for bit (absent tiles absent again), redo the gradient; the layer's properties, the active layer and the selection never change. | `gradient::tests::a_gradient_is_one_step_that_undoes_and_redoes_bit_exactly`, `…::refusals_and_untouched_properties`, `gradient_properties::gradients_keep_every_invariant`, `random_sessions.rs` (full undo/redo walk) |
+
 ## Integration (phase 4G)
 
 No new invariant: these rows record where the invariants above are
@@ -342,7 +365,7 @@ the full stack is still compared whenever only Normal layers lie above.
 |---|---|---|
 | F1 | No allocation per dab on the sequential stamping path (after tiles exist); the parallel path allocates only rayon's amortized injector blocks (≤ 1 per 100 samples). | `allocation.rs::processing_and_stamping_do_not_allocate_per_sample`, `stamp_bench` (allocs/dab = 0.000) |
 | F2 | No allocation per sample in the stroke processor (owned, reused buffers). | `allocation.rs::processing_and_stamping_do_not_allocate_per_sample` |
-| F3 | Composition of a dirty tile does not allocate. | `stamp_bench` composition line (0 allocations), `doc_bench` (every mode, mask, clipping, 1–100 layers, both depths; exits non-zero on any allocation and runs in `check.ps1 -Bench`) |
+| F3 | Composition of a dirty tile does not allocate. | `stamp_bench` composition line (0 allocations), `doc_bench` (every mode, mask, clipping, 1–100 layers, both depths; exits non-zero on any allocation and runs in `check.ps1 -Bench`), `gradient_bench` (gradient preview frames: 0 allocations) |
 
 F1 and F2 are tested by `cargo test` (thread-local counting allocator);
 F3 and throughput are measured by the benchmark; run it after touching hot

@@ -11,7 +11,7 @@ nothing else is started.
 | 5C Selections | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5C-selection.md](../parity/5C-selection.md); [ADR 0024](../adr/0024-selections.md) |
 | 5D Transform | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5D-transform.md](../parity/5D-transform.md); [ADR 0025](../adr/0025-transform.md) |
 | 5E Fill | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5E-fill.md](../parity/5E-fill.md); [ADR 0026](../adr/0026-fill.md) |
-| 5F Gradients | **Approved 2026-10-17, in progress** | [parity/5F-gradients.md](../parity/5F-gradients.md) |
+| 5F Gradients | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5F-gradients.md](../parity/5F-gradients.md); [ADR 0027](../adr/0027-gradients.md) |
 | 5G Integration | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 
 ## 5A — Colour (approved brief, summarized)
@@ -208,3 +208,53 @@ measured island and edge reproduced (16-bit exactly, 8-bit except two
 translucent islands on a threshold); a whole empty 4096² layer fills in
 ~32 ms, a 4096² background around line art through the composite in
 ~0.27 s. Remaining differences: D-5E-1…9. 5F not started.
+
+## 5F — Gradients (approved brief, summarized)
+
+A professional raster gradient system: linear, radial, elliptical (if the
+reference has it), angular and reflected gradients; main → sub and main →
+transparent; several stops with positions and interpolation; a live
+preview during the drag (`begin → update → commit/cancel`, the same
+function for preview and commit, nothing accumulated, the parameters
+captured at the start); selection (hard and feathered), masks (ADR 0017
+semantics), alpha lock, layers, RGBA8/RGBA16 (one quantization, 16-bit
+never through 8 bits); one undo step, bit-exact undo/redo, failures
+transactional; dithering investigated by black box (amplitude, pattern,
+repeatability, dark and long ramps) without reproducing the reference's
+generator and without sacrificing 16-bit precision; interpolation spaces
+measured (sRGB-encoded, linear light, alpha, premultiplied vs straight);
+explicit geometry through the shared screen → document mapping; G
+coexisting with fill; a usable panel (shape, stops, positions, presets);
+invariants GR1–GR12 with numeric and property tests against an
+independent model; `gradient_bench`; a 20-step real-app session; the
+parity gate. Out of scope: selection enhancements, colour management,
+ICC, CMYK, patterns, material gradients, gradient maps, adjustment
+layers, vector gradients, a GPU gradient engine, layer groups, new file
+formats, anything of 5G.
+
+### Decisions (details in ADR 0027)
+
+| # | Decision | Reason |
+|---|---|---|
+| F1 | Colour side (`GradientStop`, `GradientStops`, `ColorRamp`, `RampTable`, `Mixing`, `ease`) in `tela-color`; geometry and painting in `tela-document` | The UI draws ramps without depending on the document; crate boundaries unchanged |
+| F2 | Every segment eased by `E(u) = 0.38u + 0.62q(u)` | GD6, GD10: 193 of 211 undithered integers exact; smoothstep, quintic, sinusoidal rejected |
+| F3 | Mixing: sRGB-encoded, linear light, OKLab (default) | GD6–GD8 reproduced; the reference's own "Perceptiva" fits no public space (GD9, D-5F-1) — OKLab is the nearest |
+| F4 | Straight colour and alpha; an opacity-0 stop has no colour | GD11–GD13 (premultiplied misses by ~40 levels) |
+| F5 | Shapes linear, radial, elliptical (axis-aligned), angular, reflected; ends clamp, repeat, reflect, empty, anti-aliased by footprint | GD2, GD14, GD17–GD21; angular and reflected are Mirae's (the brief) |
+| F6 | Pixel centres; the press through the view mapping, kept in document coordinates; Shift snaps to 45° | GD15, GD23; one mapping for every tool (D-5F-2 for the reference's phase) |
+| F7 | One per-pixel function and quantization for preview and commit; the preview decodes it back | GR5 exact (not "quantized once" approximately as TR4) |
+| F8 | Mirae's own 8 × 8 ordered dither, mean-preserving, at the storage's precision; on by default | GD3, GD25–GD28; the brief: no reverse-engineered generator, no 8-bit noise in 16-bit documents |
+| F9 | The brush's and fill's paint rules; selection limits and scales, not the geometry; one `Gradient` step, none for no-ops | GD29–GD36; H6 |
+| F10 | `RampTable` per segment and monomorphized per-tile loops; the app composes on-screen tiles first, ≤ 12 ms per frame | Measured: 14 → 42 Mpx/s; a whole 4096² preview is ~0.4 s (D-5F-7) |
+| F11 | G cycles fill and gradient, starting with the gradient; Escape cancels; the eraser end erases | BK4, GD1; the brief's cancel (the reference ignores Escape, GD38) |
+| F12 | Invariants GR1–GR12 | The brief |
+
+### Outcome
+
+Implemented as decided; gate recorded in [PARITY.md](../PARITY.md) and
+[parity/5F-gradients.md](../parity/5F-gradients.md). Tests 574 → 618.
+The reference's three public mixes reproduced within 1.5 levels at both
+depths, circles/ellipse/repeat/reverse within ~1 px, alpha, transparent
+stops, alpha lock, selections and masks within 1.5–2 levels; a 2048²
+preview frame ~100 ms, commit ~80 ms. Remaining differences: D-5F-1…10.
+5G not started.

@@ -46,14 +46,14 @@ paint/
 
 | Crate | Owns | Must not |
 |---|---|---|
-| `tela-color` | `Color` (the opaque paint colour, ADR 0021), `Hsv`, hex, `Rgba` (straight), `PremulRgba`, `over`, RGBA8/RGBA16 quantization, stored formats (`StoragePixel`, `PixelDepth`, `with_pixel_type!`), sRGB curves | know about space or devices |
+| `tela-color` | `Color` (the opaque paint colour, ADR 0021), `Hsv`, hex, `Rgba` (straight), `PremulRgba`, `over`, RGBA8/RGBA16 quantization (dithered too, `dither_threshold`), stored formats (`StoragePixel`, `PixelDepth`, `with_pixel_type!`), sRGB curves, gradient colours (`gradient`: stops, the measured easing, sRGB/linear/OKLab mixing, `RampTable`; ADR 0027) | know about space or devices |
 | `tela-canvas` | `TiledSurface<P>`, `Tile<P>`, `TileCoord`, `DirtyTiles`, `IRect`, `ViewTransform`, `TileCoverage` (a borrowed per-tile coverage: how much an edit may change each pixel) | know about layers, colors or brushes |
 | `tela-brush` | the whole stroke engine up to the stroke mask | read devices, own documents, know UI/GPU |
-| `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay`; the selection (`Selection`: shapes, operators, feather, outline; ADR 0024); transforms (`TransformSource`, `TransformParams`, the measured resampler; ADR 0025); fill (`FillRegion`, `ConnectedFill`, the measured region rule and a sparse span flood; ADR 0026) | know brushes, input, view, GPU |
+| `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay`; the selection (`Selection`: shapes, operators, feather, outline; ADR 0024); transforms (`TransformSource`, `TransformParams`, the measured resampler; ADR 0025); fill (`FillRegion`, `ConnectedFill`, the measured region rule and a sparse span flood; ADR 0026); gradients (`Gradient`, `GradientGeometry`, shapes and ends, `GradientPreview`, `apply_gradient`; ADR 0027) | know brushes, input, view, GPU |
 | `tela-io` | the `.mirae` format (manifest DTOs, tile codec, limits, versioning), atomic save, hostile-input loading through `Document::from_parts`, PNG export of the composite and PNG import as layer pixels (ADR 0019, 0020) | know paths chosen by the user, dialogs, UI; change a document |
 | `tela-renderer` | GPU device/surface, display texture + mips, canvas shader, `FrameOverlay` | see the document |
 | `tela-tablet` | `TabletSample`/`TabletEvent`, unit normalization, input clock, Windows Ink | know brushes or canvas space |
-| `tela-ui` | brush panel, colour panel, selection panel and outline (marching ants), fill panel, transform panel and box, layer panel, document bar, curve editor, prompts, egui plumbing | own authoritative state |
+| `tela-ui` | brush panel, colour panel, selection panel and outline (marching ants), fill panel, gradient panel and drag guide, transform panel and box, layer panel, document bar, curve editor, prompts, egui plumbing | own authoritative state |
 | `tela-corpus` | standard trajectories, `render_sheet`, image diff, goldens, `stamp_bench` | ship in the app |
 | `tela-app` | window/event loop, wiring, application state, the file workflow (native dialogs, unsaved-changes prompt, drag-and-drop) | implement engine logic or file formats |
 
@@ -67,10 +67,11 @@ All authoritative state lives in `tela-app`'s `App`:
 |---|---|---|
 | `Document` (depth, layers, pixels) | `App.document` | Changed only through `Document` methods (ADR 0014): layer commands from the panel and shortcuts, `modify_tiles` + `StrokeBuffer::commit_tile` at the end of a stroke, `clear_layer`, `convert_depth` and the document bar (new document of either depth, ADR 0018). Every call returns the tiles it invalidated and is recorded in the document's undo history (ADR 0015). |
 | View (`ViewTransform`) | `App.view` | Screen↔canvas mapping. |
-| Presets being edited, eraser mode; the canvas tool (brush, eyedropper, selection, move, fill) | `App.tools` (`Tools`), `App.tool` (`CanvasTool`) | The UI edits the active preset in place, lent for one frame. |
+| Presets being edited, eraser mode; the canvas tool (brush, eyedropper, selection, move, fill, gradient) | `App.tools` (`Tools`), `App.tool` (`CanvasTool`) | The UI edits the active preset in place, lent for one frame. |
 | Selection (which pixels edits may change) | `App.document` (`Document::selection`) | Document state and history steps, not saved (ADR 0024). |
 | Selection tool settings (shape, mode, anti-aliasing per shape, feather strength), the shape being dragged, the traced outline | `App.selection` (`SelectionTool`), `App.selection_drag`, `App.outline` | Session tool state and presentation caches (`app::selecting`). |
 | Fill tool settings (reference: layer or canvas, tolerance, anti-aliasing) | `App.fill_tool` (`FillTool`) | Session tool state (`app::filling`); a fill itself is one document step (ADR 0026). |
+| Gradient tool settings (shape, ends, mixing, dither, stops), the gradient being dragged (its colours captured at the press, the press in document coordinates) | `App.gradient_tool` (`GradientTool`), `App.gradient` (`GradientSession`) | Session state (`app::gradients`): the document changes only at the commit, one step (ADR 0027). |
 | A transform in progress (its source, its edits, the handle being dragged), transform tool settings (keep aspect, interpolation), the question "Apply the transform?" | `App.transform` (`TransformSession`), `App.transform_tool` (`TransformTool`), `App.transform_exit` | Session state (`transforming`, `app::transform`): never in the document, its history or its file until committed (ADR 0025). |
 | User stroke settings, pressure curve | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
 | Main/sub colour (active slot), recent colours, swatches; eyedropper tool and source | `App.colors` (`ColorState`), `App.picker`, `App.pick_source` | Session tool state (ADR 0021): not in the document, the file or the history. The active colour is copied into `BrushEngine::color` at pen-down. |
@@ -444,6 +445,36 @@ tiles cost a value, other reached tiles a 128 KiB distance map and an
 8 KiB bitset. A fill is immediate (no preview), synchronous, one step;
 the tool's settings are app session state (`App.fill_tool`).
 
+## 8g. Gradients
+
+```
+gradient tool (G): press ─view.to_canvas─► GradientSession::begin (tool settings, main/sub colours resolved now)
+  move: end = view.to_canvas(pointer) (Shift: 45° on screen) ─► Gradient { geometry, ColorRamp + RampTable, ends, dither }
+  preview: Document::gradient_preview(target, gradient, paint) ──► overlay (pixels or mask) ─► compose_tile_into
+           tiles on screen first, ≤ 12 ms per frame; the rest next frames          (borrows the document read-only)
+  release: Document::apply_gradient(target, gradient, paint) ─► one HistoryAction::Gradient step
+  Escape / cancel: drop the session (nothing changed)
+per pixel (one function, preview and commit):
+  t = shape(position at the pixel centre)   linear: projection · radial: distance/len · elliptical: √((dx/rx)²+(dy/ry)²)
+                                             angular: clockwise turn · reflected: |projection|
+  extend: clamp | repeat (wrap blended by footprint) | reflect | empty (edge covered by area)
+  colour: stops ─ segment ─ E(u) = 0.38u + 0.62q(u) ─ mix in sRGB / linear / OKLab, straight alpha ─ premultiplied
+  rule: over | atop (alpha lock) | erase | mask reveal/hide by α, × selection coverage
+  quantize once at the depth with the pixel's dither threshold (Bayer 8 × 8, (B + ½)/64) ─► stored (commit) or decoded back (preview)
+```
+
+The rules are the reference's where it defines them (ADR 0027, parity
+record 5F): the per-segment easing, three of its four mixing modes,
+straight alpha with transparent stops carrying no colour, its four end
+rules, source-over / source-atop / masks by alpha, the selection
+limiting and scaling, one step. Mirae adds angular and symmetric shapes,
+a live preview (the reference shows a guide line) and Escape to cancel,
+and dithers with its own mean-preserving ordered matrix at the storage's
+precision. The ramp is sampled per segment (`RampTable`, within half a
+16-bit level) and the extend rule is chosen once per tile; uniform tiles
+(before the first or after the last stop) and tiles the empty extend
+misses are short-cut. Settings and stops are app session state.
+
 ## 9. UI overlay
 
 `tela-ui::UiLayer` runs egui each frame and implements the renderer's
@@ -493,7 +524,8 @@ history and files together. See [golden-tests.md](../golden-tests.md),
 - Flat layer stack (no groups; clipping groups only); masks without apply/mask-from-selection; 17 blend modes; merge down only (no merge visible, flatten or merge selected).
 - Selections: rectangle, ellipse, lasso, four operators, select all, invert, feather; no polyline, magic wand, colour range, quick mask, selection pen, expand/shrink, reselect or copy/paste (ADR 0024, parity record 5C); fill through a selection since 5E.
 - Transforms: move, scale, rotate, flip of one layer (or its selected part) with its mask; bicubic (the reference's default) and nearest neighbour; no free distortion, perspective, mesh, multi-layer or folder transforms, no bilinear or "average colours" modes; the resampler runs on one core (~64 ns per destination pixel: whole 4096² layers preview at ~1 frame per second; ADR 0025, debt #40).
-- Fill: the bucket (connected, 4-neighbour, tolerance, the layer or the composite as reference, anti-aliased edge) and Edit › Fill, as the reference measures them; no gap closing, area scaling, non-contiguous fill, reference-layer modes or gradients; synchronous on one core (a whole 4096² background through the composite ~0.27 s; ADR 0026, debt #42).
+- Fill: the bucket (connected, 4-neighbour, tolerance, the layer or the composite as reference, anti-aliased edge) and Edit › Fill, as the reference measures them; no gap closing, area scaling, non-contiguous fill or reference-layer modes; synchronous on one core (a whole 4096² background through the composite ~0.27 s; ADR 0026, debt #42).
+- Gradients: linear, radial, elliptical (axis-aligned), angular, reflected; four end rules; sRGB, linear and OKLab mixing (not the reference's own perceptual mode); stops from the main, sub or a fixed colour; no gradient layers, gradient maps, tool opacity or blend mode; a whole-canvas preview costs ~0.4 s per frame at 4096² on one core and is spread over frames (ADR 0027, debt #43).
 - Undo history is in memory only, uncompressed, 256 KiB (8-bit) or 512 KiB (16-bit) per changed tile per step (ADR 0015, 0018).
 - 8- or 16-bit layer storage per document, 8-bit masks, 8-bit display (no dithering, no HDR); display texture limited to the GPU's max texture size.
 - Composition is CPU, single-threaded and linear in layers, with no cache below the stroke target: ~12 ms per 256² tile for 100 overlapping Normal layers, ~44 ms for 100 Soft Light (4G, TECHNICAL_DEBT #33).

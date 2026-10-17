@@ -159,6 +159,25 @@ breadth-first flood and FL1–FL8 on random images. To re-measure:
 fit`/`aa`/`corpus` (every scored distance model is listed in the
 example).
 
+`document::gradient::parity` (phase 5F) draws the reference's 40 probe
+gradients (`crates/document/tests/reference/gradient/`, decoded
+premultiplied captures, see its README) at both depths and compares
+column, ring or isoline means (the reference dithers; Mirae draws
+undithered there), steep ramps as positions in pixels (the mean turned
+back into the distance it encodes): the three public mixes, three
+undithered stops pixel by pixel, the diagonal, circles, the ellipse,
+repeat, reverse, empty ends at 100 % and 400 %, transparent stops, over
+pixels with and without alpha lock, hard and feathered selections, masks.
+Set `TELA_PARITY_REPORT=1` (with `--nocapture`) to print every worst
+error; the parity record quotes them. `document::gradient_properties`
+checks the painted pixels against an independent `f64` model (geometry,
+the easing, straight colour and alpha) and GR1–GR12 on random
+documents, selections, locks, masks, depths, shapes and stops;
+`gradient::tests` checks preview == commit bit for bit for every shape,
+depth, lock, selection and mask. To re-measure: `gradient_probe psd`,
+the steps in docs/parity/5F-gradients.md, then `gradient_probe
+decode`/`cols`/`ring`/`noise`/`bayer`.
+
 ### End-to-end tests (phase 4G)
 
 `crates/corpus/tests/` drives the whole stack through public APIs as the
