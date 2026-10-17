@@ -3,7 +3,8 @@
 //!
 //! **Responsibility:** [`TiledSurface`] (an unbounded plane of 256×256
 //! [`Tile`]s allocated on first write), [`TileCoord`] addressing,
-//! [`DirtyTiles`] sets, integer rectangles ([`IRect`]) and the
+//! [`DirtyTiles`] sets, integer rectangles ([`IRect`]), the per-tile view
+//! of how much an edit may change ([`TileCoverage`], a selection) and the
 //! screen↔canvas [`ViewTransform`].
 //! **Does not:** know about layers, colors, brushes, input or the GPU; the
 //! pixel type is generic.
@@ -17,10 +18,12 @@
 //! addressing uses Euclidean division, so negative coordinates work;
 //! `DirtyTiles` iterates in a deterministic order.
 
+mod coverage;
 mod rect;
 mod tile;
 mod view;
 
+pub use coverage::TileCoverage;
 pub use rect::IRect;
 pub use tile::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
 pub use view::ViewTransform;

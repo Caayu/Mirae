@@ -1,4 +1,4 @@
-use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
+use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TileCoverage, TiledSurface};
 use tela_color::{Color, PremulRgba, StoragePixel, unorm8};
 
 use crate::Dab;
@@ -328,8 +328,35 @@ impl StrokeBuffer {
     /// `dst·(1 − m)` and ignores `C` (invariant COL3). Layer opacity, mask
     /// and blend mode apply later, at composition.
     pub fn paint_over_tile(&self, coord: TileCoord, pixels: &mut [PremulRgba], alpha: PixelAlpha) {
-        if let Some(mask) = self.mask_tile(coord) {
-            self.paint_over(pixels, mask.pixels(), alpha);
+        self.paint_over_tile_within(coord, pixels, alpha, TileCoverage::Full);
+    }
+
+    /// [`StrokeBuffer::paint_over_tile`] limited by a selection: the
+    /// stroke's alpha is multiplied by the coverage, `m·s` (reference
+    /// behaviour, parity record 5C S22–S24), once per pixel of the
+    /// finished stroke, not per dab. A full coverage takes the
+    /// unrestricted path; an empty one changes nothing.
+    pub fn paint_over_tile_within(
+        &self,
+        coord: TileCoord,
+        pixels: &mut [PremulRgba],
+        alpha: PixelAlpha,
+        coverage: TileCoverage,
+    ) {
+        let Some(mask) = self.mask_tile(coord) else {
+            return;
+        };
+        match coverage {
+            TileCoverage::Full => self.paint_over(pixels, mask.pixels(), alpha),
+            TileCoverage::Empty => {}
+            partial @ TileCoverage::Partial { .. } => {
+                let mut row = [0.0f32; TILE_SIZE as usize];
+                for (y, run) in pixels.chunks_exact_mut(TILE_SIZE as usize).enumerate() {
+                    if partial.scale_row(y as u32, mask.row(y as u32), &mut row) {
+                        self.paint_over(run, &row, alpha);
+                    }
+                }
+            }
         }
     }
 
@@ -386,16 +413,38 @@ impl StrokeBuffer {
         tile: &mut Tile<P>,
         alpha: PixelAlpha,
     ) {
+        self.commit_tile_within(coord, tile, alpha, TileCoverage::Full);
+    }
+
+    /// [`StrokeBuffer::commit_tile`] limited by a selection, with the
+    /// rule of [`StrokeBuffer::paint_over_tile_within`]. Rows the
+    /// selection excludes are not touched.
+    pub fn commit_tile_within<P: StoragePixel>(
+        &self,
+        coord: TileCoord,
+        tile: &mut Tile<P>,
+        alpha: PixelAlpha,
+        coverage: TileCoverage,
+    ) {
         let Some(mask) = self.mask_tile(coord) else {
             return;
         };
+        if matches!(coverage, TileCoverage::Empty) {
+            return;
+        }
         let mut row = [PremulRgba::TRANSPARENT; TILE_SIZE as usize];
+        let mut scaled = [0.0f32; TILE_SIZE as usize];
         for y in 0..TILE_SIZE {
+            let m = match coverage {
+                TileCoverage::Full => mask.row(y),
+                _ if coverage.scale_row(y, mask.row(y), &mut scaled) => &scaled,
+                _ => continue,
+            };
             let pixels = tile.row_mut(y);
             for (s, p) in row.iter_mut().zip(pixels.iter()) {
                 *s = p.to_premul();
             }
-            self.paint_over(&mut row, mask.row(y), alpha);
+            self.paint_over(&mut row, m, alpha);
             for (p, s) in pixels.iter_mut().zip(&row) {
                 *p = P::from_premul(*s);
             }
@@ -420,8 +469,31 @@ impl StrokeBuffer {
     /// stroke's colour plays no part (reference behaviour for masks,
     /// parity record 4D M2–M4). Shared by preview and commit.
     pub fn paint_alpha_tile(&self, coord: TileCoord, values: &mut [f32]) {
-        if let Some(mask) = self.mask_tile(coord) {
-            self.alpha_over(values, mask.pixels());
+        self.paint_alpha_tile_within(coord, values, TileCoverage::Full);
+    }
+
+    /// [`StrokeBuffer::paint_alpha_tile`] limited by a selection (`m·s`,
+    /// reference 5C S26).
+    pub fn paint_alpha_tile_within(
+        &self,
+        coord: TileCoord,
+        values: &mut [f32],
+        coverage: TileCoverage,
+    ) {
+        let Some(mask) = self.mask_tile(coord) else {
+            return;
+        };
+        match coverage {
+            TileCoverage::Full => self.alpha_over(values, mask.pixels()),
+            TileCoverage::Empty => {}
+            partial @ TileCoverage::Partial { .. } => {
+                let mut row = [0.0f32; TILE_SIZE as usize];
+                for (y, run) in values.chunks_exact_mut(TILE_SIZE as usize).enumerate() {
+                    if partial.scale_row(y as u32, mask.row(y as u32), &mut row) {
+                        self.alpha_over(run, &row);
+                    }
+                }
+            }
         }
     }
 
@@ -448,16 +520,36 @@ impl StrokeBuffer {
     /// (255 = full), with [`StrokeBuffer::paint_alpha_tile`]'s rule. Row by
     /// row on the stack: no allocation.
     pub fn commit_alpha_tile(&self, coord: TileCoord, tile: &mut Tile<u8>) {
+        self.commit_alpha_tile_within(coord, tile, TileCoverage::Full);
+    }
+
+    /// [`StrokeBuffer::commit_alpha_tile`] limited by a selection, with the
+    /// rule of [`StrokeBuffer::paint_alpha_tile_within`].
+    pub fn commit_alpha_tile_within(
+        &self,
+        coord: TileCoord,
+        tile: &mut Tile<u8>,
+        coverage: TileCoverage,
+    ) {
         let Some(mask) = self.mask_tile(coord) else {
             return;
         };
+        if matches!(coverage, TileCoverage::Empty) {
+            return;
+        }
         let mut row = [0.0f32; TILE_SIZE as usize];
+        let mut scaled = [0.0f32; TILE_SIZE as usize];
         for y in 0..TILE_SIZE {
+            let m = match coverage {
+                TileCoverage::Full => mask.row(y),
+                _ if coverage.scale_row(y, mask.row(y), &mut scaled) => &scaled,
+                _ => continue,
+            };
             let values = tile.row_mut(y);
             for (r, v) in row.iter_mut().zip(values.iter()) {
                 *r = f32::from(*v) / 255.0;
             }
-            self.alpha_over(&mut row, mask.row(y));
+            self.alpha_over(&mut row, m);
             for (v, r) in values.iter_mut().zip(&row) {
                 *v = unorm8(*r);
             }
@@ -1006,6 +1098,115 @@ mod tests {
             for (a, b) in eight.pixels().iter().zip(sixteen.pixels()) {
                 for (x, y) in a.iter().zip(b.to_rgba8()) {
                     assert!(x.abs_diff(y) <= 1, "{mode:?}: {a:?} vs {b:?}");
+                }
+            }
+        }
+    }
+
+    /// A selection gradient over the tile: coverage `x` along each row
+    /// (0 at the left, 255 from x = 255), stored inverted to exercise the
+    /// XOR, with a clip that leaves the bottom rows uncovered.
+    fn gradient_selection() -> Tile<u8> {
+        let mut t = Tile::new();
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                *t.get_mut(x, y) = 255 - x.min(255) as u8;
+            }
+        }
+        t
+    }
+
+    fn gradient_coverage(t: &Tile<u8>) -> TileCoverage<'_> {
+        TileCoverage::Partial {
+            stored: Some(t),
+            xor: 255,
+            clip: [0, 0, TILE_SIZE, 200],
+        }
+    }
+
+    /// 5C: the selection multiplies the finished stroke's alpha (`m·s`);
+    /// coverage 0 never changes a pixel, a full coverage is the
+    /// unrestricted path bit for bit, and preview equals commit at both
+    /// depths for paint, alpha-preserving paint and erase (SEL4, SEL5, P2).
+    #[test]
+    fn a_selection_scales_the_stroke_alpha_identically_in_preview_and_commit() {
+        fn check<P: StoragePixel>(level: f32) {
+            let c = TileCoord { x: 0, y: 0 };
+            let sel = gradient_selection();
+            for (mode, alpha) in [
+                (PaintMode::Paint, PixelAlpha::Free),
+                (PaintMode::Paint, PixelAlpha::Preserved),
+                (PaintMode::Erase, PixelAlpha::Free),
+            ] {
+                let s = varied_stroke(mode);
+                let original = varied_tile::<P>();
+                // Full coverage: exactly the unrestricted result.
+                let (mut free, mut full) = (original.clone(), original.clone());
+                s.commit_tile(c, &mut free, alpha);
+                s.commit_tile_within(c, &mut full, alpha, TileCoverage::Full);
+                assert_eq!(free, full);
+                // Empty coverage: nothing changes.
+                let mut none = original.clone();
+                s.commit_tile_within(c, &mut none, alpha, TileCoverage::Empty);
+                assert_eq!(none, original);
+                // Partial: preview == commit, uncovered pixels untouched.
+                let mut tile = original.clone();
+                let mut preview: Vec<PremulRgba> =
+                    tile.pixels().iter().map(|p| p.to_premul()).collect();
+                s.paint_over_tile_within(c, &mut preview, alpha, gradient_coverage(&sel));
+                s.commit_tile_within(c, &mut tile, alpha, gradient_coverage(&sel));
+                for y in 0..TILE_SIZE {
+                    for x in 0..TILE_SIZE {
+                        let i = (y * TILE_SIZE + x) as usize;
+                        if x == 0 || y >= 200 {
+                            assert_eq!(tile.get(x, y), original.get(x, y), "coverage 0 at {x},{y}");
+                        }
+                        let (p, q) = (tile.get(x, y).to_premul(), preview[i]);
+                        for d in [p.r - q.r, p.g - q.g, p.b - q.b, p.a - q.a] {
+                            assert!(d.abs() <= level * 0.5 + 1e-6, "{mode:?} at {x},{y}");
+                        }
+                    }
+                }
+            }
+        }
+        check::<[u8; 4]>(1.0 / 255.0);
+        check::<[u16; 4]>(1.0 / 65535.0);
+    }
+
+    /// The scaled rule is `m·s` itself: painting through coverage `s` is
+    /// painting with the stroke alpha multiplied by `s` (reference S22).
+    #[test]
+    fn painting_through_coverage_is_painting_with_scaled_alpha() {
+        let c = TileCoord { x: 0, y: 0 };
+        let s = varied_stroke(PaintMode::Paint);
+        let sel = gradient_selection();
+        let mut through = vec![PremulRgba::TRANSPARENT; (TILE_SIZE * TILE_SIZE) as usize];
+        s.paint_over_tile_within(c, &mut through, PixelAlpha::Free, gradient_coverage(&sel));
+        let mask = s.mask_tile(c).unwrap();
+        for y in 0..200 {
+            for x in 0..TILE_SIZE {
+                let m = mask.get(x, y) * f32::from(x.min(255) as u8) / 255.0;
+                let got = through[(y * TILE_SIZE + x) as usize];
+                assert!((got.a - m).abs() < 1e-6, "{x},{y}: {} vs {m}", got.a);
+            }
+        }
+    }
+
+    #[test]
+    fn mask_strokes_through_a_selection_match_their_preview() {
+        let c = TileCoord { x: 0, y: 0 };
+        let sel = gradient_selection();
+        for mode in [PaintMode::Paint, PaintMode::Erase] {
+            let s = varied_stroke(mode);
+            let mut tile = Tile::<u8>::filled(100);
+            let mut preview = vec![100.0f32 / 255.0; (TILE_SIZE * TILE_SIZE) as usize];
+            s.paint_alpha_tile_within(c, &mut preview, gradient_coverage(&sel));
+            s.commit_alpha_tile_within(c, &mut tile, gradient_coverage(&sel));
+            for (i, (&v, &p)) in tile.pixels().iter().zip(&preview).enumerate() {
+                assert_eq!(v, unorm8(p), "{mode:?} at {i}");
+                let (x, y) = (i as u32 % TILE_SIZE, i as u32 / TILE_SIZE);
+                if x == 0 || y >= 200 {
+                    assert_eq!(v, 100);
                 }
             }
         }
