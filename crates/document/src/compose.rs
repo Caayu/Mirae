@@ -169,6 +169,32 @@ impl Document {
         true
     }
 
+    /// The colour shown at canvas pixel `(x, y)`: the composite of every
+    /// visible layer over the paper, opaque, in `f32` (not quantized to
+    /// the display), or `None` outside the document. This is what the
+    /// eyedropper's "canvas" mode picks, as the reference's "displayed
+    /// colours" does over its paper (parity record 5A, O11); it reads the
+    /// document pixel, whatever the zoom (O14). Composes the pixel's tile
+    /// into `scratch` (no allocation).
+    pub fn composite_pixel(
+        &self,
+        x: i32,
+        y: i32,
+        scratch: &mut ComposeScratch,
+    ) -> Option<PremulRgba> {
+        if x < 0 || y < 0 || x >= self.width() as i32 || y >= self.height() as i32 {
+            return None;
+        }
+        let paper = self.background().premultiply();
+        let coord = TileCoord::containing(x, y);
+        if !self.compose_tile_into(coord, None, scratch) {
+            return Some(paper);
+        }
+        let (ox, oy) = coord.origin();
+        let i = (y - oy) as usize * TILE_SIZE as usize + (x - ox) as usize;
+        Some(scratch.acc[i].over(paper))
+    }
+
     /// Whether [`Document::compose_tile_into`] composes tile `coord` (with
     /// no overlay) over the opaque paper: a visible non-Normal layer that
     /// blends with the stack draws there. Such a tile has no transparent
@@ -660,7 +686,13 @@ mod tests {
         let mut preset = BrushPreset::plain(26.0);
         preset.compositing.mode = mode;
         preset.properties.opacity = BrushProperty::constant(opacity);
+        crossing_stroke_with(preset, tela_color::Color::BLACK)
+    }
+
+    /// [`crossing_stroke`]'s path with any preset and colour.
+    fn crossing_stroke_with(preset: BrushPreset, color: tela_color::Color) -> StrokeBuffer {
         let mut e = tela_brush::BrushEngine::new(preset);
+        e.color = color;
         e.begin_stroke(
             BrushInput::from_position(Vec2::new(10.0, 10.0), 0.0),
             1.0,
@@ -887,6 +919,133 @@ mod tests {
         (cases, worst, differing)
     }
 
+    /// Colours with independent channels (phase 5A), so swapped channels,
+    /// a wrong premultiplication or an alpha error cannot hide behind grey.
+    const PAINT_COLORS: [[u8; 3]; 7] = [
+        [255, 0, 0],
+        [0, 255, 0],
+        [0, 0, 255],
+        [255, 255, 0],
+        [0, 255, 255],
+        [255, 0, 255],
+        [37, 149, 213],
+    ];
+
+    /// Preview == commit with coloured paint (phase 5A): every colour of
+    /// [`PAINT_COLORS`], a hard stroke at partial opacity and a soft one at
+    /// partial opacity and flow, free and preserved alpha, Normal and
+    /// Multiply, unclipped, clipped and on the base, at both depths. The
+    /// committed layer stays valid premultiplied (COL7).
+    #[test]
+    fn colored_preview_matches_commit_at_both_depths() {
+        let hard = {
+            let mut p = BrushPreset::plain(26.0);
+            p.properties.opacity = BrushProperty::constant(0.8);
+            p
+        };
+        let soft = {
+            let mut p = BrushPreset::plain(30.0);
+            p.properties.opacity = BrushProperty::constant(0.6);
+            p.properties.flow = BrushProperty::constant(0.4);
+            p.properties.hardness = BrushProperty::constant(0.2);
+            p
+        };
+        let mut cases = 0;
+        for depth in tela_color::PixelDepth::ALL {
+            for rgb in PAINT_COLORS {
+                let color = tela_color::Color::from_rgb8(rgb);
+                for preset in [&hard, &soft] {
+                    let stroke = crossing_stroke_with(preset.clone(), color);
+                    assert_eq!(stroke.color(), color);
+                    for lock in [PixelAlpha::Free, PixelAlpha::Preserved] {
+                        for mode in [BlendMode::Normal, BlendMode::Multiply] {
+                            for (clipped, on_base) in [(false, false), (true, false), (true, true)]
+                            {
+                                let (mut d, base, top) = two_layers_at(depth);
+                                d.set_blend_mode(top, mode).unwrap();
+                                d.set_opacity(top, 0.7).unwrap();
+                                d.set_clipped(top, clipped).unwrap();
+                                let target = if on_base { base } else { top };
+                                let (preview, committed) = preview_and_commit(
+                                    d.clone(),
+                                    target,
+                                    LayerPart::Pixels,
+                                    &stroke,
+                                    lock,
+                                );
+                                let diff = max_diff(&preview, &committed);
+                                assert!(
+                                    diff <= 1,
+                                    "{depth:?} {rgb:?} {lock:?} {mode:?} clipped {clipped} base {on_base}: {diff}"
+                                );
+                                commit_with(&mut d, target, &stroke, lock);
+                                let pixels = d.layer(target).unwrap().pixels();
+                                for y in 0..256 {
+                                    for x in 0..256 {
+                                        let p = pixels.pixel(x, y);
+                                        assert!(
+                                            p.r <= p.a && p.g <= p.a && p.b <= p.a && p.a <= 1.0,
+                                            "COL7 {depth:?} {rgb:?}: {p:?}"
+                                        );
+                                    }
+                                }
+                                cases += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 2 * 7 * 2 * 2 * 2 * 3);
+    }
+
+    fn commit_with(d: &mut Document, id: LayerId, stroke: &StrokeBuffer, alpha: PixelAlpha) {
+        with_pixel_type!(d.depth(), P => d.modify_tiles(id, stroke.touched(), |c, t: &mut Tile<P>| {
+            stroke.commit_tile(c, t, alpha)
+        }))
+        .unwrap();
+    }
+
+    /// The colour of a committed stroke is the stroke's colour: a hard
+    /// opaque stroke on an empty layer stores `C` exactly at 8 bits, and at
+    /// 16 bits the nearest 16-bit level of the same `f32` (COL8).
+    #[test]
+    fn colored_strokes_store_their_colour_at_both_depths() {
+        let mut preset = BrushPreset::plain(20.0);
+        preset.properties.opacity = BrushProperty::constant(1.0);
+        for rgb in PAINT_COLORS {
+            let color = tela_color::Color::from_rgb8(rgb);
+            let stroke = crossing_stroke_with(preset.clone(), color);
+            let mut stored = Vec::new();
+            for depth in tela_color::PixelDepth::ALL {
+                let mut d = Document::with_depth(256, 256, depth);
+                let l = d.active_layer();
+                commit_with(&mut d, l, &stroke, PixelAlpha::Free);
+                let p = d.layer(l).unwrap().pixels();
+                // The start of the stroke: full coverage.
+                assert_eq!(
+                    p.pixel_rgba8(10, 10),
+                    [rgb[0], rgb[1], rgb[2], 255],
+                    "{depth:?}"
+                );
+                stored.push(
+                    (0..256 * 256)
+                        .map(|i| p.pixel_rgba8(i % 256, i / 256))
+                        .collect::<Vec<_>>(),
+                );
+            }
+            // 8/16-bit consistency: the 16-bit commit, narrowed, is within
+            // one level of the 8-bit commit everywhere (edges included).
+            let worst = stored[0]
+                .iter()
+                .zip(&stored[1])
+                .flat_map(|(a, b)| a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)))
+                .max()
+                .unwrap();
+            assert!(worst <= 1, "{rgb:?}: {worst}");
+        }
+    }
+
     /// 8-bit content widened to 16 bits composes to exactly the same
     /// display pixels in every mode, with masks (enabled and disabled),
     /// clipping, opacity and the paper backdrop (ADR 0018: depth changes
@@ -919,6 +1078,50 @@ mod tests {
                     "{mode:?} {clipped} {masked}"
                 );
             }
+        }
+    }
+
+    /// The eyedropper's canvas sample reproduces the reference's
+    /// "displayed colours" picks on the 5A probe (parity record 5A, O11):
+    /// the composite over the paper, Multiply included.
+    #[test]
+    fn composite_pixel_is_what_the_reference_eyedropper_picks() {
+        for depth in tela_color::PixelDepth::ALL {
+            let mut d = Document::with_depth(300, 300, depth);
+            let base = d.active_layer();
+            set_pixel(&mut d, base, 10, 10, [220, 80, 40, 255]);
+            set_pixel(&mut d, base, 20, 10, [220, 80, 40, 255]);
+            // 220,80,40 at alpha 128, premultiplied as an import stores it.
+            set_pixel(&mut d, base, 30, 10, [110, 40, 20, 128]);
+            let top = d.add_layer(Placement::Top).unwrap();
+            set_pixel(&mut d, top, 20, 10, [100, 150, 250, 255]);
+            set_pixel(&mut d, top, 40, 10, [100, 150, 250, 255]);
+            d.set_blend_mode(top, BlendMode::Multiply).unwrap();
+            let mut s = ComposeScratch::new();
+            let mut pick = |x, y| d.composite_pixel(x, y, &mut s).map(|p| p.to_rgba8());
+            assert_eq!(pick(10, 10), Some([220, 80, 40, 255]), "{depth:?}");
+            assert_eq!(pick(20, 10), Some([86, 47, 39, 255]), "Multiply overlap");
+            assert_eq!(
+                pick(30, 10),
+                Some([237, 167, 147, 255]),
+                "alpha 128 over paper"
+            );
+            assert_eq!(
+                pick(40, 10),
+                Some([100, 150, 250, 255]),
+                "Multiply over paper"
+            );
+            assert_eq!(pick(299, 299), Some([255, 255, 255, 255]), "paper");
+            assert_eq!(pick(280, 280), Some([255, 255, 255, 255]), "empty tile");
+            assert_eq!(pick(300, 10), None, "outside");
+            assert_eq!(pick(-1, 10), None, "outside");
+            d.set_visible(top, false).unwrap();
+            let mut s = ComposeScratch::new();
+            assert_eq!(
+                d.composite_pixel(20, 10, &mut s).map(|p| p.to_rgba8()),
+                Some([220, 80, 40, 255]),
+                "hidden layers are not picked"
+            );
         }
     }
 
