@@ -1,7 +1,7 @@
 //! Seeded random sessions (phase 4G): reproducible sequences of valid
 //! operations across every phase-4 feature — real strokes on pixels and
 //! masks, layer edits, clipping, alpha lock, blend modes, undo/redo,
-//! depth conversion, selections (5C), transforms (5D), fills (5E) — with checkpoints that validate the invariants and
+//! depth conversion, selections (5C), transforms (5D), fills (5E), gradients (5F) — with checkpoints that validate the invariants and
 //! premultiplied values and save/load the document. A failure prints its
 //! seed; rerun one with `MIRAE_SEED=<n>`.
 
@@ -10,8 +10,10 @@ mod support;
 use support::*;
 use tela_color::PixelDepth;
 use tela_document::{
-    BlendMode, ConnectedFill, Document, FillPaint, FillReference, FillTarget, Interpolation,
-    LayerPart, Placement, SelectionOp, SelectionShape, Tolerance, Transform, TransformParams,
+    BlendMode, ConnectedFill, Document, FillPaint, FillReference, FillTarget, Gradient,
+    GradientExtend, GradientGeometry, GradientPaint, GradientShape, GradientStop, GradientStops,
+    Interpolation, LayerPart, Mixing, Placement, SelectionOp, SelectionShape, Tolerance, Transform,
+    TransformParams,
 };
 
 const OPS: usize = 60;
@@ -39,7 +41,7 @@ fn pick(d: &Document, r: &mut Rng) -> tela_document::LayerId {
 /// One random operation; refused ones (locked layers, …) are fine: they
 /// must change nothing, which the checkpoints and the final walk verify.
 fn op(d: &mut Document, r: &mut Rng, seed: u64, i: usize) {
-    match r.below(26) {
+    match r.below(28) {
         0..=5 => {
             let p = random_preset(r);
             let path = random_path(r);
@@ -254,6 +256,69 @@ fn op(d: &mut Document, r: &mut Rng, seed: u64, i: usize) {
                 d.fill_connected(target, &fill, paint)
             };
             if let Ok(dirty) = result {
+                assert!(
+                    d.history_len() <= steps + 1
+                        && (dirty.is_empty() || d.history_len() == steps + 1),
+                    "one step at most (seed {seed}, op {i})"
+                );
+            }
+        }
+        // Gradients (5F) into the edit target: any shape, ends, mixing,
+        // dithering, one to four stops (some transparent), drawn or
+        // erasing; refusals change nothing; one step at most.
+        26 | 27 => {
+            let target = FillTarget {
+                layer: d.active_layer(),
+                part: d.active_part(),
+            };
+            let shapes = [
+                GradientShape::Linear,
+                GradientShape::Radial,
+                GradientShape::Elliptical,
+                GradientShape::Angular,
+                GradientShape::Reflected,
+            ];
+            let extends = [
+                GradientExtend::Clamp,
+                GradientExtend::Repeat,
+                GradientExtend::Reflect,
+                GradientExtend::Empty,
+            ];
+            let mixings = [Mixing::Standard, Mixing::Linear, Mixing::Perceptual];
+            let n = 1 + r.below(4);
+            let stops = GradientStops::new((0..n).map(|_| {
+                GradientStop::new(
+                    r.unit(),
+                    tela_color::Color::new(r.unit(), r.unit(), r.unit()),
+                    if r.below(4) == 0 { 0.0 } else { r.unit() },
+                )
+            }))
+            .expect("at least one stop");
+            let point = |r: &mut Rng| {
+                [
+                    r.unit() as f64 * 560.0 - 20.0,
+                    r.unit() as f64 * 420.0 - 20.0,
+                ]
+            };
+            let geometry = GradientGeometry {
+                shape: shapes[r.below(shapes.len())],
+                start: point(r),
+                end: point(r),
+            };
+            let g = Gradient::new(
+                geometry,
+                &stops,
+                mixings[r.below(mixings.len())],
+                extends[r.below(extends.len())],
+                r.below(2) == 0,
+            );
+            let paint = if r.below(5) == 0 {
+                GradientPaint::Erase
+            } else {
+                GradientPaint::Draw
+            };
+            let steps = d.history_len();
+            if let Ok(dirty) = d.apply_gradient(target, &g, paint) {
                 assert!(
                     d.history_len() <= steps + 1
                         && (dirty.is_empty() || d.history_len() == steps + 1),
