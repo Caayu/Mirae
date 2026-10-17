@@ -33,3 +33,18 @@ Provenance and method: [docs/parity/4D-masks-clipping-alpha-lock.md](../../../..
 
 Columns: scenario, row (base alpha index), column (clipped colour or mask
 value index), measured straight-alpha RGBA, spread (0 everywhere).
+
+## Phase 5B: translucent backdrops and merge down
+
+Provenance and method: [docs/parity/5B-transparent-compositing.md](../../../../docs/parity/5B-transparent-compositing.md).
+
+- `backdrop_without_paper.csv`: `cargo run -p tela-corpus --example
+  backdrop_probe -- psd backdrop.psd` (17 modes x 3 layer opacities x
+  36 backdrops: six colours at alpha 0, 1, 64, 128, 191, 255 x 25 tops:
+  eight colours at alpha 255, 160, 64, plus a transparent control),
+  opened without paper and exported with transparency; the same columns
+  as `blend_without_paper.csv` (45 900 rows, spread 0 everywhere).
+- `merge_down.csv`: the `merge_probe` scenarios (one small PSD each),
+  exported after the reference's "merge with layer below" (and, where
+  merging changed the picture, before it): `scenario,row,col,r,g,b,a`,
+  64 swatches per scenario.
