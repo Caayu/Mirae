@@ -30,6 +30,7 @@ graph BT
     io --> canvas
     io --> color
     renderer --> canvas
+    ui --> color
     ui --> brush
     ui --> renderer
     corpus --> color
@@ -49,7 +50,7 @@ ASCII version (each line: crate -> what it may use):
 
 ```
 layer 3   app       -> ui, io, document, renderer, tablet, brush, canvas, color
-layer 2   ui        -> brush, renderer
+layer 2   ui        -> brush, renderer, color
           io        -> document, canvas, color         (files: .mirae, PNG)
           corpus    -> brush, canvas, color            (test support only)
 layer 1   brush     -> canvas, color
@@ -75,12 +76,12 @@ depends only on `glam`.
 | `tela-io` | document, canvas, color, `serde`, `serde_json`, `png`, `zip` | `.mirae` documents (ZIP + JSON manifest + raw tiles) and PNG import/export; builds documents only through `Document::from_parts`. |
 | `tela-renderer` | canvas, `wgpu`, `glam`, `bytemuck`, `log` | GPU presentation of finished tiles. |
 | `tela-tablet` | `glam`, `log`; Windows: `windows-sys`, `raw-window-handle` | Device input; FFI isolated here. |
-| `tela-ui` | brush, renderer, `egui`, `egui-wgpu`, `egui-winit`, `wgpu`, `winit` | The only egui user. |
+| `tela-ui` | color, brush, renderer, `egui`, `egui-wgpu`, `egui-winit`, `wgpu`, `winit` | The only egui user; edits plain data from brush (presets) and color (the paint colour, ADR 0021). |
 | `tela-corpus` | color, canvas, brush, `glam`, `png` (dev: document, io) | Golden sheets, benchmarks and the end-to-end tests. |
 | `tela-app` | all workspace crates except corpus, `winit`, `glam`, `pollster`, `log`, `env_logger`, `rfd` | Composition layer; the file workflow (native dialogs). |
 
 Dev-dependencies are unrestricted but should stay minimal: `proptest`
-(brush, canvas, document, io), `pollster` (renderer GPU tests), `tela-brush`+`glam`
+(color, brush, canvas, document, io), `pollster` (renderer GPU tests), `tela-brush`+`glam`
 (document tests), `tela-document` + `tela-io` (corpus benchmarks and end-to-end tests).
 
 ## Forbidden dependencies (and why)
@@ -117,7 +118,7 @@ Dev-dependencies are unrestricted but should stay minimal: `proptest`
 | `log`, `env_logger` | renderer, tablet, app | Diagnostics (`RUST_LOG`). |
 | `png` | corpus, io | Golden image I/O; PNG import/export. |
 | `zip` | io | The `.mirae` container: stored and deflate entries only (`deflate-flate2-zlib-rs`, pure Rust), no encryption, other codecs or timestamps (ADR 0020). |
-| `proptest` | brush, canvas, document (dev) | Property tests. |
+| `proptest` | color, brush, canvas, document, io (dev) | Property tests. |
 
 Rule: do not add a dependency for convenience. A new dependency needs a
 row here, a reason, and the boundary test updated in the same commit.

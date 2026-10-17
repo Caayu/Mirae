@@ -2731,6 +2731,9 @@ dependencies = [
 [[package]]
 name = "tela-color"
 version = "0.1.0"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "tela-corpus"
@@ -2801,6 +2804,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "tela-brush",
+ "tela-color",
  "tela-renderer",
  "wgpu",
  "winit",

@@ -45,6 +45,7 @@ const ALLOWED: &[(&str, &[&str])] = &[
     (
         "ui",
         &[
+            "tela-color",
             "tela-brush",
             "tela-renderer",
             "egui",

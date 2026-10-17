@@ -39,6 +39,8 @@ pub enum PanelAction {
     Prompt(crate::PromptChoice),
     /// A notice was dismissed.
     DismissNotice,
+    /// From the colour panel.
+    Color(crate::ColorAction),
 }
 
 /// Persistent panel state.
