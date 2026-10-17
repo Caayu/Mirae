@@ -1,7 +1,7 @@
 use tela_canvas::{TILE_SIZE, TileCoord};
 use tela_color::PremulRgba;
 
-use crate::{BlendMode, Document, LayerId, LayerPart, RasterLayer};
+use crate::{BlendMode, Document, LayerId, RasterLayer};
 
 /// Content drawn into one layer while compositing, e.g. the preview of a
 /// stroke that has not been committed yet.
@@ -27,19 +27,39 @@ pub enum OverlayPaint<'a> {
     /// `0..=1` (1 shows the layer). Shows only while the mask is enabled,
     /// as a commit would.
     Mask(&'a dyn Fn(TileCoord, &mut [f32])),
+    /// Draws into both the pixels and the mask (a transform moves a layer
+    /// with its mask, phase 5D); each as in the variants above.
+    Layer {
+        pixels: &'a dyn Fn(TileCoord, &mut [PremulRgba]),
+        mask: &'a dyn Fn(TileCoord, &mut [f32]),
+    },
 }
 
-impl Overlay<'_> {
-    fn part(&self) -> LayerPart {
-        match self.paint {
-            OverlayPaint::Pixels(_) => LayerPart::Pixels,
-            OverlayPaint::Mask(_) => LayerPart::Mask,
+/// An overlay's function drawing into a tile of a layer's pixels.
+type PaintPixels<'a> = &'a dyn Fn(TileCoord, &mut [PremulRgba]);
+/// An overlay's function drawing into a tile of a layer's mask.
+type PaintMask<'a> = &'a dyn Fn(TileCoord, &mut [f32]);
+
+impl<'a> OverlayPaint<'a> {
+    fn pixels(&self) -> Option<PaintPixels<'a>> {
+        match *self {
+            OverlayPaint::Pixels(p) | OverlayPaint::Layer { pixels: p, .. } => Some(p),
+            OverlayPaint::Mask(_) => None,
         }
     }
 
+    fn mask(&self) -> Option<PaintMask<'a>> {
+        match *self {
+            OverlayPaint::Mask(m) | OverlayPaint::Layer { mask: m, .. } => Some(m),
+            OverlayPaint::Pixels(_) => None,
+        }
+    }
+}
+
+impl Overlay<'_> {
     /// Whether this overlay draws pixels of `l`.
     fn on_pixels(&self, l: &RasterLayer) -> bool {
-        self.target == l.id() && self.part() == LayerPart::Pixels
+        self.target == l.id() && self.paint.pixels().is_some()
     }
 }
 
@@ -272,14 +292,14 @@ fn load_layer(
     // every depth, so storage precision is all that differs.
     l.pixels().decode_tile(coord, layer);
     let mine = overlay.filter(|o| o.target == l.id());
-    if let Some(OverlayPaint::Pixels(paint)) = mine.map(|o| o.paint) {
+    if let Some(paint) = mine.and_then(|o| o.paint.pixels()) {
         paint(coord, layer);
     }
     let Some(m) = l.mask().filter(|m| m.enabled()) else {
         return;
     };
     let hidden = m.hidden_tile(coord);
-    if let Some(OverlayPaint::Mask(paint)) = mine.map(|o| o.paint) {
+    if let Some(paint) = mine.and_then(|o| o.paint.mask()) {
         match hidden {
             Some(t) => {
                 for (r, h) in reveal.iter_mut().zip(t.pixels()) {
@@ -361,7 +381,7 @@ mod tests {
     use tela_color::{StoragePixel, with_pixel_type};
 
     use super::*;
-    use crate::Placement;
+    use crate::{LayerPart, Placement};
 
     fn stroke_at(x: f32, y: f32, opacity: f32) -> StrokeBuffer {
         let mut settings = BrushPreset::plain(12.0);

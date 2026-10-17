@@ -2,6 +2,7 @@ mod history;
 mod merge;
 mod parts;
 mod selecting;
+mod transforming;
 
 use std::num::NonZeroU32;
 

@@ -98,6 +98,10 @@ pub enum HistoryAction {
     InvertSelection,
     /// The selection's border blurred ([`Document::feather_selection`]).
     FeatherSelection,
+    /// A layer's content (or its selected part) moved, scaled, rotated or
+    /// flipped ([`Document::apply_transform`]): pixels, mask and selection
+    /// in one step.
+    Transform,
 }
 
 impl HistoryAction {

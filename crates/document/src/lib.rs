@@ -34,6 +34,7 @@ mod properties;
 mod selection;
 #[cfg(test)]
 mod selection_properties;
+mod transform;
 
 pub use blend::BlendMode;
 pub use compose::{ComposeScratch, Overlay, OverlayPaint};
@@ -46,3 +47,6 @@ pub use layer::{LayerId, LayerMask, RasterLayer};
 pub use pixels::LayerPixels;
 pub use selection::{MAX_FEATHER, OUTLINE_THRESHOLD, Selection, SelectionOp, SelectionShape};
 pub use tela_color::{PixelDepth, StoragePixel};
+pub use transform::{
+    Affine, Interpolation, MAX_SCALE, MIN_SCALE, Transform, TransformParams, TransformSource,
+};

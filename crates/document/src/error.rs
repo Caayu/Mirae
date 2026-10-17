@@ -38,6 +38,14 @@ pub enum LayerError {
         document: PixelDepth,
         edit: PixelDepth,
     },
+    /// There is nothing to transform: the layer is empty and there is no
+    /// selection (reference 5D T36).
+    NothingToTransform(LayerId),
+    /// Transform parameters that are not finite numbers or scale beyond
+    /// [`MIN_SCALE`](crate::MIN_SCALE)..=[`MAX_SCALE`](crate::MAX_SCALE).
+    InvalidTransform,
+    /// The document changed since the transform's source was taken.
+    StaleTransform,
 }
 
 impl fmt::Display for LayerError {
@@ -60,6 +68,11 @@ impl fmt::Display for LayerError {
                 document.bits(),
                 edit.bits()
             ),
+            LayerError::NothingToTransform(id) => write!(f, "{id} has nothing to transform"),
+            LayerError::InvalidTransform => f.write_str("invalid transform"),
+            LayerError::StaleTransform => {
+                f.write_str("the document changed since the transform began")
+            }
         }
     }
 }
