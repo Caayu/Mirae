@@ -3,6 +3,49 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 5B — layer workflow, translucent backdrops, merge down
+
+Approved alone (5C–5G not started). The reference was observed first and
+a parity gate recorded
+([docs/parity/5B-transparent-compositing.md](docs/parity/5B-transparent-compositing.md)).
+434 → 455 tests.
+
+### Added
+- `backdrop_probe`, `merge_probe` and `backdrop_fit`; the reference's
+  results kept as test data: 45 900 translucent-backdrop combinations and
+  22 merge-down scenarios (e49a02c).
+- Blending over a translucent backdrop as the reference does (D-4C-1
+  resolved, ADR 0022): Multiply W3C, the other modes compose the blended
+  colour over the backdrop first, additive alpha for Screen, Color
+  Dodge, Hard Light, Soft Light; `Document::compose_tile_transparent_into`
+  (40e0649).
+- `Document::merge_down(id, LowerMask)` (ADR 0023) and
+  `LayerError::NoLayerBelow`; one history step (`MergeDown`) holding only
+  the changed tiles and the upper layer (0a8a6ed).
+- Layer panel: rename by double-click, drag-and-drop reorder, Merge down
+  (button and Ctrl+E), the lower-mask question (Apply / Keep / Cancel),
+  fixed width (09c2190).
+- `layer_bench` (merge, undo/redo, memory, reorder, rename) (2eb5a5a).
+- Tests: `backdrop_parity`, `merge_parity`, `reorder`, merge unit tests,
+  merges in both property models, merged-document round trip, opaque
+  path bit-identity, rename field rules (40e0649, 0a8a6ed, e670e28,
+  aee5958, 2eb5a5a).
+
+### Changed
+- Consecutive renames of one layer are one undo step, like opacity edits
+  (reference RN4; H8) (0a8a6ed).
+- Transparent PNG export of blend layers is exported instead of refused
+  (D-4F-5) (106a6f9).
+- Composition over the paper takes a W3C-only loop: bit-identical to
+  5A and as fast (an `== 1` alpha test had sent stacked blend layers down
+  the translucent path) (2eb5a5a).
+
+### Documentation
+- ADR 0022, ADR 0023; invariants C3 (rewritten), C8, H8/H11 extended,
+  MD1–MD7, LR1–LR3, RN1–RN2; parity record 5B and the 5B matrix rows in
+  PARITY.md; D-4C-1, D-4C-3, D-4F-5, D-4A-3, D-4A-4 closed; debt #20,
+  #21 resolved, #17 updated.
+
 ## Phase 5A — colour
 
 The first subphase of phase 5 (approved alone; 5B–5G not started). The

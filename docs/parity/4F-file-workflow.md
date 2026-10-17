@@ -164,10 +164,18 @@ looked frozen. The prompt is now an egui modal (ADR 0020).
 | D-4F-2 | Undoing back to the saved state is unmodified in Mirae; the reference stays modified (F4). | Behavioural | Accepted — deliberate improvement (owner's brief) |
 | D-4F-3 | 16-bit PNG import: Mirae keeps 16 bits (16-bit documents) or rounds to the nearest level (8-bit documents); the reference truncates (`v >> 8`, F18). Measured: one level in 22 of 80 swatches. Resolves D-4E-2. | Quality | Accepted — deliberate quality difference, not a parity error |
 | D-4F-4 | 8-bit documents store premultiplied 8-bit pixels (ADR 0001): an imported colour at very low alpha changes (up to 127 levels at alpha 1; exact when opaque; alpha exact). The reference keeps it exactly (F16), as Mirae's 16-bit documents do. | Quality | Accepted (ADR 0001); 16-bit documents for such material |
-| D-4F-5 | Transparent export of a layer whose non-Normal mode blends with the stack is refused (the reference's rule over a translucent backdrop is D-4C-1). Export with the paper is unaffected. | Feature | Open — with D-4C-1 |
+| D-4F-5 | Transparent export of a layer whose non-Normal mode blends with the stack is refused (the reference's rule over a translucent backdrop is D-4C-1). Export with the paper is unaffected. | Feature | **Resolved in 5B** (exported, ADR 0022) |
 | D-4F-6 | PNG metadata: Mirae writes an `sRGB` chunk only; the reference embeds an sRGB ICC profile, a 72 dpi `pHYs` and `tEXt` (F13). Fully transparent pixels: Mirae (0,0,0,0), the reference (255,255,255,0). Visible pixels equal. | Coverage | Accepted (no colour management or resolution yet) |
 | D-4F-7 | An imported image becomes an ordinary raster layer; the reference creates an image material layer with transform handles (F15). | Feature | Open (transform tools, phase 6) |
 | D-4F-8 | Not in Mirae: Recent files, Save copy, Revert, Close (single document), export to other formats, PSD, opening a PNG as a new document (F8, F11). | Feature | Open |
 | D-4F-9 | Prompt wording and labels are Mirae's own English ("Save / Don't Save / Cancel"); the reference's quit prompt counts several documents (F10). | UI | Accepted |
 | D-4F-10 | Corrupt input: the reference reports a corrupt `.clip` as an unsupported format and **crashed** on a corrupt PNG (F19, F20); Mirae names the problem and keeps the document. | Robustness | Accepted (Mirae must not crash) |
 | D-4F-11 | Not compared: drag-and-drop in the reference, closing a clean document, file speed (Mirae measured only, `io_bench`), what the reference's format keeps of masks and clipping. | Coverage | Open |
+
+## Update 5B
+
+D-4F-5 is **resolved**: with the translucent-backdrop rule measured
+(ADR 0022), a transparent PNG export composes without the paper
+(`compose_tile_transparent_into`) and blend layers are exported instead
+of refused. Exports with the paper and Normal-only transparent exports
+are unchanged.

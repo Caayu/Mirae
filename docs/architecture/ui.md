@@ -90,8 +90,16 @@ redraw:
 - No visual design, no layout persistence, no theming.
 - Keyboard shortcuts are handled in the app (`App::on_key`), not in the UI
   crate; they call the same domain APIs.
-- The layer panel has no drag-and-drop reordering and no rename field; it
-  asks no confirmation before deleting (the deletion is undoable).
+- The layer panel (5B) renames by double-click (`LayerAction::Rename`),
+  reorders by drag and drop (`LayerAction::MoveTo { key, target, above }`:
+  keys and a relative placement, never indices; the app calls
+  `Document::move_layer`) and merges down (`LayerAction::MergeDown`, also
+  Ctrl+E). Its only own state is presentation state in egui memory: the
+  name being typed and egui's drag payload. The lower-mask question
+  before a merge is a modal in `prompt.rs` (`merge_mask_prompt`); the app
+  holds the pending merge (`App::merging`). It has no thumbnails and asks
+  no confirmation before deleting (the deletion is undoable). The panel
+  has a fixed width and truncates long names.
 - The blend-mode selector receives labels and an index (`LayerRow::blend`)
   and returns `LayerAction::SetBlendMode(index)`; the app maps it to
   `BlendMode::ALL`.

@@ -221,7 +221,7 @@ measured tests, and the running app checks what alpha shows.
 | D-4D-3 | Deleting a mask: the reference's delete button asks whether to apply the mask first; Tela has a separate "Delete mask" button that deletes it (undoable) without asking. | UI | Open (with D-4D-2: apply) |
 | D-4D-4 | Masks with a stored rectangle and an outside default (K6) have no Tela equivalent; behaviour inside the document is the same. | Representation | Accepted (only reachable through imported files; revisit with 4F import) |
 | D-4D-5 | Colour-dependent clip/blend combinations are verified by the measured tests, not in the running app (it paints black only). | Coverage | **Closed in 5A** (coloured clipping, Multiply and ten other modes, alpha-lock recolour and mask strokes checked in the running app; parity record 5A). Was: open until a colour picker exists |
-| D-4D-6 | A non-Normal **base** over a translucent backdrop without paper follows W3C (D-4C-1); not reachable in Tela. | Behavioural | Open with D-4C-1 |
+| D-4D-6 | A non-Normal **base** over a translucent backdrop without paper follows W3C (D-4C-1); not reachable in Tela. | Behavioural | Coverage only since 5B: follows the measured rule (ADR 0022), not probed as a group (D-5B-4) |
 | D-4D-7 | Not compared: target after undo/redo of mask creation (Tela: pixels when the mask is gone, unchanged otherwise), commands during a stroke (A7), masks on colour-managed documents, speed against the reference. (16-bit: the reference has none; parity 4E.) | Coverage | Open |
 | D-4D-8 | Panel: Tela shows text markers ("> " for clipped, "α", "[mask]", "[editing mask]") instead of the reference's clip bar and mask thumbnails. | UI | Accepted (own identity) |
 
@@ -235,3 +235,11 @@ with blue paint (186,148,198) is reproduced by Mirae's rule within 1/255
 layer and Multiply follow the 4D model in both; red and blue mask strokes
 give identical masks in Mirae, as M4 observed in the reference. D-4D-5 is
 closed.
+
+## Update 5B
+
+D-4C-1 is resolved (ADR 0022). A non-Normal clipping-group **base** over
+a translucent backdrop now blends with the measured rule through
+`BlendMode::composite`; that combination was not probed as a group
+(D-4D-6 stays open as coverage, D-5B-4). Merge down with masks and
+clipping was observed and implemented in 5B (parity record 5B, MO8–MO13).

@@ -97,9 +97,9 @@ color-burn too.)
 
 | # | Difference | Kind | Status |
 |---|---|---|---|
-| D-4C-1 | Blending over a translucent backdrop without paper (C4) follows W3C in Tela, not the reference. | Behavioural / quality | Open — must be resolved before layer groups or merge down. 4F does not resolve it: a transparent PNG export where it would apply is refused (D-4F-5); exports with the paper are unaffected. Data: `blend_without_paper.csv`. |
+| D-4C-1 | Blending over a translucent backdrop without paper (C4) follows W3C in Tela, not the reference. | Behavioural / quality | **Resolved in 5B** (ADR 0022, parity record 5B). Was: open — must be resolved before layer groups or merge down. 4F does not resolve it: a transparent PNG export where it would apply is refused (D-4F-5); exports with the paper are unaffected. Data: `blend_without_paper.csv`. |
 | D-4C-2 | Modes the reference has and Tela does not (C8). | Feature | Open — each needs a public definition or a measured fit. |
-| D-4C-3 | "Merge down" not implemented (deferred: merging onto a translucent lower layer is exactly D-4C-1). | Feature | Deferred |
+| D-4C-3 | "Merge down" not implemented (deferred: merging onto a translucent lower layer is exactly D-4C-1). | Feature | **Implemented in 5B** (ADR 0023) |
 | D-4C-4 | Only 8-bit sRGB documents compared; the reference's colour-managed documents were not probed. | Coverage | Open for colour management; 16-bit: the reference has no 16-bit documents (parity 4E, E1), and Tela's 16-bit documents match its 8-bit data within 2/255 (D-4E-7) |
 | D-4C-5 | Composition speed not compared with the reference (Tela measured only, `blend_bench`). | Coverage | Open |
 | D-4C-6 | Tela's blend-mode picker is a plain list; the reference's labels are Portuguese/its own naming. | UI | Accepted |
@@ -115,3 +115,14 @@ measured screen value matched the published W3C formula for its inputs
 (e.g. Hue of red over blue 94,0,0; Luminosity 54,54,255; Overlay over the
 51 % stroke 163,147,213). The quantitative comparison with the reference
 remains `blend_parity.rs`; this confirms the app path, not new data.
+
+## Update 5B — translucent backdrops and merge down
+
+D-4C-1 is **resolved** (parity record 5B, ADR 0022): a dedicated probe of
+45 900 combinations (backdrop alphas 0, 1, 64, 128, 191, 255; three
+opacities; six bottom and eight top colours) showed one rule. Multiply
+keeps the W3C formula; every other mode composes the blended colour over
+the backdrop before the W3C mix; Screen, Color Dodge, Hard Light and Soft
+Light have an additive alpha. The 340 translucent rows of this record's
+data fit it too and are now asserted. Composites over the paper did not
+change (bit for bit). D-4C-3 (merge down) is implemented (ADR 0023).

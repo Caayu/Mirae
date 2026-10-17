@@ -7,7 +7,7 @@ nothing else is started.
 | Subphase | Status | Record |
 |---|---|---|
 | 5A Colour | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5A-color.md](../parity/5A-color.md); [ADR 0021](../adr/0021-paint-colour-and-colour-tool-state.md) |
-| 5B Layer workflow + D-4C-1 probe, merge down | Proposed, **not approved, not started** | [PROPOSAL.md](PROPOSAL.md) |
+| 5B Layer workflow + D-4C-1 probe, merge down | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5B-transparent-compositing.md](../parity/5B-transparent-compositing.md); [ADR 0022](../adr/0022-blending-over-translucent-backdrops.md), [ADR 0023](../adr/0023-merge-down-and-layer-workflow.md) |
 | 5C Selections | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 | 5D Transform | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 | 5E Fill | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
@@ -46,3 +46,38 @@ Implemented as planned; gate recorded in [PARITY.md](../PARITY.md) and
 [parity/5A-color.md](../parity/5A-color.md). Tests 401 → 434. Colour adds
 no measurable cost (`stamp_bench` colour table). Remaining differences:
 D-5A-1…8.
+
+## 5B — Layer workflow, translucent backdrops, merge down (approved brief, summarized)
+
+Probe the reference's blending over a translucent backdrop without paper
+(D-4C-1) with a rich corpus (backdrop alpha 0, 1/255, 25, 50, 75, 100 %;
+black, white, red, green, blue, 37/149/213; all 17 modes; 100/60/25 %),
+compare public hypotheses and adopt a rule only if it explains the data;
+then observe and implement merge down (opacity, modes, masks, clipping,
+locks, hidden, paper, names, active layer, undo/redo; one step; both
+depths; transactional; no format change), the rename field, drag-and-drop
+reorder (clipping rules unchanged, ids not indices), the layer panel's
+selection feedback, thumbnails only if simple; invariants MD1–MD6,
+LR1–LR3, RN1; performance and memory measured; a real-app session at
+8 and 16 bits; the parity gate. Out of scope: selections, transform,
+fill, gradients, layer folders, vector layers, GPU compositing, colour
+management, more blend modes, autosave, a format v2.
+
+### Decisions
+
+| # | Decision | Reason |
+|---|---|---|
+| B1 | D-4C-1 resolved by a measured rule (ADR 0022): Multiply W3C; the other modes "nested"; additive alpha for Screen, Color Dodge, Hard Light, Soft Light | 45 900 combinations within 2/255; W3C up to 47/255 off; six candidates scored and free per-alpha fits |
+| B2 | Opaque backdrops keep the pre-5B expression (a W3C-only loop over the paper; alpha ≥ 1 − 2⁻²⁰ counts as opaque) | Everything on screen bit-identical and as fast as 5A |
+| B3 | Merge down composes the pair alone; the lower layer keeps id, name, mode, clip, alpha lock; opacity baked; masks as the reference (question for the lower one) | MO1–MO17 |
+| B4 | Merge is one step built from the existing history changes | No new mechanism; only changed tiles held |
+| B5 | Consecutive renames merge into one step | Reference RN4 |
+| B6 | Drag reorder = `move_layer` with a relative placement by id | Document stays the authority (LR3) |
+| B7 | No thumbnails in 5B | Invalidation and per-row textures are not simple enough (D-5B-6) |
+| B8 | No format change | Merged documents use existing structures (round-trip test) |
+
+### Outcome
+
+Implemented as decided; gate recorded in [PARITY.md](../PARITY.md) and
+[parity/5B-transparent-compositing.md](../parity/5B-transparent-compositing.md).
+Tests 434 → 455. Remaining differences: D-5B-1…9. 5C not started.

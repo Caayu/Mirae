@@ -83,6 +83,33 @@ table above for the parallel path).
 phase 4E: 0.107–0.110 ms),
 0 allocations in 840 tiles.
 
+### Phase 5B — translucent backdrops, merge down, layer workflow
+
+`layer_bench` (Ryzen 7 5800X, release, two dense layers):
+
+| Merge down | 8-bit ms | 16-bit ms | undo ms | redo ms |
+|---|---:|---:|---:|---:|
+| 1 tile, Normal over Normal | 0.80 | 0.87 | < 0.01 | < 0.01 |
+| 4096² (256 tiles), Normal over Normal | 111 | 131 | 0.06 | 0.05 |
+| 4096², Soft Light 60 % | 223 | 247 | 0.06 | 0.05 |
+| 4096², lower opacity 60 % baked | 124 | 144 | 0.08 | 0.07 |
+| 4096², clipped upper, both masked | 140 | 162 | 0.08 | 0.07 |
+
+Merge down is an explicit command (no frame budget); it is linear in the
+tiles it touches (~0.43 ms per 8-bit tile in Normal, ~0.87 in Soft Light).
+Reordering a 100-layer document: 0.3 µs per move; renaming: 0.1 µs.
+
+Composition over the paper is unchanged: `blend_bench` A/B against the
+5A commit (81daa76), three interleaved runs per side, equal within noise
+in every mode once blend tiles over the paper use the W3C-only loop
+(`composite_opaque`). An intermediate version that tested `αb == 1` per
+pixel cost 0–12 % (Darken/Lighten +12 %, Hue +8 %) because the union
+alpha over the paper can round to 0.99999994 and sent later layers down
+the translucent path; a variant with that path out of line was worse
+(Hue +70 %): a call in the loop body costs even when never taken.
+Composites over the paper hash identically to 5A (f32 bits, 10-layer
+stacks, all modes).
+
 ### Phase 5A — colour
 
 Stamping never reads the colour (the stroke is an alpha mask); the colour

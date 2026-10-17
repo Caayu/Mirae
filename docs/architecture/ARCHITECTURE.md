@@ -285,6 +285,20 @@ Because the reference's paper is a layer that blend modes see, a tile in
 which any visible non-Normal layer draws is composed over the opaque paper
 colour; Normal-only tiles keep the transparent backdrop (bit-identical to
 the pre-4C output) and get the paper in the display shader.
+Over a **translucent** backdrop (composition without the paper:
+`compose_tile_transparent_into`, transparent PNG export, merge down) the
+modes follow the rule measured in 5B (ADR 0022): Multiply keeps the W3C
+formula, the others compose the blended colour over the backdrop first,
+and Screen, Color Dodge, Hard Light and Soft Light have an additive alpha.
+Over the paper the compositor calls a W3C-only loop (`composite_opaque`):
+those composites are bit-identical to before 5B.
+
+**Merge down** (ADR 0023) composes a layer and the one below it alone,
+over transparency, with the same rules, and stores the result in the lower
+layer (id, name, mode, clipping kept; opacity baked; the lower mask applied
+or kept as asked); one history step made of the existing changes (the
+lower layer's changed tiles, its opacity and mask, the removed upper
+layer).
 
 Masks and clipping (ADR 0017, measured against the reference): a layer's
 mask (inverted sparse 8-bit, absent = reveals) scales its alpha before
@@ -393,7 +407,7 @@ history and files together. See [golden-tests.md](../golden-tests.md),
 
 ## 12. Architectural limits (today)
 
-- Flat layer stack (no groups; clipping groups only); masks without apply/selection; 17 blend modes; blending over a translucent backdrop without paper does not match the reference (D-4C-1, unreachable today).
+- Flat layer stack (no groups; clipping groups only); masks without apply/selection; 17 blend modes; merge down only (no merge visible, flatten or merge selected).
 - Undo history is in memory only, uncompressed, 256 KiB (8-bit) or 512 KiB (16-bit) per changed tile per step (ADR 0015, 0018).
 - 8- or 16-bit layer storage per document, 8-bit masks, 8-bit display (no dithering, no HDR); display texture limited to the GPU's max texture size.
 - Composition is CPU, single-threaded and linear in layers, with no cache below the stroke target: ~12 ms per 256² tile for 100 overlapping Normal layers, ~44 ms for 100 Soft Light (4G, TECHNICAL_DEBT #33).

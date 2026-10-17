@@ -1,6 +1,7 @@
 # Status
 
-Factual state of the project at the end of **phase 5A** (colour), after
+Factual state of the project at the end of **phase 5B** (layer workflow,
+translucent-backdrop compositing, merge down), after **5A** (colour) and
 **phase 4** (4G: integration
 and hardening). The product is named **Mirae** (crates keep their `tela-` names). Update this file at the end of every subphase.
 
@@ -8,9 +9,9 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 
 | | |
 |---|---|
-| Current phase | **Phase 5A (colour) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5A-color.md](parity/5A-color.md)); phase 4 complete ([phase4/README.md](phase4/README.md)); **5B–5G not approved, not started** |
+| Current phase | **Phase 5B (layer workflow, D-4C-1, merge down) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5B-transparent-compositing.md](parity/5B-transparent-compositing.md)); 5A complete; phase 4 complete ([phase4/README.md](phase4/README.md)); **5C–5G not approved, not started** |
 | Parity | Tracked in [PARITY.md](PARITY.md) (phase-4 summary; phase-5 matrix from 5A); nothing compared with the reference before phase 4 |
-| Tests | **434** passing, 0 failing (5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Tests | **455** passing, 0 failing (5B started at 434; 5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -35,6 +36,7 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
 | Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile (2 layers); per tile with every layer drawing: 1.6 ms (10 Normal layers), 12.4 ms (100), 44 ms (100 Soft Light); 0 allocations in composition ([performance.md](performance.md), [memory.md](memory.md)) |
 | Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. no file I/O |
+| Layer workflow (5B) | Rename by double-click (Enter/focus commits, Escape cancels, 64 characters; consecutive renames one step), drag-and-drop reorder (insertion line, Escape cancels, by id), merge down (button, Ctrl+E; lower-mask question; ADR 0023), fixed-width panel; blending over translucent backdrops as measured (ADR 0022); transparent export of blend layers |
 | Blend modes (4C) | Normal + 16 modes (multiply, screen, overlay, darken, lighten, color dodge/burn, hard/soft light, difference, exclusion, hue, saturation, color, luminosity, add); W3C formulas on sRGB-encoded values, paper as backdrop for blend tiles (ADR 0016); matches the reference's measured results within 1–2/255; selector in the layer panel; undoable |
 | Masks, clipping, alpha lock (4D) | One mask per layer (sparse 8-bit, new mask reveals all; paint reveals by stroke alpha, erase hides; enable/disable; delete), clipping groups (isolated, source-atop with the blend result, base opacity/mode/mask apply to the group; new layers inside a group are clipped), lock transparent pixels (source-atop paint, eraser unaffected); all measured against the reference and matching within 2/255 (ADR 0017); panel controls; undoable |
 | Undo/redo (4B) | Linear, swap-based history inside `Document` (ADR 0015): strokes, clear, create/delete/reorder layers, lock, rename, blend mode, opacity (consecutive edits merge); selection and visibility not recorded; add/remove undos restore the active layer; ignored during a stroke; 200 steps / 1 GiB by default; Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Undo/Redo buttons |
@@ -57,10 +59,30 @@ priorities. Most relevant: no physical tablet validation; 8-bit default
 storage and 8-bit masks (16-bit documents optional), 8-bit display;
 document size bounded by GPU texture size; undo history uncompressed in memory;
 saving and loading synchronous (no autosave, recent files or background
-save); transparent export refused for non-Normal stack blending (D-4C-1);
+save); no layer thumbnails or folders (debt #17);
 CPU composition single-threaded and linear in layers (TECHNICAL_DEBT #33);
 no transparent colour, palette not persisted (debt #35, #36); preset edits
 not persisted; UI unpolished.
+
+## Phase 5B outcome
+
+Layer workflow with the reference observed first ([parity/5B-transparent-compositing.md](parity/5B-transparent-compositing.md)).
+D-4C-1 resolved: a probe of 45 900 translucent-backdrop combinations
+without paper showed one rule (Multiply W3C; the other modes compose the
+blended colour over the backdrop first; additive alpha for Screen, Color
+Dodge, Hard Light, Soft Light), now Mirae's (ADR 0022) within 2/255;
+composition over the paper is bit-identical to before and as fast
+(A/B). Merge down (ADR 0023) as the reference does it: the pair composed
+alone, the lower layer keeps id, name, mode, clipping and alpha lock,
+opacity baked, the lower-mask question (Apply / Keep / Cancel), refused
+on hidden or locked layers or without a layer below, one undo step
+holding only the changed tiles; 22 measured scenarios within 2/255 at
+both depths. Rename by double-click (consecutive renames are one step,
+as in the reference), drag-and-drop reorder with an insertion line,
+Ctrl+E, a fixed-width panel. Transparent export of blend layers is no
+longer refused. Merge 4096² takes 111–247 ms; undo/redo < 0.1 ms.
+Remaining: D-5B-1…9 (merging onto the paper, Normal over 1/255, 8-bit
+dodge/burn precision, no thumbnails, other merge commands).
 
 ## Phase 5A outcome
 
@@ -164,7 +186,6 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-Phase 5A is complete. The next subphase in the proposal is **5B** (layer
-workflow with the translucent-backdrop probe and merge down;
-[phase5/PROPOSAL.md](phase5/PROPOSAL.md)). It is **not approved and not
-started**: nothing begins until the owner approves it.
+Phase 5B is complete. The next subphase in the proposal is **5C**
+(selections; [phase5/PROPOSAL.md](phase5/PROPOSAL.md)). It is **not
+approved and not started**: nothing begins until the owner approves it.

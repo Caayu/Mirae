@@ -10,7 +10,8 @@ conversation. Read it fully, then these, all **mandatory**:
 4. [STATUS.md](STATUS.md), [ROADMAP.md](ROADMAP.md), the report of the
    last phase ([phase4/README.md](phase4/README.md)), the phase-5 plan
    ([phase5/PLAN.md](phase5/PLAN.md)) and its proposal
-   ([phase5/PROPOSAL.md](phase5/PROPOSAL.md))
+   ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)), and the last subphase's parity
+   record ([parity/5B-transparent-compositing.md](parity/5B-transparent-compositing.md))
 
 ## 1. Mission
 
@@ -37,9 +38,16 @@ Facts: [STATUS.md](STATUS.md).
 **Phase 5A (colour) is complete** (2026-10-17): a paint colour captured by
 each stroke, main/sub colours, a colour panel, the eyedropper, recent
 colours and swatches, with a parity gate ([parity/5A-color.md](parity/5A-color.md),
-ADR 0021). **5B–5G are proposed, not approved, not started**
+ADR 0021).
+
+**Phase 5B (layer workflow) is complete** (2026-10-17): blending over a
+translucent backdrop measured and reproduced (D-4C-1 resolved, ADR 0022),
+merge down (ADR 0023), rename by double-click, drag-and-drop reorder, a
+fixed-width layer panel, transparent export of blend layers, with a parity
+gate ([parity/5B-transparent-compositing.md](parity/5B-transparent-compositing.md)).
+**5C–5G are proposed, not approved, not started**
 ([phase5/PLAN.md](phase5/PLAN.md)). A new session asks the owner before
-starting 5B or anything else; it never begins a subphase on its own.
+starting 5C or anything else; it never begins a subphase on its own.
 
 ## 3. Repository
 
@@ -70,7 +78,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 434 tests, ~35 s after build
+cargo test --workspace --release        # 455 tests, ~40 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -89,6 +97,7 @@ cargo run --release -p tela-corpus --example doc_bench          # 1-100 layers, 
 cargo run --release -p tela-corpus --example depth_bench        # 8 vs 16-bit, ~20 s
 cargo run --release -p tela-io --example io_bench              # .mirae save/load, ~40 s
 cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit banding, ~2 s
+cargo run --release -p tela-corpus --example layer_bench        # merge down, reorder, rename, memory; ~10 s
 cargo run --release -p tela-brush --example stabilizer_bench
 cargo run --release -p tela-brush --example interpolation_bench
 ```
@@ -178,6 +187,12 @@ easily broken:
     `f32` (no alpha, not premultiplied, not quantized before the commit);
     colour state lives in the app, not in the document, the file or the
     history; the eraser and mask strokes ignore the colour.
+13. Translucent backdrops and merge (ADR 0022, 0023, C8, MD1–MD7): over
+    the paper the compositor takes a W3C-only loop (`composite_opaque`),
+    bit-identical to before 5B; only composition without the paper
+    (`compose_tile_transparent_into`, merge down) uses the measured
+    translucent rule. Merge down composes the pair alone and is one
+    history step; consecutive renames of one layer are one step (H8).
 
 ## 14. Architectural decisions
 
@@ -189,11 +204,13 @@ golden corpus, time-instant airbrush, document layer model, swap-based
 undo, blend modes measured against the reference, masks/clipping/alpha lock
 measured against the reference (0014–0017), 16-bit storage per document
 with an 8-bit default (0018), the `.mirae` v1 format (0019), the I/O crate
-and file workflow (0020), the paint colour and colour tool state (0021).
+and file workflow (0020), the paint colour and colour tool state (0021),
+blending over translucent backdrops (0022), merge down and the layer
+workflow (0023).
 
 ## 15. Completed features
 
-Phases 1–4 + 3.5 and subphase 5A; see [STATUS.md](STATUS.md#features) and
+Phases 1–4 + 3.5 and subphases 5A, 5B; see [STATUS.md](STATUS.md#features) and
 [CHANGELOG.md](../CHANGELOG.md). Phase reports: [phase2](phase2/README.md),
 [phase3](phase3/README.md), [phase4](phase4/README.md) (phase 1 has no
 separate report; it is summarized in the changelog).
@@ -203,8 +220,8 @@ separate report; it is summarized in the changelog).
 [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md): no physical tablet validation,
 8-bit default storage and 8-bit masks and display (16-bit documents
 optional), GPU texture size limit, undo history uncompressed in memory,
-UI edits not persisted, synchronous saving (no autosave), transparent
-export refused where D-4C-1 applies, goldens verified on one machine,
+UI edits not persisted, synchronous saving (no autosave), no layer
+thumbnails or folders, goldens verified on one machine,
 no transparent colour and colour palette not persisted (#35, #36), CPU composition single-threaded and linear in
 layers (#33), over-budget depth conversions hold both copies (#34).
 Memory model: [memory.md](memory.md).
@@ -249,7 +266,7 @@ layers), 12.4 ms (100), 44 ms (100 Soft Light).
 
 ## 21. Next steps
 
-1. Ask the owner whether 5B (or something else) is approved; record the
+1. Ask the owner whether 5C (or something else) is approved; record the
    decision in [phase5/PLAN.md](phase5/PLAN.md) and follow it one
    subphase at a time; never start a phase or subphase without explicit
    approval.

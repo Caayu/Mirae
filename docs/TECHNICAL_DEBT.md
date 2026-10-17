@@ -1,6 +1,6 @@
 # Technical debt
 
-Known, real debt, **updated at the end of phase 5A**. Each item:
+Known, real debt, **updated at the end of phase 5B**. Each item:
 impact, why it is not fixed now, and a possible direction. Priorities:
 **P1** blocks a planned phase or affects users soon; **P2** visible quality
 issue; **P3** latent or cosmetic. Item numbers are stable (other documents
@@ -12,7 +12,6 @@ defect live in [ROADMAP.md](ROADMAP.md).
 | # | Item | Impact | Why not now | Direction |
 |---|---|---|---|---|
 | 1 | **No physical tablet validated.** Only a virtual HID pen exists on the dev machine; tests use synthetic Windows Ink injection with integer positions. | Real pens may differ in pressure response, tilt/rotation, timestamps, delivery batching; HIMETRIC sub-pixel mapping is untested; mask pressure not comparable with the reference (D-4D-1). | No hardware available. | Test on at least one Wacom-class and one N-trig/Surface pen; record device/driver/results in STATUS.md; add Wintab if Ink proves insufficient. |
-| 20 | **Blending over a translucent backdrop without paper differs from the reference** (parity D-4C-1, D-4D-6): Mirae follows W3C, the reference does not (additive alpha in some modes, colours up to ~25/255 off). | None on screen (the paper is always under the stack); wrong results for transparent export (refused, D-4F-5), folders and merge down. | Rule unpublished; not reachable yet; measured data kept (`tests/reference/blend_without_paper.csv`). | Dedicated probe of translucent backdrops; fit a model; a parity test like `blend_parity.rs`. **Prerequisite of phase 5B** (merge down) and of folders. |
 
 ## P2
 
@@ -20,9 +19,8 @@ defect live in [ROADMAP.md](ROADMAP.md).
 |---|---|---|---|---|
 | 3 | **Document limited by GPU max texture size** (single display texture). | Documents beyond 8192/16384 px cannot be shown. | Typical illustration sizes fit. | Page the display texture (tiles of display textures) while keeping mip continuity. |
 | 8 | **UI edits are not persisted**; preset changes are lost on exit (documents are, since 4F). | Users cannot keep customized brushes. | Presets are not stored in documents (D19). | Save user presets as JSON (format exists) in a user directory; "reset to built-in". |
-| 17 | **Layer panel is minimal**: no drag-and-drop reorder, no rename field, no thumbnails, no delete confirmation (the reference asks; in Mirae deletion is undoable). The right panel's width follows its content (status line, long rows such as "[editing mask]"), so controls move (seen in the 4G app session, and again in 5A: "[editing mask]" widens the panel and moves its buttons). | Less familiar than the reference; controls shift under the cursor. | 4A–4F scope was the model, history and files. | Fixed panel width; drag reorder, rename and thumbnails (phase 5B); decide on a confirmation with the owner. |
+| 17 | **Layer panel**: no thumbnails (pixel and mask, D-5B-6), no delete confirmation (the reference asks; in Mirae deletion is undoable), no ghost row while dragging (D-5B-7), text markers instead of icons. (5B added rename, drag-and-drop reorder, merge down and a fixed width.) | Less familiar than the reference. | Thumbnails need per-layer downsampled previews kept current on every edit plus one GPU texture per row; not simple enough for 5B. | Thumbnails from the composed tiles' mips per layer, updated from the dirty tiles a commit returns, at a low rate; decide on a delete confirmation with the owner. |
 | 18 | **`commit_tile` converts whole tiles** (all 256 rows, stored ↔ f32) even where the stroke mask is empty. | ~0.6 ms per touched tile at commit (`history_bench`, `doc_bench`: a 50-tile stroke commits in ~47 ms). | Pre-existing; not in phase 4's scope. | Skip rows (or tiles) whose mask is all zero; re-run `history_bench` and the goldens. |
-| 21 | **No "merge down"** (and no merge visible / flatten; D-4C-3). | Workflow gap vs the reference. | Depends on #20 for translucent lower layers. | After #20, as one undo step (tiles of the lower layer + removal of the upper). |
 | 23 | **Masks: no apply-to-layer, no mask from selection, no mask display mode, no unlinking** (D-4D-2). | Workflow gaps vs the reference. | Apply needs a recorded merge of mask into pixels; selections do not exist yet. | Apply as one history step; masks from selections with the selection subphase (5C). |
 | 28 | **Saving and loading block the UI thread.** | A full 16-bit 4096² × 10 document takes ~6 s to save (deflate-bound), 8-bit ~2 s (`io_bench`); 100 sparse 16-bit layers ~8 s (`doc_bench`). | 4F scope: synchronous, measured first. | Save in the background from a snapshot (tiles are swappable), and/or deflate tiles on rayon and write them in order; same serializer. |
 | 29 | **No autosave, recent files, revert or save copy** (D-4F-8). | A crash loses unsaved work; fewer conveniences than the reference. | Not in 4F. | Autosave with `write_document` to a recovery file when modified (after #28); a recent-files list in user settings. |
@@ -55,6 +53,11 @@ defect live in [ROADMAP.md](ROADMAP.md).
 
 ## Resolved
 
+- Phase 5B: #20 (blending over a translucent backdrop without paper:
+  measured and reproduced, ADR 0022; transparent export of blend layers
+  no longer refused) and #21 (merge down, ADR 0023). #17 partly (rename,
+  drag reorder, fixed panel width; thumbnails and the delete question
+  remain).
 - Phase 5A: #22 (the app painted black only: the paint colour, the colour
   panel and the eyedropper, ADR 0021).
 - Phase 4G: none (no code debt fixed; the PNG limit error and the import

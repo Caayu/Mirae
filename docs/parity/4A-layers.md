@@ -90,8 +90,14 @@ is also covered by a unit or property test (named).
 |---|---|---|---|
 | D-4A-1 | No paper layer: removing the active bottom layer activates the layer above instead of the paper layer; the last undeletable layer is a raster layer, not the paper. | Behavioural, by design (paper colour is a document property) | Accepted (ADR 0014) |
 | D-4A-2 | No delete confirmation dialog. | Feature/behavioural | Open; since 4B a deletion is undoable (TECHNICAL_DEBT #17) |
-| D-4A-3 | No drag-and-drop reordering in the panel (Up/Down buttons only); in the reference dragging also selects the dragged layer. | Feature (UI) | Open — TECHNICAL_DEBT #17 |
-| D-4A-4 | No rename field in the panel (the API supports renaming). | Feature (UI) | Open — TECHNICAL_DEBT #17 |
+| D-4A-3 | No drag-and-drop reordering in the panel (Up/Down buttons only); in the reference dragging also selects the dragged layer. | Feature (UI) | **Closed in 5B** (parity record 5B) |
+| D-4A-4 | No rename field in the panel (the API supports renaming). | Feature (UI) | **Closed in 5B** (parity record 5B) |
 | D-4A-5 | Default name prefix is "Layer" (English UI) where the reference's pt-BR UI shows "Camada"; the numbering rule is the same. | Localization | Accepted |
 | D-4A-6 | Not compared yet: deleting a hidden layer (renaming a locked layer was compared in 4B: allowed in both), layer commands other than "new layer" during a stroke, pen (instead of mouse) strokes in the reference, performance with many layers. | Coverage gap | Open |
 | D-4A-7 | Opacity rendering was not compared numerically between the two applications (different brushes). Numeric comparison of compositing belongs to the 4C gate. | Coverage gap | Resolved in 4C: layer opacity at 60 % measured in every mode (`blend_parity`) |
+
+## Update 5B
+
+The rename field (double-click) and drag-and-drop reorder exist since 5B,
+observed in the reference first (parity record 5B, RN1–RN6, DR1–DR7);
+D-4A rows about them are closed there. The layer panel has a fixed width.

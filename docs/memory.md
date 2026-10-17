@@ -52,6 +52,12 @@ holds 2 MiB (8-bit) / 4 MiB (16-bit); a 500 px stroke across the canvas
 12 / 24 MiB; clearing or removing a 64-tile layer 16 / 32 MiB; converting
 320 tiles 80 MiB held, 160 MiB reserved.
 
+A **merge down** (5B) holds the previous content of the lower layer's
+changed tiles (copied) and the whole upper layer (moved): merging two
+dense 4096² layers holds 128 MiB (8-bit) / 256 MiB (16-bit); when the
+lower opacity or mask is baked, every lower tile counts as changed
+(`layer_bench`).
+
 The default budget is **200 steps and 1 GiB**, counted as each step's
 worst case; the oldest steps go first. **A single step larger than the
 budget is kept alone** (invariant H4), so the worst case is a depth
@@ -70,6 +76,7 @@ conversion of a big document: converting 100 dense 4096² layers from 8 to
 | PNG export | one row of tiles: width × 256 × 4 (8-bit) or × 8 (16-bit) bytes, + `ComposeScratch` | 4096 px wide: 4 / 8 MiB |
 | PNG import | one decoded row and the new layer's tiles; an interlaced image is decoded whole first (bounded by `Limits::max_image_decode_bytes`, 2 GiB) | — |
 | Depth conversion | the new depth's copy of every layer, while the old one moves into history | 8 → 16: old size + twice the old size |
+| Merge down (5B) | the copies of the lower layer's changed tiles (kept for undo) + two tile buffers; the upper layer moves into history; no third full copy | two dense 4096² layers: +66 MiB peak (8-bit), +130 MiB (16-bit) (`layer_bench`) |
 
 ## Worst cases, in short
 

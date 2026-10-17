@@ -37,7 +37,8 @@ colours (newest first) and swatches (click to use, right-click to remove,
 saved in documents and not part of undo. Below it, the brush
 panel edits the active preset, its effectors
 and the pressure curve; the layer panel on the right creates, selects,
-hides, locks, reorders and deletes layers, sets their opacity and blend
+hides, locks, renames (double-click), reorders (Up/Down or drag and
+drop), merges down and deletes layers, sets their opacity and blend
 mode, clips a layer to the one below, locks transparent pixels, and adds,
 enables, edits (Pixels / Mask) and deletes layer masks. Above it, the
 document lines show the file name (`*` while modified), Open, Save,
@@ -72,6 +73,7 @@ The pen works on the panels too.
 | Ctrl+S | Save |
 | Ctrl+Shift+S, Shift+Alt+S | Save As |
 | Ctrl+Shift+N | New layer above the active one |
+| Ctrl+E | Merge the active layer into the one below |
 | Ctrl+Z | Undo |
 | Ctrl+Y, Ctrl+Shift+Z | Redo |
 | F3 | Latency summary in the title bar |
@@ -139,7 +141,7 @@ examples (`scripts\check.ps1 -Bench` runs the gating ones). See
 - [x] Phase 3 — brush presets, effectors, tips, textures, airbrush, eraser ([report](docs/phase3/README.md))
 - [x] Phase 3.5 — architecture audit, boundaries, documentation, handoff
 - [x] Phase 4 — layers, blend modes, undo/redo, masks, 16-bit storage, document I/O, integration ([report](docs/phase4/README.md))
-- [ ] Phase 5 — editing fundamentals: [x] 5A colour; proposed: layer workflow, selections, transform, fill, gradients ([plan](docs/phase5/PLAN.md))
+- [ ] Phase 5 — editing fundamentals: [x] 5A colour; [x] 5B layer workflow; proposed: selections, transform, fill, gradients ([plan](docs/phase5/PLAN.md))
 - [ ] Later — layer folders, vector layers, rulers/symmetry/perspective, advanced brushes, comic tools, colour management ([roadmap](docs/ROADMAP.md))
 
 ## Clean-room notice
