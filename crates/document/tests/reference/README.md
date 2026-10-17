@@ -48,3 +48,22 @@ Provenance and method: [docs/parity/5B-transparent-compositing.md](../../../../d
   exported after the reference's "merge with layer below" (and, where
   merging changed the picture, before it): `scenario,row,col,r,g,b,a`,
   64 swatches per scenario.
+
+## Phase 5C: selections
+
+Provenance and method: [docs/parity/5C-selection.md](../../../../docs/parity/5C-selection.md).
+
+`selection/*.png`: 400 × 300 captures of the reference's canvas at 100 %
+zoom (bit-identical to its PNG export, checked once), our own document
+from `cargo run -p tela-corpus --example selection_probe -- psd sel.psd`:
+an opaque white layer under a layer filled with black through a
+selection. Coverage of a pixel = `255 - red`. Coordinates in the names
+are document pixels of the drag (`m5` = −5).
+
+- `rect_*`, `ellipse_*_hard|aa`, `lasso_pentagram`: shapes (S7–S11);
+  `rect_subpixel_400pct` the 400 % drag of S8, `rect_rotated_view_30` S9.
+- `feather_<px>_rect_*`: the rectangle blurred by "Desfocar borda" (S19–S21).
+- `op_b_*`, `op_add`, `op_subtract`, `op_intersect`: B alone and A combined
+  with B; A is `feather_50_rect_100_80_300_220` (S14–S16).
+- `paint_one_stroke`, `paint_two_strokes`, `mask_reveal_stroke`: strokes
+  through selection A (S22, S23, S26).
