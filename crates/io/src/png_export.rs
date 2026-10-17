@@ -7,11 +7,10 @@
 //! - **with the paper**: the composite over the opaque paper colour, as the
 //!   reference's export with its paper layer shown (F14); alpha 255;
 //! - **transparent**: the composite un-premultiplied (straight alpha), as
-//!   the reference's export without paper (F13). Tiles where a layer in a
-//!   blend mode other than Normal meets the stack are composed over the
-//!   paper (ADR 0016); how the reference blends them over a translucent
-//!   backdrop is not known yet (D-4C-1), so a transparent export of such a
-//!   document is refused instead of invented.
+//!   the reference's export without paper (F13), composed without the paper
+//!   (`compose_tile_transparent_into`): layers in blend modes other than
+//!   Normal blend with the translucent stack by the rule measured in the
+//!   reference (ADR 0022). Until 5B this case was refused (D-4F-5).
 //!
 //! The file is RGBA, 8 or 16 bits per channel, with an `sRGB` chunk
 //! (PNG 3rd edition §11.3.2.5) declaring the values' colour space; no
@@ -96,20 +95,7 @@ pub fn write_png<W: Write>(doc: &Document, out: W, options: &PngExport) -> Resul
     let (cols, rows) = tile_grid(doc);
     let paper = match options.background {
         PngBackground::Paper => Some(doc.background().premultiply()),
-        PngBackground::Transparent => {
-            let blends = (0..rows)
-                .flat_map(|y| (0..cols).map(move |x| TileCoord { x, y }))
-                .any(|c| doc.paper_backdrop(c));
-            if blends {
-                return Err(IoError::Unsupported(
-                    "a transparent export of layers in blend modes other than Normal \
-                     (how they combine without the paper is not known yet, D-4C-1); \
-                     export with the paper instead"
-                        .to_owned(),
-                ));
-            }
-            None
-        }
+        PngBackground::Transparent => None,
     };
     let (width, height) = (doc.width() as usize, doc.height() as usize);
     let sixteen = options.bits == PngBits::Sixteen;
@@ -132,7 +118,10 @@ pub fn write_png<W: Write>(doc: &Document, out: W, options: &PngExport) -> Resul
         let strip_rows = t.min(height - ty as usize * t);
         for tx in 0..cols {
             let c = TileCoord { x: tx, y: ty };
-            let drawn = doc.compose_tile_into(c, None, &mut scratch);
+            let drawn = match paper {
+                Some(_) => doc.compose_tile_into(c, None, &mut scratch),
+                None => doc.compose_tile_transparent_into(c, &mut scratch),
+            };
             let x0 = tx as usize * t;
             let cols_here = t.min(width - x0);
             for y in 0..strip_rows {

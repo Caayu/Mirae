@@ -182,21 +182,36 @@ fn sixteen_bit_export_keeps_a_16_bit_composite() {
 }
 
 #[test]
-fn transparent_export_refuses_what_it_cannot_compose_honestly() {
-    let mut d = scene(PixelDepth::Rgba8);
-    // The clipped Multiply blends inside its group: allowed.
-    assert!(export(&d, PngBackground::Transparent, PngBits::Eight).is_ok());
-    let base = d.layers().next().unwrap().id();
-    d.set_blend_mode(base, BlendMode::Screen).unwrap();
-    assert!(matches!(
-        export(&d, PngBackground::Transparent, PngBits::Eight),
-        Err(IoError::Unsupported(m)) if m.contains("D-4C-1")
-    ));
-    // With the paper it is what the screen shows.
-    assert!(export(&d, PngBackground::Paper, PngBits::Eight).is_ok());
-    // A hidden blend layer does not count.
-    d.set_visible(base, false).unwrap();
-    assert!(export(&d, PngBackground::Transparent, PngBits::Eight).is_ok());
+fn transparent_export_of_blend_layers_is_the_composite_without_paper() {
+    // Until 5B this was refused (D-4F-5): how blend layers combine with a
+    // translucent stack was unknown (D-4C-1). It is measured now (ADR
+    // 0022), so the export is the composite over transparency.
+    for depth in PixelDepth::ALL {
+        let mut d = scene(depth);
+        let top = d.layers().nth(1).unwrap().id();
+        d.set_blend_mode(top, BlendMode::Screen).unwrap();
+        let png = export(&d, PngBackground::Transparent, PngBits::Eight).unwrap();
+        let mut scratch = ComposeScratch::new();
+        let mut differs_from_paper = false;
+        for (x, y) in [(10, 10), (300, 20), (520, 280), (100, 200), (599, 299)] {
+            let c = TileCoord::containing(x as i32, y as i32);
+            let (ox, oy) = c.origin();
+            let i = ((y as i32 - oy) * 256 + (x as i32 - ox)) as usize;
+            let p = if d.compose_tile_transparent_into(c, &mut scratch) {
+                scratch.premultiplied()[i]
+            } else {
+                PremulRgba::TRANSPARENT
+            };
+            let s = p.unpremultiply();
+            let want = [s.r, s.g, s.b, s.a].map(|v| u16::from(unorm8(v)));
+            assert_eq!(png.rgba(x, y), want, "{depth:?} at ({x}, {y})");
+            // Over the paper, Screen would see the white paper instead.
+            if d.paper_backdrop(c) && p.a < 1.0 && p.a > 0.0 {
+                differs_from_paper = true;
+            }
+        }
+        assert!(differs_from_paper, "the scene has translucent blend pixels");
+    }
 }
 
 /// A PNG with every (colour, alpha) pair: pixel (c, a) is grey c at a.
