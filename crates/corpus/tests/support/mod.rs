@@ -130,9 +130,29 @@ pub fn stroke(
         },
         covers: &covers,
     };
+    // A visible non-Normal layer above the target can amplify the commit's
+    // single quantization (≤ ½ level at 8 bits; Overlay doubles it, the
+    // dodges more): the picture is then compared up to the target, with the
+    // layers above hidden in a copy (note on I2, invariants.md).
+    let above = |doc: &Document| -> Option<Document> {
+        let i = doc.index_of(layer)?;
+        let amplifies = doc
+            .layers()
+            .skip(i + 1)
+            .any(|l| l.visible() && l.blend_mode() != tela_document::BlendMode::Normal);
+        amplifies.then(|| {
+            let mut v = doc.clone();
+            let ids: Vec<_> = v.layers().skip(i + 1).map(|l| l.id()).collect();
+            for id in ids {
+                v.set_visible(id, false).expect("a layer of the copy");
+            }
+            v
+        })
+    };
+    let limited = above(d);
     let preview: Vec<Option<Vec<[u8; 4]>>> = touched
         .iter()
-        .map(|&c| compose(d, c, Some(&overlay)))
+        .map(|&c| compose(limited.as_ref().unwrap_or(d), c, Some(&overlay)))
         .collect();
     let tiles = buf.touched().clone();
     let before = d.has_selection().then(|| d.clone());
@@ -160,8 +180,9 @@ pub fn stroke(
             .collect()
     };
     let mut worst = 0;
+    let committed = limited.is_some().then(|| above(d)).flatten();
     for (c, before) in touched.iter().zip(preview) {
-        let after = compose(d, *c, None);
+        let after = compose(committed.as_ref().unwrap_or(d), *c, None);
         // The composites themselves (P3) when they agree; otherwise what
         // the display shows. A tile can also be composed over the paper in
         // the preview (a non-Normal layer still draws there) and over the

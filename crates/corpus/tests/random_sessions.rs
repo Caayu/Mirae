@@ -1,7 +1,7 @@
 //! Seeded random sessions (phase 4G): reproducible sequences of valid
 //! operations across every phase-4 feature — real strokes on pixels and
 //! masks, layer edits, clipping, alpha lock, blend modes, undo/redo,
-//! depth conversion, selections (5C), transforms (5D) — with checkpoints that validate the invariants and
+//! depth conversion, selections (5C), transforms (5D), fills (5E) — with checkpoints that validate the invariants and
 //! premultiplied values and save/load the document. A failure prints its
 //! seed; rerun one with `MIRAE_SEED=<n>`.
 
@@ -10,8 +10,8 @@ mod support;
 use support::*;
 use tela_color::PixelDepth;
 use tela_document::{
-    BlendMode, Document, Interpolation, LayerPart, Placement, SelectionOp, SelectionShape,
-    Transform, TransformParams,
+    BlendMode, ConnectedFill, Document, FillPaint, FillReference, FillTarget, Interpolation,
+    LayerPart, Placement, SelectionOp, SelectionShape, Tolerance, Transform, TransformParams,
 };
 
 const OPS: usize = 60;
@@ -39,7 +39,7 @@ fn pick(d: &Document, r: &mut Rng) -> tela_document::LayerId {
 /// One random operation; refused ones (locked layers, …) are fine: they
 /// must change nothing, which the checkpoints and the final walk verify.
 fn op(d: &mut Document, r: &mut Rng, seed: u64, i: usize) {
-    match r.below(24) {
+    match r.below(26) {
         0..=5 => {
             let p = random_preset(r);
             let path = random_path(r);
@@ -57,10 +57,23 @@ fn op(d: &mut Document, r: &mut Rng, seed: u64, i: usize) {
                     d.layer_count()
                 )
             });
+            let stack: Vec<String> = d
+                .layers()
+                .map(|l| {
+                    format!(
+                        "{}:{:?}/{}/{}{}",
+                        l.id(),
+                        l.blend_mode(),
+                        l.opacity(),
+                        if l.visible() { "shown" } else { "hidden" },
+                        if l.clipped() { "/clipped" } else { "" }
+                    )
+                })
+                .collect();
             if let Some(done) = stroke(d, &p, c, &path, seed * 1000 + i as u64) {
                 assert!(
                     done.preview_vs_commit <= 1,
-                    "preview == commit: {} at op {i}, {:?}, preset {} mode {:?}",
+                    "preview == commit: {} at op {i}, {:?}, preset {} mode {:?}, stack {stack:?}",
                     done.preview_vs_commit,
                     layer,
                     p.name,
@@ -208,6 +221,44 @@ fn op(d: &mut Document, r: &mut Rng, seed: u64, i: usize) {
                     "one step at most (seed {seed}, op {i})"
                 ),
                 Err(e) => panic!("a fresh source applies: {e} (seed {seed}, op {i})"),
+            }
+        }
+        // Fills (5E) of the edit target: a bucket from a random seed on the
+        // target or the composite, any tolerance, anti-aliased or not, a
+        // colour or erasing; or Edit › Fill. Refusals (hidden, locked)
+        // change nothing; a fill is one step at most.
+        24 | 25 => {
+            let target = FillTarget {
+                layer: d.active_layer(),
+                part: d.active_part(),
+            };
+            let paint = if r.below(5) == 0 {
+                FillPaint::Erase
+            } else {
+                FillPaint::Color(tela_color::Color::new(r.unit(), r.unit(), r.unit()))
+            };
+            let steps = d.history_len();
+            let result = if r.below(4) == 0 {
+                d.fill_selection(target, paint)
+            } else {
+                let fill = ConnectedFill {
+                    seed: (r.below(560) as i32 - 20, r.below(420) as i32 - 20),
+                    reference: if r.below(2) == 0 {
+                        FillReference::Target
+                    } else {
+                        FillReference::Composite
+                    },
+                    tolerance: Tolerance::from_tenths(r.below(1001) as u16),
+                    anti_alias: r.below(2) == 0,
+                };
+                d.fill_connected(target, &fill, paint)
+            };
+            if let Ok(dirty) = result {
+                assert!(
+                    d.history_len() <= steps + 1
+                        && (dirty.is_empty() || d.history_len() == steps + 1),
+                    "one step at most (seed {seed}, op {i})"
+                );
             }
         }
         _ => {
