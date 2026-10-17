@@ -267,6 +267,15 @@ fn only_present(tiles: &DirtyTiles, present: impl Fn(TileCoord) -> bool) -> Dirt
 /// once at the document's depth (16-bit content never passes through 8
 /// bits, invariant FL8); untouched pixels keep their stored values.
 fn paint_tile<P: StoragePixel>(tile: &mut Tile<P>, m: &[f32], paint: FillPaint, locked: bool) {
+    // Opaque colour at full coverage over anything is the colour itself
+    // (`C + d·0`), bit for bit: no need to decode the tile.
+    if let FillPaint::Color(c) = paint
+        && !locked
+        && m.iter().all(|&v| v == 1.0)
+    {
+        tile.pixels_mut().fill(P::from_premul(c.premultiplied(1.0)));
+        return;
+    }
     for (p, &mi) in tile.pixels_mut().iter_mut().zip(m) {
         if mi > 0.0 {
             let mut px = [p.to_premul()];

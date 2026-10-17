@@ -50,6 +50,90 @@ struct TileState {
     bits: Option<Box<[u64; WORDS]>>,
 }
 
+impl TileState {
+    /// Pixel `i` is within the threshold and not filled yet.
+    #[inline]
+    fn open(&self, i: usize, threshold: u16) -> bool {
+        self.dist.get(i) <= threshold
+            && self
+                .bits
+                .as_ref()
+                .is_none_or(|b| b[i / 64] >> (i % 64) & 1 == 0)
+    }
+
+    /// How many pixels from `i` (stepping by `step`, +1 or −1, at most
+    /// `n`, within one tile row) are open: a uniform tile answers without
+    /// looking at pixels until something is filled in it.
+    #[inline]
+    fn run(&self, i: usize, n: usize, step: isize, threshold: u16) -> usize {
+        match (&self.dist, &self.bits) {
+            (TileDistances::Uniform(d), _) if *d > threshold => 0,
+            (TileDistances::Uniform(_), None) => n,
+            (TileDistances::Uniform(_), Some(b)) => unfilled_run(b, i, n, step),
+            _ => (0..n)
+                .position(|k| !self.open(i.wrapping_add_signed(step * k as isize), threshold))
+                .unwrap_or(n),
+        }
+    }
+
+    /// Marks pixels `i..i + n` (one tile row) as filled, a word at a time.
+    fn set_run(&mut self, mut i: usize, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let bits = self.bits.get_or_insert_with(|| Box::new([0; WORDS]));
+        let end = i + n;
+        while i < end {
+            let (w, b) = (i / 64, i % 64);
+            let take = (64 - b).min(end - i);
+            let mask = if take == 64 {
+                u64::MAX
+            } else {
+                ((1u64 << take) - 1) << b
+            };
+            bits[w] |= mask;
+            i += take;
+        }
+    }
+}
+
+/// How many bits from `i` (stepping by `step`, at most `n`) are 0, a word
+/// at a time.
+fn unfilled_run(bits: &[u64; WORDS], i: usize, n: usize, step: isize) -> usize {
+    let mut done = 0;
+    while done < n {
+        let at = i.wrapping_add_signed(step * done as isize);
+        let (w, b) = (at / 64, at % 64);
+        if step > 0 {
+            let take = (64 - b).min(n - done);
+            let word = bits[w] >> b;
+            let word = if take == 64 {
+                word
+            } else {
+                word & ((1 << take) - 1)
+            };
+            if word != 0 {
+                return done + word.trailing_zeros() as usize;
+            }
+            done += take;
+        } else {
+            let take = (b + 1).min(n - done);
+            // Bits b, b − 1, …, b − take + 1, highest first.
+            let word = bits[w] << (63 - b);
+            let word = if take == 64 {
+                word
+            } else {
+                word & !(u64::MAX >> take)
+            };
+            if word != 0 {
+                return done + word.leading_zeros() as usize;
+            }
+            done += take;
+        }
+    }
+    n
+}
+
 /// The flood's working state over the canvas.
 pub(crate) struct Grid<F: FnMut(TileCoord) -> TileDistances> {
     canvas: IRect,
@@ -149,15 +233,47 @@ impl<F: FnMut(TileCoord) -> TileDistances> Grid<F> {
         t.dist.get(i) <= self.threshold
     }
 
-    #[inline]
-    fn set(&mut self, x: i32, y: i32) {
-        let (c, i) = Self::locate(x, y);
-        let s = self.slot(c);
-        let bits = self.tiles[s]
-            .1
-            .bits
-            .get_or_insert_with(|| Box::new([0; WORDS]));
-        bits[i / 64] |= 1 << (i % 64);
+    /// Fills row `y` rightwards from `x` while the pixels are inside;
+    /// returns the first `x` that is not (`x` itself if it is not). Runs
+    /// a tile row at a time: a whole uniform row in a few word writes.
+    fn extend_right(&mut self, mut x: i32, y: i32) -> i32 {
+        loop {
+            if !self.on_canvas(x, y) {
+                return x;
+            }
+            let (c, i) = Self::locate(x, y);
+            let s = self.slot(c);
+            let n = (((x | 255) + 1).min(self.canvas.x1) - x) as usize;
+            let threshold = self.threshold;
+            let t = &mut self.tiles[s].1;
+            let run = t.run(i, n, 1, threshold);
+            t.set_run(i, run);
+            x += run as i32;
+            if run < n {
+                return x;
+            }
+        }
+    }
+
+    /// Fills row `y` leftwards from `x` (inclusive) while the pixels are
+    /// inside; returns the leftmost pixel filled (`x + 1` if none).
+    fn extend_left(&mut self, mut x: i32, y: i32) -> i32 {
+        loop {
+            if !self.on_canvas(x, y) {
+                return x + 1;
+            }
+            let (c, i) = Self::locate(x, y);
+            let s = self.slot(c);
+            let n = (x - (x & !255).max(self.canvas.x0) + 1) as usize;
+            let threshold = self.threshold;
+            let t = &mut self.tiles[s].1;
+            let run = t.run(i, n, -1, threshold);
+            t.set_run(i + 1 - run, run);
+            x -= run as i32;
+            if run < n {
+                return x + 1;
+            }
+        }
     }
 
     /// Floods from `seed`; returns false (filling nothing) when the seed
@@ -184,10 +300,7 @@ impl<F: FnMut(TileCoord) -> TileDistances> Grid<F> {
         while let Some(Span { mut x0, x1, y, dy }) = stack.pop() {
             let mut x = x0;
             if self.inside(x, y) {
-                while self.inside(x - 1, y) {
-                    self.set(x - 1, y);
-                    x -= 1;
-                }
+                x = self.extend_left(x0 - 1, y);
                 if x < x0 {
                     stack.push(Span {
                         x0: x,
@@ -198,10 +311,7 @@ impl<F: FnMut(TileCoord) -> TileDistances> Grid<F> {
                 }
             }
             while x0 <= x1 {
-                while self.inside(x0, y) {
-                    self.set(x0, y);
-                    x0 += 1;
-                }
+                x0 = self.extend_right(x0, y);
                 if x0 > x {
                     stack.push(Span {
                         x0: x,
@@ -342,5 +452,40 @@ impl<F: FnMut(TileCoord) -> TileDistances> Grid<F> {
             }
         }
         edge
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unfilled_runs_match_a_bit_by_bit_count() {
+        let mut bits = Box::new([0u64; WORDS]);
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        for w in bits.iter_mut().take(16) {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            // Sparse bits so runs are long.
+            *w = seed & (seed >> 3) & (seed >> 5);
+        }
+        let bit = |i: usize| bits[i / 64] >> (i % 64) & 1 == 1;
+        for row in 0..4 {
+            let base: usize = row * 256;
+            for start in 0..256 {
+                for (step, n) in [(1isize, 256 - start), (-1, start + 1)] {
+                    let i = base + start;
+                    let expected = (0..n)
+                        .position(|k| bit(i.wrapping_add_signed(step * k as isize)))
+                        .unwrap_or(n);
+                    assert_eq!(
+                        unfilled_run(&bits, i, n, step),
+                        expected,
+                        "row {row} from {start} step {step}"
+                    );
+                }
+            }
+        }
     }
 }
