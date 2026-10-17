@@ -3,9 +3,10 @@ use std::time::Instant;
 
 use glam::Vec2;
 use tela_brush::dynamics::{DynamicsSource, InputCaps};
+use tela_brush::preset::PaintMode;
 use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha};
 use tela_canvas::{DirtyTiles, Tile, TileCoord, ViewTransform};
-use tela_color::{PixelDepth, PremulRgba, with_pixel_type};
+use tela_color::{Color, PixelDepth, PremulRgba, with_pixel_type};
 use tela_document::{
     BlendMode, ComposeScratch, Document, HistoryAction, LayerId, LayerPart, Overlay, OverlayPaint,
     Placement,
@@ -20,12 +21,13 @@ use winit::window::{Window, WindowId};
 
 mod files;
 
+use crate::colors::{ColorState, Slot};
 use crate::stats::LatencyStats;
 use crate::tools::Tools;
 use files::{FileState, Pending};
 use tela_ui::{
-    BrushPanel, DocumentCommand, DocumentInfo, HistoryButtons, HistoryCommand, LayerAction,
-    LayerRow, PanelAction, PanelModel, UiLayer, egui,
+    BrushPanel, ColorAction, ColorModel, ColorPanel, DocumentCommand, DocumentInfo, HistoryButtons,
+    HistoryCommand, LayerAction, LayerRow, PanelAction, PanelModel, PickSource, UiLayer, egui,
 };
 
 const DOCUMENT_SIZE: (u32, u32) = (4000, 3000);
@@ -44,6 +46,9 @@ enum Drag {
     None,
     Paint,
     Pan,
+    /// The eyedropper: every position picks; the last pick is remembered
+    /// as a recent colour when the drag ends.
+    Pick(PickSource),
 }
 
 struct Gpu {
@@ -79,6 +84,15 @@ pub struct App {
     stroke_target: Option<StrokeTarget>,
     tools: Tools,
     panel: BrushPanel,
+    /// Main/sub colours, recent colours and swatches (session state, not
+    /// saved with the document; ADR 0021).
+    colors: ColorState,
+    color_panel: ColorPanel,
+    /// The eyedropper tool is selected: left drags pick.
+    picker: bool,
+    pick_source: PickSource,
+    /// The colour the current pick drag last set.
+    picked: Option<Color>,
     last_title: String,
     /// The document's file, save point and the file commands' status.
     file: FileState,
@@ -137,6 +151,11 @@ impl App {
             stroke_target: None,
             tools: Tools::new(),
             panel: BrushPanel::default(),
+            colors: ColorState::new(),
+            color_panel: ColorPanel::default(),
+            picker: false,
+            pick_source: PickSource::Canvas,
+            picked: None,
             last_title: String::new(),
         }
     }
@@ -251,6 +270,22 @@ impl App {
         }
         match (ev.phase, self.drag) {
             (Phase::Down, Drag::None) if self.space_held => self.drag = Drag::Pan,
+            // The eyedropper tool, or Alt with any tool (the reference
+            // picks the displayed colour with Alt; parity record 5A, O10).
+            // The stylus eraser end keeps erasing.
+            (Phase::Down, Drag::None)
+                if self.modifiers.alt_key()
+                    || (self.picker && ev.sample.device_kind != DeviceKind::Eraser) =>
+            {
+                let source = if self.modifiers.alt_key() {
+                    PickSource::Canvas
+                } else {
+                    self.pick_source
+                };
+                self.begin_pick(pos, source);
+            }
+            (Phase::Move | Phase::Hover, Drag::Pick(source)) => self.pick(pos, source),
+            (Phase::Up | Phase::Cancel, Drag::Pick(_)) => self.end_pick(),
             (Phase::Down, Drag::None) => {
                 let target = StrokeTarget::active(&self.document);
                 if let Err(e) = self.document.paint_target(target.layer, target.part) {
@@ -265,6 +300,12 @@ impl App {
                 let input = self.brush_input(&ev.sample);
                 let t = Instant::now();
                 self.engine.preset = self.tools.for_stroke(ev.sample.device_kind).clone();
+                // The stroke captures the active colour now (COL2); a paint
+                // stroke makes it a recent colour, as in the reference (O9).
+                self.engine.color = self.colors.active();
+                if self.engine.preset.compositing.mode != PaintMode::Erase {
+                    self.colors.remember(self.engine.color);
+                }
                 self.stroke_seed = self.stroke_seed.wrapping_add(1);
                 self.engine
                     .begin_stroke(input, self.view.zoom, self.stroke_seed);
@@ -316,6 +357,48 @@ impl App {
         }
     }
 
+    /// Starts an eyedropper drag at screen position `pos`.
+    fn begin_pick(&mut self, pos: Vec2, source: PickSource) {
+        self.drag = Drag::Pick(source);
+        self.picked = None;
+        self.pick(pos, source);
+    }
+
+    /// Sets the active colour from the document pixel under screen
+    /// position `pos` — the document pixel at any zoom, not the reduced
+    /// display (reference O14). Where there is no colour (outside the
+    /// document, or a transparent pixel of the active layer) the colour
+    /// does not change: Mirae has no "transparent colour" to switch to
+    /// (D-5A-2).
+    fn pick(&mut self, pos: Vec2, source: PickSource) {
+        let p = self.view.to_canvas(pos);
+        let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
+        let doc = &self.document;
+        let inside = x >= 0 && y >= 0 && x < doc.width() as i32 && y < doc.height() as i32;
+        let sample = match source {
+            PickSource::Canvas => doc.composite_pixel(x, y, &mut self.compose),
+            PickSource::Layer if inside => doc
+                .layer(doc.active_layer())
+                .map(|l| l.pixels().pixel(x, y)),
+            PickSource::Layer => None,
+        };
+        if let Some(color) = sample.and_then(Color::from_premultiplied) {
+            self.colors.set_active(color);
+            self.picked = Some(color);
+        }
+        self.request_redraw();
+    }
+
+    /// Ends an eyedropper drag; the picked colour becomes a recent colour
+    /// (reference O9).
+    fn end_pick(&mut self) {
+        self.drag = Drag::None;
+        if let Some(c) = self.picked.take() {
+            self.colors.remember(c);
+        }
+        self.request_redraw();
+    }
+
     fn drain_tablet(&mut self) {
         #[cfg(windows)]
         if let Some(ink) = self.gpu.as_ref().and_then(|g| g.ink.as_ref()) {
@@ -342,6 +425,12 @@ impl App {
             }
             MouseButton::Middle if pressed && self.drag == Drag::None => self.drag = Drag::Pan,
             MouseButton::Middle if !pressed && self.drag == Drag::Pan => self.drag = Drag::None,
+            // Right-click picks the displayed colour with any tool, as in
+            // the reference (parity record 5A, O10).
+            MouseButton::Right if pressed && self.drag == Drag::None => {
+                self.begin_pick(self.cursor, PickSource::Canvas);
+            }
+            MouseButton::Right if !pressed && matches!(self.drag, Drag::Pick(_)) => self.end_pick(),
             _ => {}
         }
     }
@@ -463,6 +552,11 @@ impl App {
                 }
                 "c" | "C" => self.clear_canvas(),
                 "e" | "E" => self.tools.eraser_mode = !self.tools.eraser_mode,
+                // The reference's X: paint with the other colour (O2).
+                "x" | "X" => self.colors.toggle_active(),
+                // Main black, sub white: unbound in the reference (O3);
+                // D is free in Mirae.
+                "d" | "D" => self.colors.reset(),
                 d if d.len() == 1 && d.as_bytes()[0].is_ascii_digit() => {
                     let i = (d.as_bytes()[0] - b'1') as usize;
                     self.tools.select(i);
@@ -691,6 +785,17 @@ impl App {
         let mut layer_action = None;
         let mut history_command = None;
         let mut document_command = None;
+        let mut color_action = None;
+        let color_model = ColorModel {
+            main: self.colors.main(),
+            sub: self.colors.sub(),
+            main_active: self.colors.active_slot() == Slot::Main,
+            recent: self.colors.recent(),
+            swatches: self.colors.swatches(),
+            picker: self.picker,
+            pick_source: self.pick_source,
+        };
+        let color_panel = &mut self.color_panel;
         let (tools, engine, panel) = (&mut self.tools, &mut self.engine, &mut self.panel);
         let export = &mut self.file.export;
         let asking = self.file.asking.as_ref().map(Pending::doing);
@@ -710,6 +815,8 @@ impl App {
             let r = egui::Panel::left("brush-panel")
                 .default_size(290.0)
                 .show(ui, |ui| {
+                    color_action = color_panel.show(ui, &color_model);
+                    ui.separator();
                     action = panel.show(
                         ui,
                         PanelModel {
@@ -748,11 +855,36 @@ impl App {
         if dismissed {
             return PanelAction::DismissNotice;
         }
-        match (document_command, history_command, layer_action) {
-            (Some(c), _, _) => PanelAction::Document(c),
-            (None, Some(c), _) => PanelAction::History(c),
-            (None, None, Some(a)) => PanelAction::Layer(a),
-            (None, None, None) => action,
+        match (
+            document_command,
+            history_command,
+            layer_action,
+            color_action,
+        ) {
+            (Some(c), _, _, _) => PanelAction::Document(c),
+            (None, Some(c), _, _) => PanelAction::History(c),
+            (None, None, Some(a), _) => PanelAction::Layer(a),
+            (None, None, None, Some(a)) => PanelAction::Color(a),
+            (None, None, None, None) => action,
+        }
+    }
+
+    /// Colour panel requests. None of them is a document change or a
+    /// history step (reference O8).
+    fn apply_color(&mut self, action: ColorAction) {
+        let c = &mut self.colors;
+        match action {
+            ColorAction::Set(color) => c.set_active(color),
+            ColorAction::SelectMain(main) => c.select(if main { Slot::Main } else { Slot::Sub }),
+            ColorAction::Toggle => c.toggle_active(),
+            ColorAction::Swap => c.swap(),
+            ColorAction::Reset => c.reset(),
+            ColorAction::AddSwatch => {
+                c.add_swatch();
+            }
+            ColorAction::RemoveSwatch(i) => c.remove_swatch(i),
+            ColorAction::SetPicker(on) => self.picker = on,
+            ColorAction::SetPickSource(s) => self.pick_source = s,
         }
     }
 
@@ -770,6 +902,7 @@ impl App {
                 self.update_title();
             }
             PanelAction::DismissNotice => self.file.notice = None,
+            PanelAction::Color(a) => self.apply_color(a),
         }
         self.request_redraw();
     }

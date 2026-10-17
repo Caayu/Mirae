@@ -9,6 +9,7 @@
 //! **Depends on:** every other crate except corpus.
 
 mod app;
+mod colors;
 mod stats;
 mod tools;
 
