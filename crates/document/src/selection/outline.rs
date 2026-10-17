@@ -9,6 +9,9 @@ use tela_canvas::{IRect, TILE_SIZE};
 
 use super::Selection;
 
+/// A pixel corner, relative to the outline's area.
+type Vertex = (i32, i32);
+
 /// A pixel counts as inside at this coverage and above.
 pub const OUTLINE_THRESHOLD: u8 = 128;
 
@@ -28,7 +31,7 @@ impl Selection {
         let at =
             |x: i32, y: i32| x >= 0 && y >= 0 && x < w && y < h && inside[(y * w + x) as usize];
         // Directed unit edges, inside on the right (y down).
-        let mut next: HashMap<(i32, i32), [Option<(i32, i32)>; 2]> = HashMap::new();
+        let mut next: HashMap<Vertex, [Option<Vertex>; 2]> = HashMap::new();
         let mut add = |from: (i32, i32), to: (i32, i32)| {
             let slot = next.entry(from).or_default();
             if slot[0].is_none() {
