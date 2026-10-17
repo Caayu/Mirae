@@ -78,7 +78,11 @@ struct ModelLayer {
     visible: bool,
     opacity: f32,
     locked: bool,
+    /// The layer stores a tile (`Paint` allocates the origin tile).
     painted: bool,
+    /// The painted pixel is visible: a merge can leave a stored tile
+    /// transparent (a lower mask applied over it, opacity 0 baked in).
+    ink: bool,
     alpha_locked: bool,
     clipped: bool,
     /// `(enabled, hides something)`.
@@ -94,6 +98,7 @@ impl ModelLayer {
             opacity: 1.0,
             locked: false,
             painted: false,
+            ink: false,
             alpha_locked: false,
             clipped,
             mask: None,
@@ -302,6 +307,7 @@ fn step(
                     });
                 }
                 m.layers[i].painted = true;
+                m.layers[i].ink = true;
                 Ok(())
             });
             let doc = if sixteen {
@@ -323,7 +329,10 @@ fn step(
         }
         Op::Clear(i) => {
             let id = pick(d, removed, i);
-            let model = m.unlocked(id).map(|i| m.layers[i].painted = false);
+            let model = m.unlocked(id).map(|i| {
+                m.layers[i].painted = false;
+                m.layers[i].ink = false;
+            });
             (ok(d.clear_layer(id)), model)
         }
         Op::AddMask(i) => {
@@ -391,18 +400,31 @@ fn step(
                         return Err(LayerError::Hidden(lid));
                     }
                 }
+                // An opacity survives quantization at the document depth.
+                let levels = match m.depth {
+                    PixelDepth::Rgba8 => 255.0,
+                    PixelDepth::Rgba16 => 65535.0,
+                };
+                let shows = |opacity: f32| opacity * levels > 0.5;
                 let top = m.layers.remove(ti);
                 let bottom = &mut m.layers[bi];
-                // The upper pixel lands unless its opacity is 0, its mask
-                // hides it (`PaintMask` hides exactly the painted pixel) or
-                // it is clipped to an empty base.
-                let lands = top.painted
-                    && top.opacity > 0.0
+                // The lower layer's own pixel: its opacity is baked in and an
+                // applied mask (`PaintMask` hides exactly the painted pixel)
+                // erases it; its tile stays either way.
+                let applied = !keep && bottom.mask.is_some_and(|(enabled, _)| enabled);
+                bottom.ink &=
+                    shows(bottom.opacity) && !(applied && bottom.mask == Some((true, true)));
+                // The upper pixel lands unless it is invisible, its opacity
+                // rounds to 0, its mask hides it, or it is clipped to a base
+                // that is empty there.
+                let lands = top.ink
+                    && shows(top.opacity)
                     && top.mask != Some((true, true))
-                    && !(top.clipped && !bottom.clipped && !bottom.painted);
+                    && !(top.clipped && !bottom.clipped && !bottom.ink);
                 bottom.painted |= lands;
+                bottom.ink |= lands;
                 bottom.opacity = 1.0;
-                if !keep && bottom.mask.is_some_and(|(enabled, _)| enabled) {
+                if applied {
                     bottom.mask = None;
                 }
                 m.active = bottom.id;
@@ -448,11 +470,23 @@ fn snapshot(d: &Document) -> Vec<ModelLayer> {
             opacity: l.opacity(),
             locked: l.locked(),
             painted: l.pixels().tile_count() > 0,
+            ink: origin_alpha(l) > 0,
             alpha_locked: l.alpha_locked(),
             clipped: l.clipped(),
             mask: l.mask().map(|m| (m.enabled(), m.tile_count() > 0)),
         })
         .collect()
+}
+
+/// Alpha of the pixel `Paint` paints (0 when its tile is absent).
+fn origin_alpha(l: &crate::RasterLayer) -> u16 {
+    let origin = TileCoord { x: 0, y: 0 };
+    let p = l.pixels();
+    match (p.rgba8(), p.rgba16()) {
+        (Some(s), _) => s.tile(origin).map_or(0, |t| u16::from(t.get(1, 1)[3])),
+        (_, Some(s)) => s.tile(origin).map_or(0, |t| t.get(1, 1)[3]),
+        _ => unreachable!("one of the two depths"),
+    }
 }
 
 /// Address of each layer's tile buffer, to prove layers are not copied.

@@ -449,6 +449,21 @@ impl Document {
         }
     }
 
+    /// An edit merged into the newest step may hold more than the step
+    /// reserved when it was recorded (a longer name comes back on undo):
+    /// raises the step's cost to at least `cost` and enforces the limits.
+    pub(super) fn reserve_newest_step(&mut self, cost: usize) {
+        let h = &mut self.history;
+        if let Some(step) = h.undo.back_mut() {
+            let cost = cost + size_of::<Step>();
+            if cost > step.cost {
+                h.reserved += cost - step.cost;
+                step.cost = cost;
+            }
+        }
+        h.enforce();
+    }
+
     /// Whether a new `action` edit (opacity or rename) of `id` merges into
     /// the newest step.
     pub(super) fn chain_merges(&self, action: HistoryAction, id: LayerId) -> bool {

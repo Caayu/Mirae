@@ -349,6 +349,23 @@ fn consecutive_renames_of_one_layer_are_one_step() {
 }
 
 #[test]
+fn merged_renames_reserve_the_longest_name_they_hold() {
+    // Found by `history_stays_within_small_limits`: a short rename merged
+    // with a longer one held the longer name after undo without having
+    // reserved it (H4).
+    let mut d = Document::new(256, 256);
+    let l = d.active_layer();
+    d.set_name(l, "a").unwrap();
+    d.set_name(l, "a much longer name than the first one")
+        .unwrap();
+    assert!(d.history_bytes() <= d.history_reserved_bytes());
+    d.undo().unwrap();
+    assert!(d.history_bytes() <= d.history_reserved_bytes());
+    d.redo().unwrap();
+    assert!(d.history_bytes() <= d.history_reserved_bytes());
+}
+
+#[test]
 fn clearing_moves_the_surface_into_history() {
     let mut d = Document::new(1024, 1024);
     let l = d.active_layer();

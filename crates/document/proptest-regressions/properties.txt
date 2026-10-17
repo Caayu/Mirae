@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 8c7e69feeef0b0a975a8140a3986c8e0f387341cbe808eba6cc691c41b91e7e1 # shrinks to ops = [Add(0, 0), Add(0, 0), Add(1, 167097155065235187), Remove(0), Move(4506237659732021489, 3, 0), Remove(5838110172889884489)]
+cc 8bb4c5e1ba6488efc222841188bf0086c64d8c85e7e28070bef4322e1efaa73c # shrinks to ops = [Paint(0, false), AddMask(0), Add(0, 0), Add(2, 0), PaintMask(5475500604763944789), Add(1, 15230898667072170897), Add(0, 5779837365043418432), Merge(1477235512617075143, false), Add(0, 7276271421266457482), Merge(2327800772753375174, false)]

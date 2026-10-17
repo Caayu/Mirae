@@ -410,8 +410,9 @@ impl Document {
         let old = std::mem::replace(&mut self.layers[i].name, name);
         if self.chain_merges(HistoryAction::Rename, id) {
             // The merged step keeps the name from before the chain and now
-            // leads to a new state.
+            // leads to a new state; undoing it will hold the new name.
             self.renew_newest_step();
+            self.reserve_newest_step(cost);
         } else {
             let change = Change::Name {
                 layer: id,
