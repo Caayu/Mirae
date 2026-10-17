@@ -1,4 +1,8 @@
-# Proposal: the next macrophase (not approved)
+# Proposal: the next macrophase
+
+> Status 2026-10-17: the owner approved **5A (colour)** only; it is
+> complete ([PLAN.md](PLAN.md)). Everything else below remains a
+> proposal, not approved and not started.
 
 Written at the end of phase 4 (4G) for the owner's decision. Nothing here
 is started. The goal is unchanged: professional parity with Clip Studio

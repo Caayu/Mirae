@@ -22,6 +22,16 @@ What matters is where it sits in the architecture.
    ```
 
    `BrushPanel` itself only remembers which property's effectors are shown.
+   The colour panel (`ColorPanel::show`, phase 5A) receives a `ColorModel`
+   (main and sub colour, which one is active, recent colours, swatches,
+   eyedropper on/off and source) and returns a `ColorAction` (`Set`,
+   `SelectMain`, `Toggle`, `Swap`, `Reset`, `AddSwatch`, `RemoveSwatch`,
+   `SetPicker`, `SetPickSource`). It keeps only the HSV value it is editing
+   (so the hue survives greys) and the hex text while it is typed; an edit
+   remembers the colour it produced, so the next frame does not re-derive
+   HSV from RGB and nothing drifts or loops. The picker is drawn with
+   vertex-coloured meshes (a 9 × 9 grid, no texture, rebuilt each frame at
+   negligible cost). `tela-ui` depends on `tela-color` for `Color`/`Hsv`.
 3. **Commands the UI cannot fulfil are returned, not executed.**
    `BrushPanel::show` returns a `PanelAction` (`SelectPreset`,
    `ToggleEraser`, `ClearLayer`, `Layer(..)`); the app applies it. The layer
@@ -93,3 +103,7 @@ redraw:
 - Undo/Redo buttons (`history_bar`) receive only labels (`HistoryButtons`)
   and return a `HistoryCommand`; the app maps document `HistoryAction`s to
   text.
+- The colour panel has no colour wheel, HLS/Lab/CMYK fields or colour
+  sets from files; recent colours and swatches are not saved between
+  sessions (TECHNICAL_DEBT #35). The eyedropper has no shortcut of its own
+  (`I` cycles the interpolation); right-click and Alt pick the canvas.

@@ -3,6 +3,44 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 5A — colour
+
+The first subphase of phase 5 (approved alone; 5B–5G not started). The
+reference was observed first and a parity gate recorded
+([docs/parity/5A-color.md](docs/parity/5A-color.md)). 401 → 434 tests.
+
+### Added
+- `tela_color::Color` (opaque, straight, `f32` sRGB-encoded, always
+  valid, no alpha), `Hsv` (with `follow` for hue continuity), `#RRGGBB`
+  parsing/formatting, NaN-safe `Color::from_premultiplied` (ab79bde,
+  60ab5b0); ADR 0021.
+- `Document::composite_pixel`: the colour shown at a pixel, composed over
+  the paper in `f32` (9169f4c).
+- The colour panel in `tela-ui` (main/sub, HSV square and hue bar, RGB,
+  HSV, hex, eyedropper toggle and source, recent colours, swatches);
+  `tela-ui` may depend on `tela-color` (61ca999).
+- App colour state (`app::colors::ColorState`): active slot, `X` to paint
+  with the other colour, Swap, `D` reset, recent colours from strokes and
+  picks, swatches; the eyedropper (tool, right-click, Alt, also with the
+  pen; canvas or layer) (d7a32f0).
+- Tests: coloured preview == commit matrix (336 cases), 8/16-bit colour
+  consistency, captured colour, eraser and mask colour independence,
+  alpha-lock recolour against the reference's pixels, colour property
+  tests (dc1bfa9, 9169f4c).
+- `color_probe` (the reference's eyedropper probe, 3ddbaf2); a colour
+  cost table in `stamp_bench` (d12a5fc).
+
+### Changed
+- `BrushEngine::color` and `StrokeBuffer::new` take a `Color` instead of
+  an `Rgba`; the stroke source is `(C·m, m)`. Bit-identical for every
+  previous caller (alpha 1): goldens unchanged (ab79bde).
+
+### Documentation
+- ADR 0021, invariants COL1–COL8, parity record 5A and the phase-5
+  matrix in PARITY.md, `docs/phase5/PLAN.md`; D-4D-5 closed (4C/4D
+  records updated with the app checks); TECHNICAL_DEBT #22 resolved,
+  #35 and #36 added.
+
 ## Phase 4 complete
 
 Layers and document, seven subphases, each with a parity gate: a layer

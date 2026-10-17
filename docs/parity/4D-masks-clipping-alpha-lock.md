@@ -220,7 +220,18 @@ measured tests, and the running app checks what alpha shows.
 | D-4D-2 | Not implemented: apply mask to layer, mask from a selection (no selections yet), "show mask area", unlinking the mask from the layer. | Feature | Open |
 | D-4D-3 | Deleting a mask: the reference's delete button asks whether to apply the mask first; Tela has a separate "Delete mask" button that deletes it (undoable) without asking. | UI | Open (with D-4D-2: apply) |
 | D-4D-4 | Masks with a stored rectangle and an outside default (K6) have no Tela equivalent; behaviour inside the document is the same. | Representation | Accepted (only reachable through imported files; revisit with 4F import) |
-| D-4D-5 | Colour-dependent clip/blend combinations are verified by the measured tests, not in the running app (it paints black only). | Coverage | Open until a colour picker exists |
+| D-4D-5 | Colour-dependent clip/blend combinations are verified by the measured tests, not in the running app (it paints black only). | Coverage | **Closed in 5A** (coloured clipping, Multiply and ten other modes, alpha-lock recolour and mask strokes checked in the running app; parity record 5A). Was: open until a colour picker exists |
 | D-4D-6 | A non-Normal **base** over a translucent backdrop without paper follows W3C (D-4C-1); not reachable in Tela. | Behavioural | Open with D-4C-1 |
 | D-4D-7 | Not compared: target after undo/redo of mask creation (Tela: pixels when the mask is gone, unchanged otherwise), commands during a stroke (A7), masks on colour-managed documents, speed against the reference. (16-bit: the reference has none; parity 4E.) | Coverage | Open |
 | D-4D-8 | Panel: Tela shows text markers ("> " for clipped, "α", "[mask]", "[editing mask]") instead of the reference's clip bar and mask thumbnails. | UI | Accepted (own identity) |
+
+## Update 5A — colour
+
+With colour (phase 5A) the colour-dependent cases were exercised in both
+applications' running UI (parity record 5A): alpha lock recolours by
+source-atop in both, and the reference's edge pixel over a 50 % swatch
+with blue paint (186,148,198) is reproduced by Mirae's rule within 1/255
+(`preserved_alpha_recolours_like_the_reference`); a coloured clipped
+layer and Multiply follow the 4D model in both; red and blue mask strokes
+give identical masks in Mirae, as M4 observed in the reference. D-4D-5 is
+closed.

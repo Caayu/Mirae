@@ -165,6 +165,26 @@ specified in [../formats/mirae-v1.md](../formats/mirae-v1.md).
 | IO9 | PNG export is the document's composite quantized once: over the paper (opaque) or un-premultiplied (transparent), within 1/255 of the screen; a transparent export where a non-Normal layer blends with the stack is refused (D-4C-1). | `png.rs::export_with_paper_is_the_composite_over_the_paper`, `…::transparent_export_is_the_unpremultiplied_composite`, `…::sixteen_bit_export_keeps_a_16_bit_composite`, `…::transparent_export_refuses_what_it_cannot_compose_honestly` |
 | IO10 | PNG import premultiplies once, at the document's depth: 16 bits kept in 16-bit documents, nearest level in 8-bit ones; an 8-bit image survives import and transparent export exactly in a 16-bit document; fully transparent tiles are not stored. | `png.rs::import_premultiplies_once_at_the_document_depth`, `…::sixteen_bit_images_keep_16_bits_or_round_to_the_nearest_level`, `…::eight_bit_images_survive_import_and_export_exactly_in_16_bit_documents` |
 
+## Colour (phase 5A, ADR 0021)
+
+| # | Invariant | Protected by |
+|---|---|---|
+| COL1 | Every `Color` (main, sub, recent, swatches, picks) is valid: finite channels in `0..=1`; every `Hsv` has a hue in `0..360`. Constructors clamp and map NaN to 0. | Private fields; `color::paint::tests::colors_are_always_valid`, `color/tests/properties.rs::colors_are_always_valid` |
+| COL2 | A stroke paints with the colour captured when it began; changing the colour during a stroke changes the next stroke only (preview and commit alike). | `brush::engine::tests::a_stroke_keeps_the_colour_it_began_with`; the app copies `ColorState::active` into `BrushEngine::color` only at pen-down |
+| COL3 | Erasing does not depend on the colour (free or preserved alpha, both depths). | `brush::stroke::tests::colour_never_changes_what_the_eraser_does`, `brush/tests/color_properties.rs::erasing_ignores_the_colour` |
+| COL4 | A stroke on a mask changes it by its alpha only: any hue with the same coverage gives the same mask (ADR 0017). | `brush::stroke::tests::alpha_channel_ignores_the_paint_colour`, `color_properties.rs::mask_strokes_ignore_the_colour` |
+| COL5 | Alpha lock with coloured paint never changes alpha and recolours source-atop (the reference's measured pixels within 1/255). | `properties.rs::preserved_alpha_never_changes_alpha` (8 and 16 bits, random colours), `brush::stroke::tests::preserved_alpha_recolours_like_the_reference` |
+| COL6 | The eyedropper never yields NaN, infinity or out-of-range channels; alpha 0 (or a non-number) has no colour and leaves the active colour unchanged. | `color::paint::tests::picking_unpremultiplies_safely`, `…::picking_garbage_never_gives_nan`, `color/tests/properties.rs::picking_never_yields_nan` |
+| COL7 | Stored pixels stay valid premultiplied (colour ≤ alpha) after coloured paint, at both depths. | `color_properties.rs::colored_paint_stays_valid_premultiplied`, `document::compose::tests::colored_preview_matches_commit_at_both_depths` |
+| COL8 | A colour representable at 8 bits paints the same in 8- and 16-bit documents within one 8-bit level (exactly at full coverage). | `document::compose::tests::colored_strokes_store_their_colour_at_both_depths` |
+
+P1–P3 also hold for coloured paint: `document::compose::tests::colored_preview_matches_commit_at_both_depths`
+(seven colours with independent channels × hard and soft/low-flow
+strokes × free and preserved alpha × Normal/Multiply × unclipped,
+clipped, on the base × 8 and 16 bits: 336 cases within 1/255). Colour
+state is not document state: nothing in COL1–COL8 touches the history
+(H6) or the file format (IO1).
+
 ## Integration (phase 4G)
 
 No new invariant: these rows record where the invariants above are

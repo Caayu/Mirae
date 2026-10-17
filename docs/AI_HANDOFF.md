@@ -8,9 +8,9 @@ conversation. Read it fully, then these, all **mandatory**:
 3. [PARITY.md](PARITY.md) — parity goal, states, the parity gate every
    subphase must pass, and the current matrix
 4. [STATUS.md](STATUS.md), [ROADMAP.md](ROADMAP.md), the report of the
-   last phase ([phase4/README.md](phase4/README.md)) and the proposal for
-   the next ([phase5/PROPOSAL.md](phase5/PROPOSAL.md); once the owner
-   approves a phase 5 plan, that plan replaces it here)
+   last phase ([phase4/README.md](phase4/README.md)), the phase-5 plan
+   ([phase5/PLAN.md](phase5/PLAN.md)) and its proposal
+   ([phase5/PROPOSAL.md](phase5/PROPOSAL.md))
 
 ## 1. Mission
 
@@ -34,10 +34,12 @@ workflow) and 4G (integration, benchmarks, hardening), each with a
 phase-4 parity summary). Report: [phase4/README.md](phase4/README.md).
 Facts: [STATUS.md](STATUS.md).
 
-**Phase 5 is proposed, not approved, not started**
-([phase5/PROPOSAL.md](phase5/PROPOSAL.md)). A new session starts by
-asking the owner which plan to follow; it never begins phase 5 (or any
-subphase of it) on its own.
+**Phase 5A (colour) is complete** (2026-10-17): a paint colour captured by
+each stroke, main/sub colours, a colour panel, the eyedropper, recent
+colours and swatches, with a parity gate ([parity/5A-color.md](parity/5A-color.md),
+ADR 0021). **5B–5G are proposed, not approved, not started**
+([phase5/PLAN.md](phase5/PLAN.md)). A new session asks the owner before
+starting 5B or anything else; it never begins a subphase on its own.
 
 ## 3. Repository
 
@@ -68,7 +70,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 401 tests, ~30 s after build
+cargo test --workspace --release        # 434 tests, ~35 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -132,7 +134,7 @@ never sees the document; the UI owns nothing. Read
 
 ## 11. Crates
 
-`color` (premultiplied color), `canvas` (sparse tiles, view), `brush`
+`color` (the paint colour `Color`, HSV, hex; premultiplied color, storage formats), `canvas` (sparse tiles, view), `brush`
 (engine), `document` (layer stack with stable ids, composition, history),
 `io` (`.mirae` files, PNG), `renderer` (wgpu), `tablet` (input, Windows
 Ink), `ui` (egui), `corpus` (goldens, benchmarks), `app` (binary `tela`;
@@ -171,6 +173,11 @@ easily broken:
 11. "Modified" is `document.revision() != saved` (H12): every new
     persistent change must either be a history step or bump the
     revision (as visibility does).
+12. Colour (ADR 0021, COL1–COL8): a stroke copies the active `Color` at
+    pen-down and never reads colour state again; the colour is opaque and
+    `f32` (no alpha, not premultiplied, not quantized before the commit);
+    colour state lives in the app, not in the document, the file or the
+    history; the eraser and mask strokes ignore the colour.
 
 ## 14. Architectural decisions
 
@@ -182,11 +189,11 @@ golden corpus, time-instant airbrush, document layer model, swap-based
 undo, blend modes measured against the reference, masks/clipping/alpha lock
 measured against the reference (0014–0017), 16-bit storage per document
 with an 8-bit default (0018), the `.mirae` v1 format (0019), the I/O crate
-and file workflow (0020).
+and file workflow (0020), the paint colour and colour tool state (0021).
 
 ## 15. Completed features
 
-Phases 1–4 + 3.5; see [STATUS.md](STATUS.md#features) and
+Phases 1–4 + 3.5 and subphase 5A; see [STATUS.md](STATUS.md#features) and
 [CHANGELOG.md](../CHANGELOG.md). Phase reports: [phase2](phase2/README.md),
 [phase3](phase3/README.md), [phase4](phase4/README.md) (phase 1 has no
 separate report; it is summarized in the changelog).
@@ -198,7 +205,7 @@ separate report; it is summarized in the changelog).
 optional), GPU texture size limit, undo history uncompressed in memory,
 UI edits not persisted, synchronous saving (no autosave), transparent
 export refused where D-4C-1 applies, goldens verified on one machine,
-the app paints black only, CPU composition single-threaded and linear in
+no transparent colour and colour palette not persisted (#35, #36), CPU composition single-threaded and linear in
 layers (#33), over-budget depth conversions hold both copies (#34).
 Memory model: [memory.md](memory.md).
 
@@ -212,6 +219,11 @@ Memory model: [memory.md](memory.md).
   version decision (docs/formats/mirae-v1.md, ADR 0019) and must keep
   the v1 fixtures loading.
 - The UI crate will grow; keep it free of authoritative state.
+- Someone else sometimes uses the development machine while an agent
+  drives it (seen in 4G and again in 5A: a new document and an export
+  dialog appeared in a running Mirae). Check the foreground window before
+  every synthetic click, never answer dialogs you did not open, and build
+  with a separate `CARGO_TARGET_DIR` if `tela.exe` is in use.
 
 ## 18. Hardware validated
 
@@ -237,11 +249,10 @@ layers), 12.4 ms (100), 44 ms (100 Soft Light).
 
 ## 21. Next steps
 
-1. Ask the owner whether the phase-5 proposal
-   ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)) is approved, changed or
-   replaced. Write the approved plan as `docs/phase5/PLAN.md` (as
-   [phase4/PLAN.md](phase4/PLAN.md) was) and follow it one subphase at a
-   time; never start a phase or subphase without explicit approval.
+1. Ask the owner whether 5B (or something else) is approved; record the
+   decision in [phase5/PLAN.md](phase5/PLAN.md) and follow it one
+   subphase at a time; never start a phase or subphase without explicit
+   approval.
 2. Close every subphase with its parity gate ([PARITY.md](PARITY.md)).
    Where the reference defines a behaviour (clipping, masks, alpha lock,
    blend results), observe it **before** implementing.

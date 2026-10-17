@@ -46,14 +46,14 @@ paint/
 
 | Crate | Owns | Must not |
 |---|---|---|
-| `tela-color` | `Rgba` (straight), `PremulRgba`, `over`, RGBA8/RGBA16 quantization, stored formats (`StoragePixel`, `PixelDepth`, `with_pixel_type!`), sRGB curves | know about space or devices |
+| `tela-color` | `Color` (the opaque paint colour, ADR 0021), `Hsv`, hex, `Rgba` (straight), `PremulRgba`, `over`, RGBA8/RGBA16 quantization, stored formats (`StoragePixel`, `PixelDepth`, `with_pixel_type!`), sRGB curves | know about space or devices |
 | `tela-canvas` | `TiledSurface<P>`, `Tile<P>`, `TileCoord`, `DirtyTiles`, `IRect`, `ViewTransform` | know about layers, colors or brushes |
 | `tela-brush` | the whole stroke engine up to the stroke mask | read devices, own documents, know UI/GPU |
 | `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay` | know brushes, input, view, GPU |
 | `tela-io` | the `.mirae` format (manifest DTOs, tile codec, limits, versioning), atomic save, hostile-input loading through `Document::from_parts`, PNG export of the composite and PNG import as layer pixels (ADR 0019, 0020) | know paths chosen by the user, dialogs, UI; change a document |
 | `tela-renderer` | GPU device/surface, display texture + mips, canvas shader, `FrameOverlay` | see the document |
 | `tela-tablet` | `TabletSample`/`TabletEvent`, unit normalization, input clock, Windows Ink | know brushes or canvas space |
-| `tela-ui` | brush panel, curve editor, egui plumbing | own authoritative state |
+| `tela-ui` | brush panel, colour panel, layer panel, document bar, curve editor, egui plumbing | own authoritative state |
 | `tela-corpus` | standard trajectories, `render_sheet`, image diff, goldens, `stamp_bench` | ship in the app |
 | `tela-app` | window/event loop, wiring, application state, the file workflow (native dialogs, unsaved-changes prompt, drag-and-drop) | implement engine logic or file formats |
 
@@ -68,13 +68,14 @@ All authoritative state lives in `tela-app`'s `App`:
 | `Document` (depth, layers, pixels) | `App.document` | Changed only through `Document` methods (ADR 0014): layer commands from the panel and shortcuts, `modify_tiles` + `StrokeBuffer::commit_tile` at the end of a stroke, `clear_layer`, `convert_depth` and the document bar (new document of either depth, ADR 0018). Every call returns the tiles it invalidated and is recorded in the document's undo history (ADR 0015). |
 | View (`ViewTransform`) | `App.view` | Screen↔canvas mapping. |
 | Presets being edited, selection, eraser mode | `App.tools` (`Tools`) | The UI edits the active preset in place, lent for one frame. |
-| User stroke settings, pressure curve, paint color | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
+| User stroke settings, pressure curve | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
+| Main/sub colour (active slot), recent colours, swatches; eyedropper tool and source | `App.colors` (`ColorState`), `App.picker`, `App.pick_source` | Session tool state (ADR 0021): not in the document, the file or the history. The active colour is copied into `BrushEngine::color` at pen-down. |
 | Stroke in progress | `BrushEngine` (its `StrokeBuffer`) | Separate from the layer until committed. |
 | Document file: path, saved revision, pending question, export choice | `App.file` (`FileState`) | Modified while `document.revision() != saved` (ADR 0020). |
 | GPU resources | `Renderer`, `UiLayer` | Derived; rebuilt from the document. |
 | Pen queue | `InkBackend` (`Rc<Shared>`) | Drained by the app each event. |
 
-The engine copies the preset and pressure curve when a stroke begins
+The engine copies the preset, the pressure curve and the paint colour when a stroke begins
 (`StrokeProcessor::begin_with`), so edits during a stroke apply to the next
 one. The renderer's texture is a cache of the composed document.
 
@@ -134,7 +135,7 @@ or per dab once buffers have grown (measured, see performance.md).
 
 ### Stroke lifecycle
 
-1. `begin_stroke(input, scale, seed)`: copies preset and pressure curve,
+1. `begin_stroke(input, scale, seed)`: copies preset, pressure curve and colour,
    resolves stroke settings (preset overrides over user settings), resets all
    stages, seeds `StrokeRng`, creates a `StrokeBuffer` with a `StampContext`
    (prepared tip, texture, anti-aliasing, paint/erase, parallel).
@@ -172,7 +173,10 @@ layer's alpha lock (`PixelAlpha::Preserved`) paint is source-atop
 layer mask the stroke's alpha applies to the reveal value: paint
 `a + m(1 − a)`, erase `a(1 − m)`, colour ignored (ADR 0017). Preview and commit
 share each rule (`paint_over_tile` / `commit_tile`, `paint_alpha_tile` /
-`commit_alpha_tile`; ADR 0003, invariants P2, M4, A3). The
+`commit_alpha_tile`; ADR 0003, invariants P2, M4, A3). The colour is an
+opaque `Color` `C` captured at stroke start; the source is `(C·m, m)`
+premultiplied, so colour, opacity (the ceiling), flow and coverage stay
+separate until this one product (ADR 0021, COL2–COL5). The
 stroke is the same f32 mask at every document depth; only the commit
 decodes and quantizes, once, to the layer's storage (`StoragePixel`,
 ADR 0018).
@@ -326,12 +330,32 @@ and a document replaces the current one only after it loaded completely.
 with every history step, undo, redo and visibility change and returns
 with undo/redo, so undoing to the saved state is clean again.
 
+## 8c. Colour and the eyedropper
+
+```
+ColorPanel (ui) ──ColorAction──► App.colors (ColorState: main, sub, active, recent, swatches)
+pen-down: BrushEngine::color = colors.active()  ──► StrokeBuffer (fixed for the stroke)
+eyedropper (tool, right-click, Alt):
+  screen ─view.to_canvas─► document pixel (x, y)
+     canvas: Document::composite_pixel (all visible layers over the paper, f32)
+     layer:  active layer's pixel ─► Color::from_premultiplied (None at alpha 0)
+  ─► colors.set_active; the final pick becomes a recent colour
+```
+
+The colour is `f32` from the panel, the eyedropper and HSV dragging to the
+commit, which quantizes once at the document depth; the panel shows it
+rounded to 8 bits. Nothing about colour is saved in the document or
+recorded in its history (ADR 0021).
+
 ## 9. UI overlay
 
 `tela-ui::UiLayer` runs egui each frame and implements the renderer's
 `FrameOverlay`, drawing after the canvas pass. The panel edits data lent
 through `PanelModel` and returns a `PanelAction` for things only the app
-can do (select preset, toggle eraser, clear layer). The layer panel on the
+can do (select preset, toggle eraser, clear layer). The colour panel gets a
+`ColorModel` (main, sub, active slot, recent colours, swatches, eyedropper
+state) and returns a `ColorAction`; its only own state is the HSV being
+edited and the hex text being typed (ADR 0021). The layer panel on the
 right receives one `LayerRow` per layer and returns a `LayerAction`; it
 never sees the `Document`. The UI reports the
 rectangles it covers; the app forwards them to the Ink backend as

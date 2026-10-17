@@ -11,7 +11,8 @@ already `opt-level = 1`, so plain `cargo test` also works, slower.) The full
 gate, including fmt, clippy, docs and the release build, is
 `scripts/check.ps1` (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
-Counts at the end of phase 4: **401 tests**, all passing (phase 3.5
+Counts at the end of phase 5A: **434 tests**, all passing (phase 4
+ended with 401, phase 3.5
 ended with 207, phase 3 with 188). GPU tests skip themselves when no
 adapter is available.
 
@@ -80,6 +81,11 @@ edits, conversions among random edits) and `depth_properties.rs`
 (widened 8-bit stacks compose identically, conversion keeps structure
 and undoes exactly, narrowing error, valid 16-bit composites, refused
 edits change nothing).
+Phase 5A adds `color/tests/properties.rs` (colours always valid, RGB ↔
+HSV round trips, hex format/parse and garbage text, picking never yields
+NaN, premultiply → pick returns the colour) and
+`brush/tests/color_properties.rs` (erasing and mask strokes ignore the
+colour, coloured paint stays valid premultiplied at both depths).
 
 ### Parity tests (measured reference data)
 
@@ -103,6 +109,13 @@ images (`crates/io/tests/reference/`) into a 1600 × 1200 document,
 exports, and compares every pixel with the reference's exports of the
 same steps (`docs/parity/4F/csp_*.png`; method in
 docs/parity/4F-file-workflow.md).
+
+Phase 5A (colour) keeps the reference's measurements as unit tests
+rather than a dataset: `composite_pixel_is_what_the_reference_eyedropper_picks`
+(canvas picks on the `color_probe` document), `preserved_alpha_recolours_like_the_reference`
+and `colored_paint_follows_the_documented_formula` (the 51 % stroke), the
+HSV readout in `color::paint::tests`; method in docs/parity/5A-color.md
+(`color_probe psd`, opened in the reference, picks read from the screen).
 
 Both parity tests also run in **16-bit documents** (phase 4E): the probe
 colours stored at 16-bit precision against the reference's 8-bit
@@ -211,6 +224,14 @@ To 8-bit, undo, redo, To 16-bit with the profile unchanged; alpha lock,
 clipping, mask erase/reveal and layer opacity in a 16-bit document;
 undo back through the conversion; synthetic-pen strokes in a 16-bit
 document (`docs/parity/4E-16bit.md`, "Running app").
+
+Phase 5A session (mouse and synthetic pen): swatch, hex and RGB entry;
+X, Swap, D; right-click, Alt+click and Alt + pen picks; a 51 % coloured
+stroke (144,201,234); coloured airbrush, chalk, calligraphy, marker;
+alpha-lock recolour; a clipped coloured layer through twelve blend
+modes; red vs blue mask strokes (identical); undo/redo; To 16-bit; layer
+picks of 8- vs 16-bit translucent paint; Save As, reopen, re-save
+(byte-identical); PNG export (`docs/parity/5A-color.md`, part 3).
 
 Phase 4G session (8- and 16-bit, mouse and synthetic pen): layers,
 Multiply, clipping, alpha lock, mask erase, undo/redo, Ctrl+S, Save As,

@@ -80,7 +80,7 @@ Status at the end of phase 4. "Debt" names the TECHNICAL_DEBT item;
 | D-4D-2 apply mask, mask from selection … | Yes | Open — phase 5C (selections) and debt #23 |
 | D-4D-3 delete-mask question | Yes | Open — with apply (debt #24) |
 | D-4D-4 mask rectangles with outside default | Yes | Accepted — unreachable (Mirae imports no PSD) |
-| D-4D-5 colour-dependent checks only by test | Yes | Open — colour picker (debt #22, phase 5A) |
+| D-4D-5 colour-dependent checks only by test | Yes (at 4G) | Open — colour picker (debt #22, phase 5A); **closed in 5A** |
 | D-4D-6 non-Normal base without paper | Yes | Open — with D-4C-1 |
 | D-4D-7 coverage gaps | Yes | Open (coverage) |
 | D-4D-8 panel markers | Yes | Accepted |

@@ -168,7 +168,7 @@ screen read at zoom ≈ 1.09 (`4E/tela_app_accumulation.txt`):
 | Undo | 12 undos walk back through opacity, mask strokes, mask, clip toggles, the new layer, lock toggles and the conversion to the earlier 8-bit state (centre 47, title 8-bit). |
 | Synthetic pen (16-bit) | `inject_pen … pressure`: pressure-ramped line and S-curve with tapers, as in 8-bit documents. |
 
-Colour-dependent checks remain test-only (the app paints black; D-4D-5).
+Colour-dependent checks remain test-only (the app paints black; D-4D-5). Update 5A: a coloured 51 % stroke at 16 bits shows the same pixels as at 8 bits in the running app, and layer picks at 16 bits are exact where 8-bit storage is a level off (parity record 5A).
 
 ### Differences
 

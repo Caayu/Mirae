@@ -83,6 +83,32 @@ table above for the parallel path).
 phase 4E: 0.107–0.110 ms),
 0 allocations in 840 tiles.
 
+### Phase 5A — colour
+
+Stamping never reads the colour (the stroke is an alpha mask); the colour
+enters only in `paint_over` (preview) and `commit_tile`, as one more
+multiply per channel that was already there (`paint.scale(m)`). Measured
+with `stamp_bench` (new table at the end of its output), soft 120 px
+stroke of 400 dabs, per touched tile:
+
+| depth | colour | preview (2-layer composition + overlay) | commit | allocations |
+|---|---|---:|---:|---:|
+| 8-bit | black | 0.111 ms | 0.280 ms | 0 |
+| 8-bit | 37,149,213 | 0.111 ms | 0.280 ms | 0 |
+| 16-bit | black | 0.111 ms | 0.324 ms | 0 |
+| 16-bit | 37,149,213 | 0.110 ms | 0.315 ms | 0 |
+
+Stamping after 5A, same machine (single thread, dabs/s), against the
+baseline run that opened 5A: hard 5 px 360 248 (371 305), hard 500 px 478
+(474), soft 500 px 411 (389), textured 500 px 247 (239), scatter 5 px
+345 455 (347 953); allocations per dab 0.000 everywhere; composition
+0.112 ms (0.141 ms in the baseline run): all within run-to-run noise. The
+airbrush uses the same stamping and commit; it is colour-independent by
+the same argument. The colour panel's picker is a 9 × 9 vertex-coloured
+mesh rebuilt per frame (no texture upload); not measurable at UI rate.
+An eyedropper pick composes the one tile under the cursor (the cost of a
+composed tile above, more with many layers: see 4G), only on click/drag.
+
 ### Phase 4A
 
 Composition reads layers through the new API and compares the overlay

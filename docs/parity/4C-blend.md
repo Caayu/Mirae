@@ -103,3 +103,15 @@ color-burn too.)
 | D-4C-4 | Only 8-bit sRGB documents compared; the reference's colour-managed documents were not probed. | Coverage | Open for colour management; 16-bit: the reference has no 16-bit documents (parity 4E, E1), and Tela's 16-bit documents match its 8-bit data within 2/255 (D-4E-7) |
 | D-4C-5 | Composition speed not compared with the reference (Tela measured only, `blend_bench`). | Coverage | Open |
 | D-4C-6 | Tela's blend-mode picker is a plain list; the reference's labels are Portuguese/its own naming. | UI | Accepted |
+
+## Update 5A — blend modes with colour in the running app
+
+Until 5A the app painted black, so blend modes were checked in the running
+app only through dark paint. In the 5A session (parity record 5A, part 3)
+a red layer clipped over coloured strokes was switched through Normal,
+Multiply, Screen, Overlay, Darken, Hard Light, Soft Light, Difference,
+Hue, Saturation, Color and Luminosity in the real layer panel; every
+measured screen value matched the published W3C formula for its inputs
+(e.g. Hue of red over blue 94,0,0; Luminosity 54,54,255; Overlay over the
+51 % stroke 163,147,213). The quantitative comparison with the reference
+remains `blend_parity.rs`; this confirms the app path, not new data.

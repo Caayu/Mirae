@@ -1,15 +1,16 @@
 # Status
 
-Factual state of the project at the end of **phase 4** (4G: integration
+Factual state of the project at the end of **phase 5A** (colour), after
+**phase 4** (4G: integration
 and hardening). The product is named **Mirae** (crates keep their `tela-` names). Update this file at the end of every subphase.
 
 ## Summary
 
 | | |
 |---|---|
-| Current phase | **Phase 4 complete** (4A–4G, parity gates recorded; [phase4/README.md](phase4/README.md)); phase 5 proposed ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)), **not started**, awaits the owner |
-| Parity | Tracked in [PARITY.md](PARITY.md) (phase-4 summary: validated, known differences, not measured); nothing compared with the reference before phase 4 |
-| Tests | **401** passing, 0 failing (4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Current phase | **Phase 5A (colour) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5A-color.md](parity/5A-color.md)); phase 4 complete ([phase4/README.md](phase4/README.md)); **5B–5G not approved, not started** |
+| Parity | Tracked in [PARITY.md](PARITY.md) (phase-4 summary; phase-5 matrix from 5A); nothing compared with the reference before phase 4 |
+| Tests | **434** passing, 0 failing (5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -29,7 +30,8 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 | Scatter | Perpendicular/radial, count, rotation and scale jitter, effector-driven amount |
 | Airbrush | Time instants independent of frame rate; rest detection with delivery-lag compensation; dwell-time flow while moving |
 | Eraser | Destination-out through the same engine; stylus eraser end switches automatically; `E` for the mouse |
-| UI | egui side panel: presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor |
+| UI | egui side panels: colour (main/sub, HSV picker, RGB/HSV/hex, eyedropper, recent colours, swatches), presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor; layers, document, history on the right |
+| Colour (5A) | Opaque `f32` paint colour without alpha captured by each stroke (ADR 0021); main/sub with an active slot (`X`), Swap, reset to black on white (`D`); HSV square + hue bar, RGB 0–255, HSV, `#RRGGBB`; eyedropper on the composite over the paper or the active layer (tool, right-click, Alt, also with the pen), document pixel at any zoom; recent colours (newest first, unique, 24) and swatches (session only); alpha lock, clipping, masks, blend modes and eraser behave with colour as measured; HSV readout, 51 % stroke, canvas picks and alpha-lock pixels match the reference |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
 | Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile (2 layers); per tile with every layer drawing: 1.6 ms (10 Normal layers), 12.4 ms (100), 44 ms (100 Soft Light); 0 allocations in composition ([performance.md](performance.md), [memory.md](memory.md)) |
 | Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. no file I/O |
@@ -57,7 +59,24 @@ document size bounded by GPU texture size; undo history uncompressed in memory;
 saving and loading synchronous (no autosave, recent files or background
 save); transparent export refused for non-Normal stack blending (D-4C-1);
 CPU composition single-threaded and linear in layers (TECHNICAL_DEBT #33);
-the app paints black only; preset edits not persisted; UI unpolished.
+no transparent colour, palette not persisted (debt #35, #36); preset edits
+not persisted; UI unpolished.
+
+## Phase 5A outcome
+
+Colour, with the reference observed first (O1–O19: two slots of which
+one paints, `X`, integer RGB/HSV, 6-digit hex without alpha, colour
+changes outside the history, recent colours from strokes and picks, the
+eyedropper on the displayed composite or the layer at the document pixel)
+and a parity gate ([parity/5A-color.md](parity/5A-color.md)). `Color`
+(opaque, `f32`, no alpha) captured by each stroke with an explicit
+`(C·m, m)` rule (ADR 0021); app-owned colour state; a colour panel; the
+eyedropper. Matches the reference on the HSV readout, a 51 % coloured
+stroke (144,201,234), canvas picks on the probe and the alpha-lock
+recolour pixels; the colour-dependent 4C/4D app checks are done
+(D-4D-5 closed). Colour costs nothing measurable. Remaining: D-5A-1…8
+(no transparent colour, 8-bit layer picks at low alpha, rounding vs
+truncation, no wheel/HLS/Lab/CMYK/colour sets, palette not persisted).
 
 ## Phase 4G outcome
 
@@ -145,8 +164,7 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-Phase 4 is complete. Phase 5 is **proposed, not started**:
-[phase5/PROPOSAL.md](phase5/PROPOSAL.md) (recommended: editing
-fundamentals — colour, layer workflow with the translucent-backdrop probe
-and merge down, selections, transform, fill, gradients). Nothing of it
-begins until the owner approves the proposal and then each subphase.
+Phase 5A is complete. The next subphase in the proposal is **5B** (layer
+workflow with the translucent-backdrop probe and merge down;
+[phase5/PROPOSAL.md](phase5/PROPOSAL.md)). It is **not approved and not
+started**: nothing begins until the owner approves it.
