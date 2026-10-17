@@ -11,7 +11,7 @@ conversation. Read it fully, then these, all **mandatory**:
    last phase ([phase4/README.md](phase4/README.md)), the phase-5 plan
    ([phase5/PLAN.md](phase5/PLAN.md)) and its proposal
    ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)), and the last subphase's parity
-   record ([parity/5D-transform.md](parity/5D-transform.md))
+   record ([parity/5E-fill.md](parity/5E-fill.md))
 
 ## 1. Mission
 
@@ -58,9 +58,18 @@ resampler measured and reproduced (Keys cubic a = −1 premultiplied,
 pyramid, rounded axis-aligned edges, distance-anti-aliased rotated
 edges; nearest neighbour); with a parity gate
 ([parity/5D-transform.md](parity/5D-transform.md)).
-**5E–5G are proposed, not approved, not started**
+**Phase 5E (fill) is complete** (2026-10-17): the bucket (G) and Edit ›
+Fill (Alt+Delete) with the reference's measured rules — a 4-connected
+flood compared with the seed's colour by the largest straight channel
+difference (colour ignored at alpha 0), threshold
+`min(round(2.55 t), 254)`, the anti-aliased 4-adjacent edge, the edited
+layer or the composite without paper as reference (separate from the
+target), the selection limiting connectivity, alpha lock, masks — as one
+history step, through a sparse span flood (ADR 0026); with a parity gate
+([parity/5E-fill.md](parity/5E-fill.md)).
+**5F–5G are proposed, not approved, not started**
 ([phase5/PLAN.md](phase5/PLAN.md)). A new session asks the owner before
-starting 5E or anything else; it never begins a subphase on its own.
+starting 5F or anything else; it never begins a subphase on its own.
 
 ## 3. Repository
 
@@ -91,7 +100,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 537 tests, ~60 s after build
+cargo test --workspace --release        # 574 tests, ~60 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -113,6 +122,7 @@ cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit ba
 cargo run --release -p tela-corpus --example layer_bench        # merge down, reorder, rename, memory; ~10 s
 cargo run --release -p tela-corpus --example selection_bench    # selections: shapes, operators, feather, outline, strokes, memory; ~15 s
 cargo run --release -p tela-corpus --example transform_bench    # transforms: source, preview, commit, undo, memory, 256²–4096²; ~3 min (--quick ~25 s)
+cargo run --release -p tela-corpus --example fill_bench         # fills: region, paint, undo, tiles read/written, memory, 256²–4096²; ~1 min (--quick ~5 s)
 cargo run --release -p tela-brush --example stabilizer_bench
 cargo run --release -p tela-brush --example interpolation_bench
 ```
@@ -144,7 +154,9 @@ link step fails with "Acesso negado". Ctrl+Shift+S never reaches the
 app on this machine (another program holds it as a global hotkey; so does
 Ctrl+Shift+I, checked with `RegisterHotKey` in 5C: test Invert with its
 button); use
-Shift+Alt+S for Save As.
+Shift+Alt+S for Save As. `keybd_event` without the extended-key flag sends
+Delete (and the other navigation keys) as their numpad twins: the app
+matches such shortcuts on the logical key (5E, Alt+Delete).
 
 ## 10. Architecture in brief
 
@@ -229,6 +241,16 @@ easily broken:
     (bit-exact). The resampler is the reference's measured one
     (`transform::parity` keeps it): never change the kernel, the pyramid
     rule, the edge rounding or the edge anti-aliasing without new probes.
+16. Fill (ADR 0026, FL1–FL10; "F1–F3" are the performance invariants):
+    the region rule is the reference's measured one (`fill::parity` keeps
+    it): 4-connected, compared with the seed, largest straight channel
+    difference, alpha alone at alpha 0, `min(round(2.55 t), 254)`, the
+    4-adjacent anti-aliased edge `(1 − d)/(1 − T)`; the selection limits
+    connectivity. The reference (target or composite without paper) is
+    separate from the target. A fill is one step (none for a no-op), never
+    writes outside its domain, quantizes once at the depth and keeps the
+    document sparse; the flood is iterative (no recursion) over per-tile
+    distance maps.
 
 ## 14. Architectural decisions
 
@@ -242,11 +264,11 @@ measured against the reference (0014–0017), 16-bit storage per document
 with an 8-bit default (0018), the `.mirae` v1 format (0019), the I/O crate
 and file workflow (0020), the paint colour and colour tool state (0021),
 blending over translucent backdrops (0022), merge down and the layer
-workflow (0023), selections (0024), transforms (0025).
+workflow (0023), selections (0024), transforms (0025), fill (0026).
 
 ## 15. Completed features
 
-Phases 1–4 + 3.5 and subphases 5A, 5B, 5C, 5D; see [STATUS.md](STATUS.md#features) and
+Phases 1–4 + 3.5 and subphases 5A, 5B, 5C, 5D, 5E; see [STATUS.md](STATUS.md#features) and
 [CHANGELOG.md](../CHANGELOG.md). Phase reports: [phase2](phase2/README.md),
 [phase3](phase3/README.md), [phase4](phase4/README.md) (phase 1 has no
 separate report; it is summarized in the changelog).
@@ -262,7 +284,8 @@ no transparent colour and colour palette not persisted (#35, #36), CPU compositi
 layers (#33), over-budget depth conversions hold both copies (#34),
 selection gaps (#37–#39: no reselect/saved selections, lasso smoothing,
 more selection tools), transforms of whole large layers slow on one core
-and the rotated-edge and interpolation gaps (#40, #41).
+and the rotated-edge and interpolation gaps (#40, #41), fill gaps (no gap
+closing or area scaling, #42).
 Memory model: [memory.md](memory.md).
 
 ## 17. Risks
@@ -305,7 +328,7 @@ layers), 12.4 ms (100), 44 ms (100 Soft Light).
 
 ## 21. Next steps
 
-1. Ask the owner whether 5E (or something else) is approved; record the
+1. Ask the owner whether 5F (or something else) is approved; record the
    decision in [phase5/PLAN.md](phase5/PLAN.md) and follow it one
    subphase at a time; never start a phase or subphase without explicit
    approval.

@@ -52,7 +52,11 @@ What matters is where it sits in the architecture.
    size (`HANDLE`), the rotation handle and the pivot's cross from points
    the app mapped to the screen; the app hit-tests the same points.
    `apply_transform_prompt` asks "Apply the transform?" (Yes / No /
-   Cancel) as the other prompts do.
+   Cancel) as the other prompts do. The fill panel (`fill_panel`, phase
+   5E) receives a `FillModel` (the tool active, canvas or layer
+   reference, tolerance in percent, anti-aliasing, whether a selection
+   exists) and returns a `FillAction`; it knows no document types (the
+   app converts to `FillReference` and `Tolerance`).
 3. **Commands the UI cannot fulfil are returned, not executed.**
    `BrushPanel::show` returns a `PanelAction` (`SelectPreset`,
    `ToggleEraser`, `ClearLayer`, `Layer(..)`); the app applies it. The layer

@@ -147,6 +147,18 @@ and pins the rotated edge ring (D-5D-1, D-5D-2). To re-measure:
 `transform_probe decode`/`fit` (every scored model stays selectable by
 environment variables, see the example's header).
 
+`document::fill::parity` (phase 5E) fills the probe documents' ink layers
+(`crates/document/tests/reference/fill/`, see its README) at both depths
+and compares: which of 1 568 islands each fill reached at 16 tolerances
+(and the chain's end) and of 1 005 transparency islands at five, the
+decoded anti-aliased edges, a fill through a feathered selection, alpha
+lock and Edit › Fill; it pins the two 8-bit threshold islands (D-5E-1).
+`document::fill_properties` checks the span flood against an independent
+breadth-first flood and FL1–FL8 on random images. To re-measure:
+`fill_probe psd`, the steps in docs/parity/5E-fill.md, `fill_probe
+fit`/`aa`/`corpus` (every scored distance model is listed in the
+example).
+
 ### End-to-end tests (phase 4G)
 
 `crates/corpus/tests/` drives the whole stack through public APIs as the

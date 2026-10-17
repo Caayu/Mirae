@@ -3,6 +3,42 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 5E — fill
+
+Approved alone (5F–5G not started). The reference was observed first and
+a parity gate recorded ([docs/parity/5E-fill.md](docs/parity/5E-fill.md)).
+537 → 574 tests.
+
+### Added
+- `fill_probe`; the reference's fills of our own documents (island
+  classifications at every tolerance, decoded captures) kept as test data
+  (dc7a147).
+- `tela_document::fill` (ADR 0026): `Tolerance`, `FillReference`
+  (the target or the composite without paper), `FillTarget`, `FillPaint`
+  (colour, erase), `ConnectedFill`, `FillRegion`, `FillStats`;
+  `Document::fill_region`, `fill_connected`, `fill_selection`;
+  `HistoryAction::Fill`; the measured region rule, anti-aliased edge and
+  paint rules; a sparse span flood over per-tile distance maps (e7f6928).
+- `fill_bench`; row runs by words in the flood and an exact opaque-tile
+  shortcut in the paint (227801f).
+- App: the fill tool (G), the fill panel (Bucket, Fill selection / Fill
+  layer, refer to Layer / Canvas, AA, tolerance), Alt+Delete, the eraser
+  end / E erasing with the bucket; `tela-ui`: `fill_panel` (b5e90d7).
+- Fills in the history property test, the randomized sessions (7a532c9),
+  property tests against a breadth-first flood, parity tests, 4096² stress
+  tests; invariants FL1–FL10; ADR 0026.
+
+### Changed
+- `Document`'s tile and mask edits are split into an unrecorded edit and
+  its recording (no behaviour change), so a fill records its own action
+  only when something changed (e7f6928).
+- The end-to-end stroke oracle compares a stroke up to its layer when a
+  visible blend layer above it could amplify the commit's quantization
+  (the note on I2) (7a532c9).
+- New debt #42 (fill gaps: gap closing, area scaling, options; large
+  composite fills synchronous); #36 partly worked around (the bucket
+  erases with the eraser end or E).
+
 ## Phase 5D — transform
 
 Approved alone (5E–5G not started). The reference was observed first and

@@ -49,11 +49,11 @@ paint/
 | `tela-color` | `Color` (the opaque paint colour, ADR 0021), `Hsv`, hex, `Rgba` (straight), `PremulRgba`, `over`, RGBA8/RGBA16 quantization, stored formats (`StoragePixel`, `PixelDepth`, `with_pixel_type!`), sRGB curves | know about space or devices |
 | `tela-canvas` | `TiledSurface<P>`, `Tile<P>`, `TileCoord`, `DirtyTiles`, `IRect`, `ViewTransform`, `TileCoverage` (a borrowed per-tile coverage: how much an edit may change each pixel) | know about layers, colors or brushes |
 | `tela-brush` | the whole stroke engine up to the stroke mask | read devices, own documents, know UI/GPU |
-| `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay`; the selection (`Selection`: shapes, operators, feather, outline; ADR 0024); transforms (`TransformSource`, `TransformParams`, the measured resampler; ADR 0025) | know brushes, input, view, GPU |
+| `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay`; the selection (`Selection`: shapes, operators, feather, outline; ADR 0024); transforms (`TransformSource`, `TransformParams`, the measured resampler; ADR 0025); fill (`FillRegion`, `ConnectedFill`, the measured region rule and a sparse span flood; ADR 0026) | know brushes, input, view, GPU |
 | `tela-io` | the `.mirae` format (manifest DTOs, tile codec, limits, versioning), atomic save, hostile-input loading through `Document::from_parts`, PNG export of the composite and PNG import as layer pixels (ADR 0019, 0020) | know paths chosen by the user, dialogs, UI; change a document |
 | `tela-renderer` | GPU device/surface, display texture + mips, canvas shader, `FrameOverlay` | see the document |
 | `tela-tablet` | `TabletSample`/`TabletEvent`, unit normalization, input clock, Windows Ink | know brushes or canvas space |
-| `tela-ui` | brush panel, colour panel, selection panel and outline (marching ants), transform panel and box, layer panel, document bar, curve editor, prompts, egui plumbing | own authoritative state |
+| `tela-ui` | brush panel, colour panel, selection panel and outline (marching ants), fill panel, transform panel and box, layer panel, document bar, curve editor, prompts, egui plumbing | own authoritative state |
 | `tela-corpus` | standard trajectories, `render_sheet`, image diff, goldens, `stamp_bench` | ship in the app |
 | `tela-app` | window/event loop, wiring, application state, the file workflow (native dialogs, unsaved-changes prompt, drag-and-drop) | implement engine logic or file formats |
 
@@ -67,9 +67,10 @@ All authoritative state lives in `tela-app`'s `App`:
 |---|---|---|
 | `Document` (depth, layers, pixels) | `App.document` | Changed only through `Document` methods (ADR 0014): layer commands from the panel and shortcuts, `modify_tiles` + `StrokeBuffer::commit_tile` at the end of a stroke, `clear_layer`, `convert_depth` and the document bar (new document of either depth, ADR 0018). Every call returns the tiles it invalidated and is recorded in the document's undo history (ADR 0015). |
 | View (`ViewTransform`) | `App.view` | Screen↔canvas mapping. |
-| Presets being edited, eraser mode; the canvas tool (brush, eyedropper, selection) | `App.tools` (`Tools`), `App.tool` (`CanvasTool`) | The UI edits the active preset in place, lent for one frame. |
+| Presets being edited, eraser mode; the canvas tool (brush, eyedropper, selection, move, fill) | `App.tools` (`Tools`), `App.tool` (`CanvasTool`) | The UI edits the active preset in place, lent for one frame. |
 | Selection (which pixels edits may change) | `App.document` (`Document::selection`) | Document state and history steps, not saved (ADR 0024). |
 | Selection tool settings (shape, mode, anti-aliasing per shape, feather strength), the shape being dragged, the traced outline | `App.selection` (`SelectionTool`), `App.selection_drag`, `App.outline` | Session tool state and presentation caches (`app::selecting`). |
+| Fill tool settings (reference: layer or canvas, tolerance, anti-aliasing) | `App.fill_tool` (`FillTool`) | Session tool state (`app::filling`); a fill itself is one document step (ADR 0026). |
 | A transform in progress (its source, its edits, the handle being dragged), transform tool settings (keep aspect, interpolation), the question "Apply the transform?" | `App.transform` (`TransformSession`), `App.transform_tool` (`TransformTool`), `App.transform_exit` | Session state (`transforming`, `app::transform`): never in the document, its history or its file until committed (ADR 0025). |
 | User stroke settings, pressure curve | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
 | Main/sub colour (active slot), recent colours, swatches; eyedropper tool and source | `App.colors` (`ColorState`), `App.picker`, `App.pick_source` | Session tool state (ADR 0021): not in the document, the file or the history. The active colour is copied into `BrushEngine::color` at pen-down. |
@@ -417,6 +418,32 @@ the same stored tile, the commit is the preview quantized once (TR4).
 During a session the app routes the canvas to it; another layer or tool
 asks "Apply the transform?"; file commands wait.
 
+## 8f. Fill
+
+```
+bucket (G): press ─seed_at(view, screen point)─► document pixel (x, y)
+  Document::fill_connected(FillTarget { layer, part }, ConnectedFill { seed, reference, tolerance, anti_alias }, FillPaint)
+    paint_target(layer, part)                         refused: hidden, locked, missing/disabled mask
+    fill_region (read-only):
+      reference tile ─► u16 distance map, built on first use (uniform tiles: one value)
+        Target: the layer's pixels (or the mask's values)   Composite: compose_tile_transparent_into (no paper)
+        d = max |Δ straight R, G, B, A| from the seed (alpha alone at alpha 0); off canvas/selection: FAR
+      span flood (explicit stack) over per-tile bitsets: d ≤ min(round(2.55 t), 254) levels, 4-connected
+      anti-aliased edge: 4-adjacent excluded pixels, (1 − d)/(1 − T)
+    apply: per tile, coverage × selection coverage ─► over / source-atop (alpha lock) / erase; mask reveal/hide
+           quantized once at the depth; only changed tiles kept and returned; one HistoryAction::Fill step
+Edit › Fill (Alt+Delete, panel): Document::fill_selection: the selection's bounds (coverage scales) or the canvas
+```
+
+The rules are the reference's, measured (ADR 0026, parity record 5E):
+the reference (what decides the region) is separate from the target (what
+changes), so an empty layer can be filled from line art on another layer
+through the composite, which is the compositor's own composite without
+the paper. Nothing is materialized while flooding: absent and one-colour
+tiles cost a value, other reached tiles a 128 KiB distance map and an
+8 KiB bitset. A fill is immediate (no preview), synchronous, one step;
+the tool's settings are app session state (`App.fill_tool`).
+
 ## 9. UI overlay
 
 `tela-ui::UiLayer` runs egui each frame and implements the renderer's
@@ -464,8 +491,9 @@ history and files together. See [golden-tests.md](../golden-tests.md),
 ## 12. Architectural limits (today)
 
 - Flat layer stack (no groups; clipping groups only); masks without apply/mask-from-selection; 17 blend modes; merge down only (no merge visible, flatten or merge selected).
-- Selections: rectangle, ellipse, lasso, four operators, select all, invert, feather; no polyline, magic wand, colour range, quick mask, selection pen, expand/shrink, reselect, copy/paste or fill (ADR 0024, parity record 5C).
+- Selections: rectangle, ellipse, lasso, four operators, select all, invert, feather; no polyline, magic wand, colour range, quick mask, selection pen, expand/shrink, reselect or copy/paste (ADR 0024, parity record 5C); fill through a selection since 5E.
 - Transforms: move, scale, rotate, flip of one layer (or its selected part) with its mask; bicubic (the reference's default) and nearest neighbour; no free distortion, perspective, mesh, multi-layer or folder transforms, no bilinear or "average colours" modes; the resampler runs on one core (~64 ns per destination pixel: whole 4096² layers preview at ~1 frame per second; ADR 0025, debt #40).
+- Fill: the bucket (connected, 4-neighbour, tolerance, the layer or the composite as reference, anti-aliased edge) and Edit › Fill, as the reference measures them; no gap closing, area scaling, non-contiguous fill, reference-layer modes or gradients; synchronous on one core (a whole 4096² background through the composite ~0.27 s; ADR 0026, debt #42).
 - Undo history is in memory only, uncompressed, 256 KiB (8-bit) or 512 KiB (16-bit) per changed tile per step (ADR 0015, 0018).
 - 8- or 16-bit layer storage per document, 8-bit masks, 8-bit display (no dithering, no HDR); display texture limited to the GPU's max texture size.
 - Composition is CPU, single-threaded and linear in layers, with no cache below the stroke target: ~12 ms per 256² tile for 100 overlapping Normal layers, ~44 ms for 100 Soft Light (4G, TECHNICAL_DEBT #33).

@@ -10,7 +10,7 @@ nothing else is started.
 | 5B Layer workflow + D-4C-1 probe, merge down | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5B-transparent-compositing.md](../parity/5B-transparent-compositing.md); [ADR 0022](../adr/0022-blending-over-translucent-backdrops.md), [ADR 0023](../adr/0023-merge-down-and-layer-workflow.md) |
 | 5C Selections | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5C-selection.md](../parity/5C-selection.md); [ADR 0024](../adr/0024-selections.md) |
 | 5D Transform | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5D-transform.md](../parity/5D-transform.md); [ADR 0025](../adr/0025-transform.md) |
-| 5E Fill | **Approved 2026-10-17, in progress** | below; [parity/5E-fill.md](../parity/5E-fill.md) |
+| 5E Fill | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5E-fill.md](../parity/5E-fill.md); [ADR 0026](../adr/0026-fill.md) |
 | 5F Gradients | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 | 5G Integration | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 
@@ -161,3 +161,50 @@ and folder transforms, copy/cut/paste, fill, gradients, GPU transforms.
 Implemented as decided; gate recorded in [PARITY.md](../PARITY.md) and
 [parity/5D-transform.md](../parity/5D-transform.md). Tests 503 → 537.
 Remaining differences: D-5D-1…11. 5E not started.
+
+## 5E — Fill (approved brief, summarized)
+
+Professional raster fill: a connected (bucket) fill from a seed and a fill
+of the whole selection, tolerance, the active layer or the composed canvas
+as the reference (separate from the target), the selection respected
+(including feather), alpha lock, layer masks, 8 and 16 bits, one undo
+step, a parity gate; deterministic, transactional, sparse (no
+materialization of the canvas, only changed tiles written), no recursion,
+large canvases measured. The reference observed first for every rule
+(30 probes listed in the brief: closed/open areas, transparency, partial
+alpha, tolerance levels, RGB and alpha differences, references, selection
+and feather, alpha lock, mask, clipping, opacity, blend mode, locked,
+hidden, undo/redo, outside the canvas, zoom, rotation, transparent colour,
+Edit › Fill, shortcuts); connectivity and the distance measured, not
+assumed; the composite through the real compositor; property, randomized
+(against an independent flood), stress and performance tests; a real-app
+session; invariants FL1–FL10 (F1–F10 in the brief), ADR, the gate. Out of
+scope: gradients, magic wand, advanced gap closing and area scaling, the
+full reference-layer system, multiple reference layers, vector, gradient
+or pattern fills, GPU or asynchronous fill, the transparent colour slot.
+
+### Decisions (details in ADR 0026)
+
+| # | Decision | Reason |
+|---|---|---|
+| E1 | `fill_connected` (bucket) and `fill_selection` (Edit › Fill: the selection, or the canvas) share one `FillRegion` type and the paint step; `fill_region` computes a region read-only | The brief's two concepts, not mixed; BK1, BK32 |
+| E2 | `FillReference::{Target, Composite}` separate from `FillTarget {layer, part}`; the composite is `compose_tile_transparent_into` (without the paper) | BK2, BK3, BK25, BK29, BK30; no parallel compositor |
+| E3 | 4-connected flood, compared with the seed, largest straight channel difference, alpha alone at alpha 0, threshold `min(round(2.55 t), 254)` | 0 misfits on 31 captures (BK5–BK14); eight other distances rejected |
+| E4 | The domain is the canvas and the selection's coverage > 0 (the selection limits connectivity); its coverage scales the fill | BK26–BK28 |
+| E5 | Anti-aliasing: the 4-adjacent excluded ring at `(1 − d)/(1 − T)` | Within 2/255 on 1 777 islands (BK15–BK17) |
+| E6 | The brush commit's paint rules (over, source-atop with alpha lock, erase not stopped by the lock, mask reveal/hide); nothing baked from layer properties | BK19–BK25 |
+| E7 | Distances on a 16-bit scale; colour `f32` to one quantization | 8-bit exact as the reference's integers; 16-bit never through 8 bits |
+| E8 | Span flood with an explicit stack over lazily built per-tile `u16` distance maps and bitsets; runs along tile rows by words | No recursion; absent and uniform tiles cost nothing; measured 17× faster than per pixel |
+| E9 | One `Fill` step; none when nothing changes | H6 (the reference records an empty step, D-5E-4) |
+| E10 | App: G, a press fills under the cursor through the view, the eraser end / E erases, Alt+Delete, a fill panel; defaults canvas, 10 %, AA on | BK2–BK4, BK24, BK32–BK35; no transparent colour slot (debt #36) |
+| E11 | No gap closing or area scaling | The brief; recorded as D-5E-2, debt #42 |
+| E12 | Invariants FL1–FL10 | F1–F3 name the performance invariants |
+
+### Outcome
+
+Implemented as decided; gate recorded in [PARITY.md](../PARITY.md) and
+[parity/5E-fill.md](../parity/5E-fill.md). Tests 537 → 574. Every
+measured island and edge reproduced (16-bit exactly, 8-bit except two
+translucent islands on a threshold); a whole empty 4096² layer fills in
+~32 ms, a 4096² background around line art through the composite in
+~0.27 s. Remaining differences: D-5E-1…9. 5F not started.

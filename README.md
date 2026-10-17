@@ -9,7 +9,8 @@ is original ([docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md)).
 architecture audit, and layers and document: layer stack, undo/redo,
 blend modes, masks, clipping, alpha lock, 16-bit storage, `.mirae`
 files and PNG, integration). Phase 5 (editing fundamentals) is under way:
-5A (colour) is complete; nothing after it is started. 434 tests
+5A (colour), 5B (layer workflow), 5C (selections), 5D (transform) and 5E
+(fill) are complete; nothing after them is started. 574 tests
 passing. Windows is the
 primary platform (Windows Ink); no physical tablet has been validated yet.
 Details: [docs/STATUS.md](docs/STATUS.md).
@@ -53,7 +54,13 @@ Rectangle, Ellipse, Lasso), the selection mode (New, Add, Sub, Int),
 anti-aliasing per shape, and holds All, None, Invert and Feather (a
 strength in pixels). A selection limits every stroke (paint, erase, mask)
 until it is removed; it is shown with marching ants, is part of undo and
-is not saved in documents. The transform panel below it starts a
+is not saved in documents. The fill panel below it picks the bucket
+(G: a click fills the connected area of similar colour with the colour;
+the pen's eraser end or eraser mode clears it), what decides the area
+(the edited layer, or the visible canvas without the paper), the
+tolerance and anti-aliasing, and fills the whole selection, or the layer
+(Fill selection, Alt+Delete); a fill is one undo step. The transform
+panel below it starts a
 transform of the active layer, or of the selected part of it, with its
 mask (Transform, Ctrl+T), the Move tool, and flips; during a transform
 a box with handles appears: drag inside to move, outside or the round
@@ -64,13 +71,15 @@ discards it. The pen works on the panels too.
 
 | Input | Action |
 |---|---|
-| Left drag / pen | Paint (pen eraser end erases); picks the colour when the eyedropper is on; draws a selection with the selection tool |
+| Left drag / pen | Paint (pen eraser end erases); picks the colour when the eyedropper is on; draws a selection with the selection tool; fills with the fill tool |
 | M / B | Selection tool / brush |
 | Shift, Alt, Shift+Alt at the press (selection tool) | Add, subtract, intersect; Shift during the drag: square |
 | Ctrl+A, Ctrl+D, Ctrl+Shift+I | Select all, deselect, invert the selection |
 | Esc | Cancel the selection being drawn; discard a transform |
 | Ctrl+T, Enter | Transform the layer (or the selection); apply it |
 | K | Move tool (drag moves the layer or the selection) |
+| G | Fill tool (bucket): a click fills the connected area under it |
+| Alt+Delete | Fill the selection, or the whole layer without one |
 | Ctrl+Z, Ctrl+Y during a transform | Undo, redo its last edit |
 | Right-click, or Alt + click / pen (not with the selection tool) | Pick the colour shown under the cursor |
 | X | Paint with the other colour (main ↔ sub) |
@@ -120,17 +129,17 @@ enforced by a test. Read [docs/architecture/ARCHITECTURE.md](docs/architecture/A
 | `tela-color` | The paint colour (`Color`, HSV, hex), straight/premultiplied RGBA, Porter-Duff over, 8/16-bit storage formats, sRGB |
 | `tela-canvas` | Sparse 256×256 tiles, dirty sets, view transform |
 | `tela-brush` | Presets (versioned JSON), effectors, stabilizers, interpolation, spacing, tips, textures, scatter, airbrush, stroke buffer |
-| `tela-document` | Layer stack, masks, clipping, blend modes, 8/16-bit storage, undo/redo, per-tile composition |
+| `tela-document` | Layer stack, masks, clipping, blend modes, 8/16-bit storage, undo/redo, per-tile composition, selections, transforms, fill |
 | `tela-io` | `.mirae` documents (save atomically, load hostile input safely), PNG import/export |
 | `tela-renderer` | wgpu presentation: mipmapped display texture, overlay hook |
 | `tela-tablet` | Input samples, Windows Ink backend, input clock |
-| `tela-ui` | egui panels (colour, brush, layers, document, history), curve editor, prompts |
+| `tela-ui` | egui panels (colour, selection, fill, transform, brush, layers, document, history), curve editor, prompts |
 | `tela-corpus` | Golden brush sheets, image diff, stamping benchmark |
 | `tela-app` | Window, event loop, wiring (binary `tela`) |
 
 ## Tests
 
-434 tests: unit, integration, property (`proptest`), golden images of every
+574 tests: unit, integration, property (`proptest`), golden images of every
 built-in preset, GPU display tests (skipped without a GPU) and crate
 boundary checks, file-format corruption and compatibility tests, parity
 tests against data measured in the reference, and end-to-end sessions
@@ -149,7 +158,7 @@ examples (`scripts\check.ps1 -Bench` runs the gating ones). See
 | [docs/PARITY.md](docs/PARITY.md) | Parity with the reference, per subsystem |
 | [docs/performance.md](docs/performance.md), [docs/memory.md](docs/memory.md) | Hot paths and current numbers; memory model |
 | [docs/STATUS.md](docs/STATUS.md), [docs/ROADMAP.md](docs/ROADMAP.md), [docs/TECHNICAL_DEBT.md](docs/TECHNICAL_DEBT.md) | Where the project stands and goes |
-| [docs/phase5/PLAN.md](docs/phase5/PLAN.md) | Phase 5 plan: 5A done, the rest proposed |
+| [docs/phase5/PLAN.md](docs/phase5/PLAN.md) | Phase 5 plan: 5A–5E done, the rest proposed |
 | [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md), [CHANGELOG.md](CHANGELOG.md) | How to work on it; history |
 | [docs/phase2/](docs/phase2/README.md), [docs/phase3/](docs/phase3/README.md), [docs/phase4/](docs/phase4/README.md) | Phase reports with evidence |
 
@@ -160,7 +169,7 @@ examples (`scripts\check.ps1 -Bench` runs the gating ones). See
 - [x] Phase 3 — brush presets, effectors, tips, textures, airbrush, eraser ([report](docs/phase3/README.md))
 - [x] Phase 3.5 — architecture audit, boundaries, documentation, handoff
 - [x] Phase 4 — layers, blend modes, undo/redo, masks, 16-bit storage, document I/O, integration ([report](docs/phase4/README.md))
-- [ ] Phase 5 — editing fundamentals: [x] 5A colour; [x] 5B layer workflow; proposed: selections, transform, fill, gradients ([plan](docs/phase5/PLAN.md))
+- [ ] Phase 5 — editing fundamentals: [x] 5A colour; [x] 5B layer workflow; [x] 5C selections; [x] 5D transform; [x] 5E fill; proposed: gradients, integration ([plan](docs/phase5/PLAN.md))
 - [ ] Later — layer folders, vector layers, rulers/symmetry/perspective, advanced brushes, comic tools, colour management ([roadmap](docs/ROADMAP.md))
 
 ## Clean-room notice

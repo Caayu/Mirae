@@ -1,6 +1,6 @@
 # Technical debt
 
-Known, real debt, **updated at the end of phase 5D**. Each item:
+Known, real debt, **updated at the end of phase 5E**. Each item:
 impact, why it is not fixed now, and a possible direction. Priorities:
 **P1** blocks a planned phase or affects users soon; **P2** visible quality
 issue; **P3** latent or cosmetic. Item numbers are stable (other documents
@@ -27,6 +27,7 @@ defect live in [ROADMAP.md](ROADMAP.md).
 | 32 | **Imported images are plain raster layers**, placed centred (D-4F-7; since 5D they can be moved, scaled and rotated like any layer, but not kept as image layers with a pending transform); PNGs cannot be opened as documents (D-4F-8). | No re-editable placement; no "open PNG". | Image layers are not in the document model. | Open a PNG as a new document of its size; image layers with a pending transform once transforms exist. |
 | 33 | **CPU composition scales linearly with layers, single-threaded, with no cache below the stroke target.** Measured in 4G (`doc_bench`, 8-bit, per 256² tile, every layer drawing): Normal 0.37 ms (1 layer) → 12.4 ms (100); Multiply 29.7 ms and Soft Light 44.4 ms at 100; per layer per tile ≈ decode 64 µs + Normal 65 µs (Multiply 351, Soft Light 532). A 4-tile stroke frame on 100 sparse layers costs ~5 ms, on 50 partial layers ~11 ms. | Stroke frames on documents with many overlapping or non-Normal layers exceed a 60 Hz budget (16.7 ms) at about 100 Normal or 40 Soft Light layers covering the stroke. | Correctness and determinism first; typical documents (≤ 50 layers, mostly Normal) stay inside the budget; optimizing was out of 4G's scope. | In order of expected gain: cache the composite below the stroke target during a stroke (invalidated on any other change); compose dirty tiles in parallel (deterministic per tile); fuse decode with Normal blending; GPU composition later (decision in the phase-5 proposal). Re-run `doc_bench` and the parity tests. |
 | 40 | **Transform cost on large content**: the resampler runs on one core at ~64 ns per destination pixel and the source is a dense `f32` snapshot (16 bytes per pixel): a whole 2048² layer previews in 70–285 ms per change, 4096² in 0.27–1.1 s, and its snapshot is 256 MiB (D-5D-6; `transform_bench`). | Dragging a transform of a whole large layer is jerky (1–15 frames per second); a 4096² transform holds ~330–410 MiB above the document while committing. Selections of common size are fluid (a few ms). | Correctness and parity first; `tela-document` has no thread pool (crate boundaries) and the brief kept GPU transforms out of 5D. | Render the preview tiles in parallel from the app (deterministic per tile) or allow rayon in `tela-document` (ADR); a coarse preview (nearest, or a reduced pyramid level) while dragging, the full one when the pointer rests; a storage-depth snapshot (4–8 bytes per pixel, decoded per tap); skip tiles outside the view during the preview. Re-run `transform_bench` and the parity tests. |
+| 42 | **Fill gaps against the reference**: no gap closing ("Fechar intervalo", on by default in the reference: it closes 1-px gaps and corridors) and no area scaling (the reference's default "refer to other layers" grows the fill one pixel under the line), so line art with small gaps leaks and flats stop at the line's anti-aliased edge (D-5E-2); no non-contiguous fill, reference-layer / selected-layers modes, exclusions, lasso/enclose fills (D-5E-3); 8-bit premultiplied storage misclassifies translucent pixels exactly on the threshold (D-5E-1); fills run synchronously on the UI thread (a 4096² background through the composite ~0.27 s, composing-bound). | Inking-and-flatting workflows need gap closing to match the reference; a short hitch on very large composite fills. | Out of 5E's brief (gap closing and area scaling explicitly excluded); the measured core first. | Gap closing as a separate measured probe (the reference's levels 1–5 and "fill narrow areas"), area scaling as a dilation of the region by the measured amount; compose reference tiles in parallel (deterministic per tile) if large fills hitch. |
 
 ## P3
 
@@ -58,6 +59,9 @@ defect live in [ROADMAP.md](ROADMAP.md).
 
 ## Resolved
 
+- Phase 5E: none resolved; #36 partly worked around (the bucket erases
+  with the stylus eraser end or eraser mode, where the reference uses its
+  transparent colour). New #42.
 - Phase 5D: #32 partly (imported images can be moved, scaled and
   rotated; they are still plain raster layers).
 - Phase 5C: none resolved; #23 partly unblocked (selections exist; mask

@@ -255,6 +255,32 @@ reference's images (scales within 3/255, nearest neighbour and flips
 exact, rotations inside the edge ring, the selection split, the mask, the
 rotated selection).
 
+## Fill (phase 5E, ADR 0026)
+
+Named FL (F1–F3 are the performance invariants below). Also checked by
+the history snapshot property test (fills among every other edit, undo
+and redo) and by `corpus/tests/random_sessions.rs` (fills among strokes,
+selections, transforms and files). Unit tests are in
+`document::fill::tests`, property tests in `document::fill_properties`.
+
+| # | Invariant | Protected by |
+|---|---|---|
+| FL1 | A fill changes only pixels of its domain: the canvas, inside the selection (coverage > 0), in its region or on the region's anti-aliased edge; a connected region is exactly the 4-connected set of pixels within the threshold of the seed. | `fill_properties::the_flood_matches_a_breadth_first_search` (an independent breadth-first flood), `…::fills_keep_every_invariant`, `fill::tests::refusals_change_nothing` (seeds off the canvas), `…::fill_selection_fills_the_canvas_or_the_selection` |
+| FL2 | Deterministic: the same document, seed, reference, tolerance, anti-aliasing and paint give the same document, bit for bit. | `fill_properties::fills_keep_every_invariant` (a twin document), the flood against the breadth-first search |
+| FL3 | A pixel (or mask value) of selection coverage 0 is never changed; partial coverage scales the fill (no binarization); the selection also limits connectivity. | `fill_properties::fills_keep_every_invariant`, `fill::tests::the_selection_limits_connectivity_and_scales_the_fill`, `fill::parity::a_fill_through_a_feathered_selection_is_scaled_by_its_coverage` |
+| FL4 | With alpha lock a colour fill never changes any pixel's alpha (transparent pixels stay transparent); erasing is not stopped, as with the eraser. | `fill_properties::fills_keep_every_invariant`, `fill::tests::alpha_lock_recolours_keeping_alpha_and_erase_removes`, `fill::parity::alpha_lock_and_edit_fill_match_the_reference` |
+| FL5 | A mask fill does not depend on the fill colour: any colour reveals the same values; on a mask the region comes from the mask's values (target reference). | `fill_properties::mask_fills_ignore_the_colour`, `fill::tests::a_mask_is_filled_from_its_own_values_whatever_the_colour` |
+| FL6 | A refused fill (hidden or locked layer, missing or disabled mask) changes nothing, history included; a fill that changes nothing records nothing. | `fill::tests::refusals_change_nothing`, `fill_properties::fills_keep_every_invariant` (hidden copy, no-op fills), `…::a_fill_is_one_step_that_undoes_and_redoes_bit_exactly` |
+| FL7 | A fill is one history step; undo restores every tile bit for bit (absent tiles absent again), redo the fill. | `fill::tests::a_fill_is_one_step_that_undoes_and_redoes_bit_exactly`, `fill_properties::fills_keep_every_invariant`, `history_properties::history_matches_a_stack_of_snapshots`, `random_sessions.rs` |
+| FL8 | 16-bit documents never pass through 8 bits: the colour stays `f32` to the single quantization, distances keep 16-bit precision; colours on the 8-bit grid fill the same at both depths within one 8-bit level. | `fill::tests::sixteen_bit_colour_never_passes_through_eight_bits`, `fill_properties::eight_and_sixteen_bits_agree`, `fill::parity` (16-bit documents match every measured island) |
+| FL9 | A fill changes no layer property (opacity, blend mode, clipping, locks, visibility), the active layer or the selection. | `fill::tests::layer_properties_are_not_involved`, `history_matches_a_stack_of_snapshots` |
+| FL10 | Sparse: computing a region allocates no document tile; a fill writes only tiles that change; where the paint cannot create content (erase, alpha lock) absent tiles are not visited; uniform reference tiles keep no distance map. | `fill::tests::empty_regions_stay_sparse`, `…::fill_selection_fills_the_canvas_or_the_selection`, `…::stress_*` (temporary memory bounds), `fill_bench` (tiles read and written, memory) |
+
+The measured region rule, anti-aliasing and paint are kept by
+`document::fill::parity` against the reference's data: every island at
+16 tolerances and three seeds (16-bit exactly, 8-bit but D-5E-1), edges,
+feather, alpha lock and Edit › Fill within 2/255.
+
 ## Integration (phase 4G)
 
 No new invariant: these rows record where the invariants above are
@@ -279,6 +305,15 @@ backdrop in the preview, transparent backdrop after): since 5C the
 helper falls back to the shown picture for any tile whose raw composites
 disagree. Not a defect; recorded so the comparison rule is not mistaken
 for one.
+
+Since 5E the helper also compares a stroke **up to its layer** (the
+layers above hidden in a copy) when a visible non-Normal layer lies above
+the target: the commit quantizes the stroked layer once (within half an
+8-bit level, P2), and a blend mode above it amplifies that before the
+final rounding (Overlay up to twice, the dodges without bound), so the
+whole stack cannot stay within 1/255 at 8 bits. Found when the random
+sessions began to fill (a stroke under a covering Overlay layer, 2/255);
+the full stack is still compared whenever only Normal layers lie above.
 
 ## Robustness
 

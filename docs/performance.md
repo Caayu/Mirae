@@ -83,6 +83,39 @@ table above for the parallel path).
 phase 4E: 0.107–0.110 ms),
 0 allocations in 840 tiles.
 
+### Phase 5E — fill
+
+`cargo run --release -p tela-corpus --example fill_bench` (`-- --quick`
+without 4096²). Ryzen 7 5800X, one core, ms. Three layers: a soft colour
+gradient, anti-aliased rings of line art (radius 40, every 128 px) and an
+empty top layer. "region" = `Document::fill_region` alone; "fill" =
+`fill_connected` (region, paint, history); tiles read = reference tiles
+decoded or composed; written = tiles changed. 8 / 16 bits.
+
+| canvas | case | tolerance | region px | region | fill | undo | read / written |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 256² | empty layer, whole (target) | 10 % | 65 536 | 0.2–0.3 | 0.4–0.5 | < 0.01 | 1 / 1 |
+| 256² | around line art (composite) | 10 % | 44 016 | 1.8 | 2.2 | < 0.01 | 1 / 1 |
+| 2048² | empty layer, whole (target) | 10 % | 4.2 M | 2.6–2.9 | 7.8 / 10.3 | 0.01 | 64 / 64 |
+| 2048² | around line art (composite) | 10 % | 2.8 M | 41 | 68 / 69 | 0.01 | 64 / 64 |
+| 2048² | inside one ring (composite) | 10 % | 4 684 | 1.6–1.8 | 1.8–2.1 | < 0.01 | 1 / 1 |
+| 2048² | gradient (target) | 0 / 10 / 50 % | 1–4 / 15 k / 430 k | 1.1 / 1.2 / 6.8 | 1.5 / 1.6 / 11 | < 0.01 | 2 / 2 / 14 |
+| 4096² | empty layer, whole (target) | 10 % | 16.8 M | 10.6 | 32 / 41 | 0.03 | 256 / 256 |
+| 4096² | around line art (composite) | 10 % | 11.3 M | 166–168 | 268 / 279 | 0.03–0.05 | 256 / 256 |
+| 4096² | inside one ring (composite) | 10 % | 4 684 | 1.6–1.9 | 1.7–2.8 | < 0.01 | 1 / 1 |
+| 4096² | gradient (target) | 0 / 10 / 50 % | 1–2 / 18 k / 316–319 k | 1.1 / 1.7 / 6.2–7.1 | 1.2–1.4 / 2.0 / 9.3–11.7 | < 0.01 | 2 / 3 / 13 |
+
+The first run flooded at ~11 ns per pixel through a generic per-pixel
+path (4096² empty: region 187 ms, fill 318 ms); scanning tile rows a run
+at a time (a uniform row by words of its bitset) and writing a fully
+covered opaque tile as the colour itself brought that to 10.6 and 32 ms,
+results unchanged. What remains on large fills through the composite is
+composing the reached tiles (~0.65 ms per 256² tile including distances,
+2 visible layers): debt #42 if it ever hitches. 16-bit fills cost 10–30 %
+more where pixels are painted (decode and quantization), the same
+elsewhere. Small regions cost what reading one or two tiles costs.
+Memory: [memory.md](memory.md).
+
 ### Phase 5D — transform
 
 `cargo run --release -p tela-corpus --example transform_bench`
