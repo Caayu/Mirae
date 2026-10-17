@@ -135,10 +135,20 @@ impl Document {
             return false;
         }
 
-        let backdrop = if paper && blends_with_paper(layers, &draws) {
+        // Over the opaque paper the stack stays opaque, so blend layers can
+        // skip the translucent-backdrop rule (ADR 0022).
+        let opaque = paper && blends_with_paper(layers, &draws);
+        let backdrop = if opaque {
             self.background().premultiply()
         } else {
             PremulRgba::TRANSPARENT
+        };
+        let blend = |mode: BlendMode, src: &[PremulRgba], opacity: f32, acc: &mut [PremulRgba]| {
+            if opaque {
+                mode.composite_opaque(src, opacity, acc);
+            } else {
+                mode.composite(src, opacity, acc);
+            }
         };
 
         let ComposeScratch {
@@ -163,7 +173,7 @@ impl Document {
             drew = true;
             load_layer(base, coord, overlay, layer, mask);
             if !clipped.iter().any(draws) {
-                base.blend_mode().composite(layer, base.opacity(), acc);
+                blend(base.blend_mode(), layer, base.opacity(), acc);
                 continue;
             }
             std::mem::swap(layer, group);
@@ -171,7 +181,7 @@ impl Document {
                 load_layer(c, coord, overlay, layer, mask);
                 c.blend_mode().clip_atop(layer, c.opacity(), group);
             }
-            base.blend_mode().composite(group, base.opacity(), acc);
+            blend(base.blend_mode(), group, base.opacity(), acc);
         }
         if !drew {
             return false;
