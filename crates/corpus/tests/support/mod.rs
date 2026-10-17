@@ -10,7 +10,7 @@ use tela_brush::dynamics::InputCaps;
 use tela_brush::preset::builtin::{builtin_preset, ids};
 use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha, StrokeBuffer};
 use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord};
-use tela_color::{PixelDepth, PremulRgba, Rgba, StoragePixel, with_pixel_type};
+use tela_color::{Color, PixelDepth, PremulRgba, StoragePixel, with_pixel_type};
 use tela_document::{ComposeScratch, Document, LayerPart, Overlay, OverlayPaint};
 use tela_io::{Limits, SaveOptions, read_document, write_document};
 
@@ -62,7 +62,7 @@ fn input(x: f32, y: f32, pressure: f32, t: f64) -> BrushInput {
 /// finished stroke.
 pub fn run_stroke(
     preset: &BrushPreset,
-    color: Rgba,
+    color: Color,
     path: &[(f32, f32, f32)],
     seed: u64,
 ) -> StrokeBuffer {
@@ -96,7 +96,7 @@ pub struct Committed {
 pub fn stroke(
     d: &mut Document,
     preset: &BrushPreset,
-    color: Rgba,
+    color: Color,
     path: &[(f32, f32, f32)],
     seed: u64,
 ) -> Option<Committed> {
@@ -398,7 +398,7 @@ impl Rng {
 }
 
 /// An opaque or translucent colour from a small palette.
-pub fn colour(i: usize) -> Rgba {
+pub fn colour(i: usize) -> Color {
     const C: [[f32; 3]; 6] = [
         [0.85, 0.2, 0.15],
         [0.1, 0.45, 0.9],
@@ -408,7 +408,7 @@ pub fn colour(i: usize) -> Rgba {
         [0.9, 0.9, 0.95],
     ];
     let c = C[i % C.len()];
-    Rgba::new(c[0], c[1], c[2], 1.0)
+    Color::new(c[0], c[1], c[2])
 }
 
 pub fn depth_name(d: PixelDepth) -> u32 {

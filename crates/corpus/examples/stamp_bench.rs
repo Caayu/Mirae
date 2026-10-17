@@ -16,7 +16,7 @@ use tela_brush::texture::{CanvasTexture, TextureMode, TexturePattern, TextureSet
 use tela_brush::tip::Tip;
 use tela_brush::{Dab, DabSink, PixelAlpha, StampContext, StrokeBuffer};
 use tela_canvas::{DirtyTiles, IRect, TILE_SIZE, TileCoord};
-use tela_color::{PremulRgba, Rgba};
+use tela_color::{Color, PremulRgba};
 use tela_document::{ComposeScratch, Document, Overlay, OverlayPaint, Placement};
 
 /// Counts allocations so "no allocation per dab" is measured, not assumed.
@@ -113,7 +113,7 @@ fn main() {
             let batch = dabs(kind, size, count);
             // Warm-up run allocates every tile the stroke touches; the
             // measured run reuses a buffer that already owns them.
-            let mut warm = StrokeBuffer::new(Rgba::BLACK, context(kind));
+            let mut warm = StrokeBuffer::new(Color::BLACK, context(kind));
             for d in &batch {
                 warm.dab(d);
             }
@@ -176,7 +176,7 @@ fn main() {
                     ..context(kind)
                 };
                 // Warm: tiles exist, as in the middle of a stroke.
-                let mut buf = StrokeBuffer::new(Rgba::BLACK, ctx);
+                let mut buf = StrokeBuffer::new(Color::BLACK, ctx);
                 buf.dabs(&batch);
                 let t = Instant::now();
                 for chunk in batch.chunks(per_batch) {
@@ -210,7 +210,7 @@ fn main() {
         })
         .unwrap();
     }
-    let mut stroke = StrokeBuffer::new(Rgba::BLACK, context(Kind::Soft));
+    let mut stroke = StrokeBuffer::new(Color::BLACK, context(Kind::Soft));
     for d in dabs(Kind::Soft, 120.0, 400) {
         stroke.dab(&d);
     }

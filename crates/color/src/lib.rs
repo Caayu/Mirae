@@ -2,7 +2,8 @@
 //!
 //! **Responsibility:** color value types, alpha conventions, Porter-Duff
 //! `over`, 8- and 16-bit quantization and the stored pixel formats
-//! ([`StoragePixel`], [`PixelDepth`]), sRGB transfer functions.
+//! ([`StoragePixel`], [`PixelDepth`]), sRGB transfer functions, and the
+//! colour a user paints with ([`Color`], [`Hsv`], hex; ADR 0021).
 //! **Does not:** know about pixels in space (tiles, layers) or any device.
 //! **Depends on:** nothing. **Used by:** every crate that touches pixels.
 //!
@@ -11,18 +12,21 @@
 //! added later by converting at the compositing boundary with the transfer
 //! functions in [`srgb`].
 //!
-//! Two alpha conventions are kept as distinct types so they cannot be mixed up:
-//! [`Rgba`] is straight (unassociated) alpha, used for user-facing colors;
-//! [`PremulRgba`] is premultiplied alpha, used for all compositing
-//! (see `docs/adr/0001-premultiplied-alpha.md`).
+//! Three kinds of colour are distinct types so they cannot be mixed up:
+//! [`Color`] is the opaque colour the user picks and paints with (no alpha:
+//! the brush decides how much paint lands); [`Rgba`] is straight
+//! (unassociated) alpha; [`PremulRgba`] is premultiplied alpha, used for
+//! all compositing and storage (see `docs/adr/0001-premultiplied-alpha.md`).
 //!
 //! Invariants: [`PremulRgba`] holds `rgb <= a` when built through
 //! [`Rgba::premultiply`]; `over` is associative; RGBA8 and RGBA16 round
 //! trips are exact; 8 → 16 → 8 is the identity.
 
+mod paint;
 pub mod srgb;
 mod storage;
 
+pub use paint::{Color, HexError, Hsv};
 pub use storage::{PixelDepth, StoragePixel, narrow16, unorm16, widen8};
 
 /// Straight-alpha color, components in `0.0..=1.0`.

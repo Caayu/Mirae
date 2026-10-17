@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use glam::Vec2;
-use tela_color::Rgba;
+use tela_color::Color;
 
 use crate::airbrush::TimeDeposit;
 use crate::dynamics::{Curve, DynamicsInput, slot};
@@ -572,8 +572,9 @@ pub struct BrushEngine {
     pub stroke_defaults: StrokeSettings,
     /// Global pressure calibration applied before brush effectors.
     pub pressure_curve: Curve,
-    /// Paint color (straight alpha) of the next stroke.
-    pub color: Rgba,
+    /// Paint colour of the next stroke, captured when it begins (invariant
+    /// COL2): changing it during a stroke affects the next one.
+    pub color: Color,
     processor: StrokeProcessor,
     stroke: Option<StrokeBuffer>,
 }
@@ -583,7 +584,7 @@ impl BrushEngine {
     pub fn new(preset: BrushPreset) -> Self {
         Self {
             preset,
-            color: Rgba::BLACK,
+            color: Color::BLACK,
             ..Default::default()
         }
     }

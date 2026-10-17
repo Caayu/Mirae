@@ -16,7 +16,7 @@ use std::cell::Cell;
 use glam::Vec2;
 use tela_brush::dynamics::Curve;
 use tela_brush::{BrushInput, BrushPreset, StampContext, StrokeBuffer, StrokeProcessor};
-use tela_color::Rgba;
+use tela_color::Color;
 
 thread_local! {
     static COUNTING: Cell<bool> = const { Cell::new(false) };
@@ -74,7 +74,7 @@ fn scribble(size: f32, parallel: bool) -> u64 {
         parallel,
         ..StampContext::default()
     };
-    let mut buffer = StrokeBuffer::new(Rgba::BLACK, ctx);
+    let mut buffer = StrokeBuffer::new(Color::BLACK, ctx);
     let mut proc = StrokeProcessor::new();
     let sample = |i: usize| {
         let phase = (i % 200) as f32 / 200.0;

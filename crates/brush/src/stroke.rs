@@ -1,5 +1,5 @@
 use tela_canvas::{DirtyTiles, TILE_SIZE, Tile, TileCoord, TiledSurface};
-use tela_color::{PremulRgba, Rgba, StoragePixel, unorm8};
+use tela_color::{Color, PremulRgba, StoragePixel, unorm8};
 
 use crate::Dab;
 use crate::preset::PaintMode;
@@ -78,7 +78,7 @@ impl DabSink for DabLog {
 pub struct StrokeBuffer {
     committed: TiledSurface<f32>,
     tail: TiledSurface<f32>,
-    color: Rgba,
+    color: Color,
     ctx: StampContext,
     /// Tiles changed since the last [`StrokeBuffer::take_dirty`].
     dirty: DirtyTiles,
@@ -266,8 +266,10 @@ fn stamp_batch(
 }
 
 impl StrokeBuffer {
-    /// Empty stroke painting `color` (straight alpha).
-    pub fn new(color: Rgba, ctx: StampContext) -> Self {
+    /// Empty stroke painting `color`. The colour is fixed for the whole
+    /// stroke (invariant COL2); it has no alpha of its own: how much paint
+    /// lands is the mask's business (see [`StrokeBuffer::paint_over_tile`]).
+    pub fn new(color: Color, ctx: StampContext) -> Self {
         Self {
             committed: TiledSurface::new(),
             tail: TiledSurface::new(),
@@ -303,13 +305,28 @@ impl StrokeBuffer {
         std::mem::take(&mut self.dirty)
     }
 
-    /// Premultiplied paint color at full alpha.
+    /// The stroke's colour.
+    pub fn color(&self) -> Color {
+        self.color
+    }
+
+    /// Premultiplied paint colour at full alpha.
     pub fn paint(&self) -> PremulRgba {
-        self.color.premultiply()
+        self.color.premultiplied(1.0)
     }
 
     /// Composites the stroke over one tile of premultiplied pixels.
     /// `alpha` says whether the stroke may change the pixels' alpha.
+    ///
+    /// The colour math, per pixel (ADR 0021): the mask value `m` already
+    /// combines everything the brush decides — dab coverage, flow (how fast
+    /// overlapping dabs build up) and opacity (the ceiling `m` never
+    /// exceeds), see [`StrokeBuffer`]. The colour `C` (straight, opaque)
+    /// only says *what* lands: the source is `(C·m, m)` premultiplied.
+    /// Paint is `src over dst`; with alpha preserved it is source-atop,
+    /// `rgb = C·m·αd + rgb_d·(1 − m)`, `α = αd`; erase is
+    /// `dst·(1 − m)` and ignores `C` (invariant COL3). Layer opacity, mask
+    /// and blend mode apply later, at composition.
     pub fn paint_over_tile(&self, coord: TileCoord, pixels: &mut [PremulRgba], alpha: PixelAlpha) {
         if let Some(mask) = self.mask_tile(coord) {
             self.paint_over(pixels, mask.pixels(), alpha);
@@ -540,7 +557,7 @@ mod tests {
 
     fn buffer() -> StrokeBuffer {
         StrokeBuffer::new(
-            Rgba::BLACK,
+            Color::BLACK,
             StampContext {
                 anti_aliasing: true,
                 ..Default::default()
@@ -596,7 +613,7 @@ mod tests {
         let mut target = TiledSurface::<[u8; 4]>::new();
         target.set_pixel(10, 10, [0, 0, 255, 255]);
         let mut s = StrokeBuffer::new(
-            Rgba::new(1.0, 0.0, 0.0, 1.0),
+            Color::new(1.0, 0.0, 0.0),
             StampContext {
                 anti_aliasing: true,
                 ..Default::default()
@@ -617,7 +634,7 @@ mod tests {
             mode: PaintMode::Erase,
             ..Default::default()
         };
-        let mut s = StrokeBuffer::new(Rgba::BLACK, ctx);
+        let mut s = StrokeBuffer::new(Color::BLACK, ctx);
         s.dab(&dab(10.5, 10.5, 3.0, 0.5, 1.0));
         s.commit_into(&mut target);
         assert_eq!(
@@ -643,7 +660,7 @@ mod tests {
             mode,
             ..Default::default()
         };
-        let mut s = StrokeBuffer::new(Rgba::BLACK, ctx);
+        let mut s = StrokeBuffer::new(Color::BLACK, ctx);
         for &x in xs {
             s.dab(&dab(x + 0.5, 10.5, 3.0, opacity, 1.0));
         }
@@ -717,7 +734,7 @@ mod tests {
     fn alpha_channel_ignores_the_paint_colour() {
         let c = TileCoord { x: 0, y: 0 };
         let mut results = Vec::new();
-        for color in [Rgba::BLACK, Rgba::WHITE, Rgba::new(1.0, 0.2, 0.4, 1.0)] {
+        for color in [Color::BLACK, Color::WHITE, Color::new(1.0, 0.2, 0.4)] {
             let mut s = StrokeBuffer::new(
                 color,
                 StampContext {
@@ -780,7 +797,7 @@ mod tests {
                 parallel,
                 ..Default::default()
             };
-            let mut s = StrokeBuffer::new(Rgba::BLACK, ctx);
+            let mut s = StrokeBuffer::new(Color::BLACK, ctx);
             s.dabs(&batch[..40]);
             s.begin_tail();
             s.tail_dabs(&batch[40..]);
@@ -831,7 +848,7 @@ mod tests {
         let mut t: Tile<P> = Tile::new();
         for (i, p) in t.pixels_mut().iter_mut().enumerate() {
             let a = (i % 997) as f32 / 996.0;
-            *p = P::from_premul(Rgba::new(0.9, 0.45, 0.2, a).premultiply());
+            *p = P::from_premul(tela_color::Rgba::new(0.9, 0.45, 0.2, a).premultiply());
         }
         t
     }
@@ -842,7 +859,7 @@ mod tests {
             mode,
             ..Default::default()
         };
-        let mut s = StrokeBuffer::new(Rgba::new(0.2, 0.6, 0.9, 1.0), ctx);
+        let mut s = StrokeBuffer::new(Color::new(0.2, 0.6, 0.9), ctx);
         for i in 0..14 {
             let i = i as f32;
             s.dab(&dab(12.0 + i * 4.3, 20.0 + i * 2.1, 9.0, 0.35, 0.3));

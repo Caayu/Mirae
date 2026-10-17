@@ -264,10 +264,10 @@ where
 {
     use tela_brush::{DabSink, PixelAlpha, StampContext, StrokeBuffer};
     use tela_canvas::{Tile, TileCoord};
-    use tela_color::Rgba;
+    use tela_color::Color;
     let [r, g, b] = color.map(|v| f32::from(v) / 255.0);
     let mut s = StrokeBuffer::new(
-        Rgba::new(r, g, b, 1.0),
+        Color::new(r, g, b),
         StampContext {
             anti_aliasing: true,
             ..Default::default()

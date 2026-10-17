@@ -8,14 +8,14 @@ mod support;
 
 use support::*;
 use tela_canvas::TileCoord;
-use tela_color::{PixelDepth, Rgba};
+use tela_color::{Color, PixelDepth};
 use tela_document::{BlendMode, Document, LayerPart, Placement};
 
 /// Paints and asserts preview == commit within 1/255.
 fn paint(
     d: &mut Document,
     preset: &tela_brush::BrushPreset,
-    c: Rgba,
+    c: Color,
     path: &[(f32, f32, f32)],
     seed: u64,
 ) {

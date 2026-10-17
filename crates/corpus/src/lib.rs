@@ -23,7 +23,7 @@ use tela_brush::preset::PaintMode;
 use tela_brush::stabilizer::StabilizerKind;
 use tela_brush::{BrushEngine, BrushPreset, StrokeSettings};
 use tela_canvas::{TILE_SIZE, TiledSurface};
-use tela_color::{PremulRgba, Rgba};
+use tela_color::{Color, PremulRgba};
 
 pub use crate::image::{Diff, Image, Thresholds};
 pub use crate::trajectory::{CELL, COLUMNS, ROWS, Trajectory, trajectories};
@@ -73,7 +73,7 @@ pub fn render_sheet(preset: &BrushPreset) -> Image {
             p.taper.end = p.taper.end.max(70.0);
         }
         let mut engine = BrushEngine::new(p);
-        engine.color = Rgba::new(0.08, 0.08, 0.1, 1.0);
+        engine.color = Color::new(0.08, 0.08, 0.1);
         // Fixed user settings so goldens do not change with app defaults.
         engine.stroke_defaults = StrokeSettings {
             stabilizer: StabilizerKind::OneEuro,
