@@ -22,17 +22,20 @@ use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
 mod files;
+mod transform;
 
 use crate::colors::{ColorState, Slot};
 use crate::selecting::{SelectionDrag, SelectionTool};
 use crate::stats::LatencyStats;
 use crate::tools::{CanvasTool, Tools};
+use crate::transforming::{TransformSession, TransformTool};
 use files::{FileState, Pending};
 use tela_ui::{
     BrushPanel, ColorAction, ColorModel, ColorPanel, DocumentCommand, DocumentInfo, HistoryButtons,
     HistoryCommand, LayerAction, LayerRow, MergeMaskChoice, PanelAction, PanelModel, PickSource,
-    SelectionAction, SelectionModel, UiLayer, egui,
+    SelectionAction, SelectionModel, TransformModel, UiLayer, egui,
 };
+use transform::AfterTransform;
 
 const DOCUMENT_SIZE: (u32, u32) = (4000, 3000);
 const WORKSPACE_COLOR: [f32; 4] = [0.18, 0.18, 0.2, 1.0];
@@ -55,6 +58,8 @@ enum Drag {
     Pick(PickSource),
     /// A selection shape being drawn (`App::selection_drag`).
     Select,
+    /// A transform handle (or the Move tool) being dragged.
+    Transform,
 }
 
 /// Marching-ants speed, points per second.
@@ -124,6 +129,13 @@ pub struct App {
     /// A merge down waiting for the answer to the lower-mask question
     /// (the layer to merge).
     merging: Option<LayerId>,
+    /// The open transform session (session state: not in the document,
+    /// its history or its file until committed; ADR 0025).
+    transform: Option<TransformSession>,
+    /// Transform tool settings (keep aspect, interpolation).
+    transform_tool: TransformTool,
+    /// What waits for the answer to "Apply the transform?".
+    transform_exit: Option<AfterTransform>,
 }
 
 /// What a stroke edits, captured when it begins so that nothing changed
@@ -192,6 +204,9 @@ impl App {
             picked: None,
             last_title: String::new(),
             merging: None,
+            transform: None,
+            transform_tool: TransformTool::default(),
+            transform_exit: None,
         }
     }
 
@@ -305,6 +320,20 @@ impl App {
         }
         match (ev.phase, self.drag) {
             (Phase::Down, Drag::None) if self.space_held => self.drag = Drag::Pan,
+            // A transform session takes the canvas (handles, move,
+            // rotate); so does the Move tool. The stylus eraser end too:
+            // nothing is painted during a transform.
+            (Phase::Down, Drag::None)
+                if (self.transform.is_some() || self.tool == CanvasTool::Move)
+                    && !self.modifiers.alt_key() =>
+            {
+                if !self.transform_press(pos) {
+                    return;
+                }
+            }
+            (Phase::Move | Phase::Hover, Drag::Transform) => self.transform_move(pos),
+            (Phase::Up | Phase::Cancel, Drag::Transform) => self.transform_release(pos),
+            (Phase::Down, Drag::None) if self.transform.is_some() => return,
             // The eyedropper tool, or Alt with any tool (the reference
             // picks the displayed colour with Alt; parity record 5A, O10).
             // The stylus eraser end keeps erasing.
@@ -624,7 +653,11 @@ impl App {
             return;
         }
         // While a question is open, keys belong to it.
-        if self.file.asking.is_some() || self.file.notice.is_some() || self.merging.is_some() {
+        if self.file.asking.is_some()
+            || self.file.notice.is_some()
+            || self.merging.is_some()
+            || self.transform_exit.is_some()
+        {
             return;
         }
         let (ctrl, shift, alt) = (
@@ -632,6 +665,30 @@ impl App {
             self.modifiers.shift_key(),
             self.modifiers.alt_key(),
         );
+        // During a transform: Enter commits, Escape cancels, undo and redo
+        // walk the session's edits (reference T4, T5, T13); tool and file
+        // shortcuts do nothing (T42, T43).
+        if self.transform.is_some() {
+            if self.drag == Drag::Transform {
+                return;
+            }
+            match (&event.logical_key, event.physical_key) {
+                (Key::Named(NamedKey::Enter), _) => self.commit_transform(),
+                (Key::Named(NamedKey::Escape), _) => self.cancel_transform(),
+                (_, PhysicalKey::Code(KeyCode::KeyZ)) if ctrl => self.transform_history(shift),
+                (_, PhysicalKey::Code(KeyCode::KeyY)) if ctrl => self.transform_history(true),
+                (Key::Named(NamedKey::Home), _) => self.fit_view(),
+                (Key::Named(NamedKey::F3), _) => self.show_stats = !self.show_stats,
+                _ => return,
+            }
+            self.request_redraw();
+            return;
+        }
+        if ctrl && !shift && !alt && event.physical_key == PhysicalKey::Code(KeyCode::KeyT) {
+            self.begin_transform();
+            self.request_redraw();
+            return;
+        }
         // File commands: Ctrl+N, Ctrl+O, Ctrl+S, Save As on Ctrl+Shift+S
         // and on the reference's Shift+Alt+S (parity record 4F, F11).
         let file = match event.physical_key {
@@ -735,6 +792,9 @@ impl App {
                 // The reference's selection tool key (5C S2); B returns to
                 // the brush (Mirae's choice: free here).
                 "m" | "M" => self.tool = CanvasTool::Selection,
+                // The Move tool (Mirae's key; the reference's Move layer
+                // tool was not observed, docs/parity/5D-transform.md).
+                "k" | "K" => self.tool = CanvasTool::Move,
                 "b" | "B" => self.tool = CanvasTool::Brush,
                 // The reference's X: paint with the other colour (O2).
                 "x" | "X" => self.colors.toggle_active(),
@@ -767,6 +827,11 @@ impl App {
         if self.engine.is_stroking() || self.drag == Drag::Select {
             return;
         }
+        // During a transform, undo and redo walk its own edits (T13).
+        if self.transform.is_some() {
+            self.transform_history(command == HistoryCommand::Redo);
+            return;
+        }
         let dirty = match command {
             HistoryCommand::Undo => self.document.undo(),
             HistoryCommand::Redo => self.document.redo(),
@@ -782,6 +847,12 @@ impl App {
     /// layer commands.
     fn apply_document(&mut self, command: DocumentCommand) {
         if self.engine.is_stroking() {
+            return;
+        }
+        // The reference disables New, Open, Save, Save As (and closing)
+        // while a transform is open, not exporting (T43).
+        if self.transform.is_some() && command != DocumentCommand::ExportPng {
+            self.file.status = Some("Apply or cancel the transform first.".into());
             return;
         }
         let depth = |bits| match bits {
@@ -922,6 +993,36 @@ impl App {
         if self.stale.is_empty() {
             return 0;
         }
+        // A transform previews through the same per-tile function the
+        // commit uses (TR4): the target layer's pixels and mask.
+        if let Some(session) = &self.transform {
+            let t = session.transform(&self.transform_tool);
+            let document = &self.document;
+            let source = &session.source;
+            let pixels = |c: TileCoord, px: &mut [PremulRgba]| {
+                source.transform_pixels_tile(&t, c, &document.selection_tile(c), px);
+            };
+            let mask = |c: TileCoord, r: &mut [f32]| {
+                source.transform_mask_tile(&t, c, r);
+            };
+            let covered = source.affected_tiles(&t.params);
+            let covers = |c: TileCoord| covered.contains(c);
+            let overlay = Overlay {
+                target: source.layer(),
+                paint: OverlayPaint::Layer {
+                    pixels: &pixels,
+                    mask: &mask,
+                },
+                covers: &covers,
+            };
+            let tiles = self.stale.take();
+            for &coord in &tiles {
+                let has = document.compose_tile_into(coord, Some(&overlay), &mut self.compose);
+                gpu.renderer
+                    .upload_tile(coord, has.then_some(self.compose.out.as_slice()));
+            }
+            return tiles.len();
+        }
         let stroke = self.engine.stroke();
         let target = self
             .stroke_target
@@ -969,7 +1070,29 @@ impl App {
             .gpu
             .as_ref()
             .map_or(1.0, |g| g.window.scale_factor() as f32);
-        let (loops, dragged) = self.outline_on_screen(ppp);
+        // During a transform the box replaces the marching ants (the
+        // selection follows the content when it is committed, T32).
+        let (loops, dragged) = if self.transform.is_some() {
+            (Vec::new(), Vec::new())
+        } else {
+            self.outline_on_screen(ppp)
+        };
+        let transform_box = self.transform_box(ppp);
+        let transform_model = {
+            let p = self.transform.as_ref().map(TransformSession::params);
+            TransformModel {
+                active: self.transform.is_some(),
+                moving: self.tool == CanvasTool::Move,
+                width: p.map_or(100.0, |p| p.scale[0] * 100.0),
+                height: p.map_or(100.0, |p| p.scale[1] * 100.0),
+                angle: p.map_or(0.0, |p| p.rotation.to_degrees()),
+                keep_aspect: self.transform_tool.keep_aspect,
+                nearest: self.transform_tool.interpolation == tela_document::Interpolation::Nearest,
+            }
+        };
+        let mut transform_action = None;
+        let asking_apply = self.transform_exit.is_some();
+        let mut apply_answer = None;
         let phase = self.ants_epoch.elapsed().as_secs_f32() * ANTS_SPEED;
         let selection_model = SelectionModel {
             active: self.tool == CanvasTool::Selection,
@@ -1050,6 +1173,9 @@ impl App {
         let repaint = gpu.ui.build(&gpu.window, |ui| {
             // Painted first, on the background layer: the panels cover it.
             tela_ui::selection_outline(ui.ctx(), &loops, &dragged, phase);
+            if let Some(b) = &transform_box {
+                tela_ui::transform_box(ui.ctx(), b);
+            }
             // A fixed width: long names and markers are truncated, so the
             // controls never move under the cursor (debt #17).
             let layers = egui::Panel::right("layer-panel")
@@ -1069,6 +1195,8 @@ impl App {
                     ui.separator();
                     selection_action = tela_ui::selection_panel(ui, &selection_model);
                     ui.separator();
+                    transform_action = tela_ui::transform_panel(ui, &transform_model);
+                    ui.separator();
                     action = panel.show(
                         ui,
                         PanelModel {
@@ -1083,7 +1211,11 @@ impl App {
                 });
             let mut occupied = vec![r.response.rect, layers.response.rect];
             // Questions block the whole window (the pen goes to them too).
-            if merging {
+            if asking_apply {
+                let (choice, area) = tela_ui::apply_transform_prompt(ui.ctx());
+                apply_answer = choice;
+                occupied.push(area);
+            } else if merging {
                 let (choice, area) = tela_ui::merge_mask_prompt(ui.ctx());
                 merge_answer = choice;
                 occupied.push(area);
@@ -1110,6 +1242,12 @@ impl App {
         }
         if let Some(choice) = merge_answer {
             return PanelAction::MergeMask(choice);
+        }
+        if let Some(choice) = apply_answer {
+            return PanelAction::ApplyTransform(choice);
+        }
+        if let Some(a) = transform_action {
+            return PanelAction::Transform(a);
         }
         if dismissed {
             return PanelAction::DismissNotice;
@@ -1157,8 +1295,17 @@ impl App {
     }
 
     fn apply(&mut self, action: PanelAction) {
+        // Another layer, tool or document command during a transform asks
+        // first (reference T41, T42).
+        if self.ask_before(&action) {
+            self.transform_exit = Some(AfterTransform::Panel(action));
+            self.request_redraw();
+            return;
+        }
         match action {
             PanelAction::None => return,
+            PanelAction::Transform(a) => self.apply_transform_action(a),
+            PanelAction::ApplyTransform(choice) => self.answer_apply(choice),
             PanelAction::SelectPreset(i) => {
                 self.tools.select(i);
                 self.tool = CanvasTool::Brush;
@@ -1197,6 +1344,16 @@ impl App {
         }
         let action = self.build_ui();
         self.apply(action);
+        // A crosshair while the selection tool is active (5C: the tool is
+        // distinguishable from the brush); during a transform, what a
+        // press would grab.
+        let icon = if let Some(icon) = self.transform_cursor() {
+            icon
+        } else if self.tool == CanvasTool::Selection {
+            CursorIcon::Crosshair
+        } else {
+            CursorIcon::Default
+        };
         let Some(gpu) = &mut self.gpu else {
             return;
         };
@@ -1207,13 +1364,6 @@ impl App {
             workspace: WORKSPACE_COLOR,
         };
         gpu.renderer.render_with(&frame, Some(&mut gpu.ui));
-        // A crosshair while the selection tool is active (5C: the tool is
-        // distinguishable from the brush).
-        let icon = if self.tool == CanvasTool::Selection {
-            CursorIcon::Crosshair
-        } else {
-            CursorIcon::Default
-        };
         if icon != self.cursor_icon {
             gpu.window.set_cursor(icon);
             self.cursor_icon = icon;
@@ -1401,12 +1551,17 @@ impl ApplicationHandler<AppEvent> for App {
             // Never discard work silently: a modified document asks first
             // (reference F7, F10); Cancel keeps the window open.
             WindowEvent::CloseRequested => {
-                if !self.engine.is_stroking() {
+                if self.transform.is_some() {
+                    // Mirae asks whether to apply the transform first (the
+                    // reference disables its quit command, T43).
+                    self.transform_exit = Some(AfterTransform::Close);
+                    self.request_redraw();
+                } else if !self.engine.is_stroking() {
                     self.request(Pending::Close);
                 }
             }
             WindowEvent::DroppedFile(path) => {
-                if !self.engine.is_stroking() {
+                if !self.engine.is_stroking() && self.transform.is_none() {
                     self.dropped(path);
                     self.update_title();
                     self.request_redraw();
@@ -1430,6 +1585,9 @@ impl ApplicationHandler<AppEvent> for App {
                 // Releases outside the window would otherwise leave a drag stuck.
                 if self.drag == Drag::Paint {
                     self.finish_stroke();
+                }
+                if self.drag == Drag::Transform {
+                    self.transform_release(self.cursor);
                 }
                 self.drag = Drag::None;
                 self.mouse_left_down = false;

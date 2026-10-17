@@ -97,6 +97,49 @@ pub fn merge_mask_prompt(ctx: &Context) -> (Option<MergeMaskChoice>, Rect) {
     (choice, modal.backdrop_response.rect)
 }
 
+/// The answer to "Apply the transform?" (asked when another layer or tool
+/// is chosen during a transform, as the reference asks, parity record 5D
+/// T41, T42).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplyChoice {
+    /// Commit the transform, then go on.
+    Apply,
+    /// Discard the transform, then go on.
+    Discard,
+    /// Keep transforming; nothing else happens.
+    Cancel,
+}
+
+/// Asks whether to apply the open transform. Returns the answer once
+/// given, and the screen area the question blocks. Enter answers Apply,
+/// Escape or a click beside it Cancel.
+pub fn apply_transform_prompt(ctx: &Context) -> (Option<ApplyChoice>, Rect) {
+    let mut choice = None;
+    let modal = Modal::new(Id::new("apply-transform-prompt")).show(ctx, |ui| {
+        ui.set_width(320.0);
+        ui.label(RichText::new("Apply the transform?").strong());
+        ui.add_space(8.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui.button("Cancel").clicked() {
+                choice = Some(ApplyChoice::Cancel);
+            }
+            if ui.button("No").clicked() {
+                choice = Some(ApplyChoice::Discard);
+            }
+            if ui.button(RichText::new("Yes").strong()).clicked() {
+                choice = Some(ApplyChoice::Apply);
+            }
+        });
+        if ui.input(|i| i.key_pressed(Key::Enter)) {
+            choice = Some(ApplyChoice::Apply);
+        }
+    });
+    if choice.is_none() && modal.should_close() {
+        choice = Some(ApplyChoice::Cancel);
+    }
+    (choice, modal.backdrop_response.rect)
+}
+
 /// Shows `text` until dismissed (OK, Enter, Escape). Returns whether it
 /// was dismissed this frame, and the screen area it blocks.
 pub fn notice(ctx: &Context, text: &str) -> (bool, Rect) {

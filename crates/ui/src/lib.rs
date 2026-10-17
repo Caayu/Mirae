@@ -2,7 +2,8 @@
 //!
 //! **Responsibility:** the brush panel ([`BrushPanel`]), the colour panel
 //! ([`ColorPanel`]), the selection panel ([`selection_panel()`]) and the
-//! selection outline ([`selection_outline()`]), the layer panel
+//! selection outline ([`selection_outline()`]), the transform panel
+//! ([`transform_panel()`]) and box ([`transform_box()`]), the layer panel
 //! ([`layer_panel()`]), the document bar ([`document_bar()`]), the curve editor ([`curve_editor`]), egui
 //! input/output plumbing ([`UiLayer`]) and
 //! reporting which screen regions the UI covers (pen passthrough).
@@ -25,6 +26,7 @@ pub mod history_bar;
 pub mod layer_panel;
 pub mod prompt;
 pub mod selection_panel;
+pub mod transform_panel;
 
 pub use brush_panel::{BrushPanel, PanelAction, PanelModel};
 pub use color_panel::{ColorAction, ColorModel, ColorPanel, PickSource};
@@ -34,12 +36,18 @@ use egui::{ClippedPrimitive, TexturesDelta, ViewportId};
 use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
 pub use history_bar::{HistoryButtons, HistoryCommand, history_bar};
 pub use layer_panel::{LayerAction, LayerRow, layer_panel};
-pub use prompt::{MergeMaskChoice, PromptChoice, merge_mask_prompt, notice, unsaved_prompt};
+pub use prompt::{
+    ApplyChoice, MergeMaskChoice, PromptChoice, apply_transform_prompt, merge_mask_prompt, notice,
+    unsaved_prompt,
+};
 pub use selection_panel::{
     SelectionAction, SelectionKind, SelectionMode, SelectionModel, selection_outline,
     selection_panel,
 };
 use tela_renderer::FrameOverlay;
+pub use transform_panel::{
+    HANDLE, TransformAction, TransformBox, TransformModel, transform_box, transform_panel,
+};
 use winit::window::Window;
 
 struct Pending {

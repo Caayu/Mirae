@@ -45,6 +45,10 @@ pub enum PanelAction {
     Color(crate::ColorAction),
     /// From the selection panel.
     Selection(crate::SelectionAction),
+    /// From the transform panel.
+    Transform(crate::TransformAction),
+    /// The answer to "Apply the transform?".
+    ApplyTransform(crate::ApplyChoice),
 }
 
 /// Persistent panel state.

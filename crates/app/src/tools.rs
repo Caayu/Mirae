@@ -16,6 +16,9 @@ pub enum CanvasTool {
     Eyedropper,
     /// The selection tool (its shape and settings: `SelectionTool`).
     Selection,
+    /// Drags move the active layer, or the selected part of it (one
+    /// transform per drag; phase 5D).
+    Move,
 }
 
 pub struct Tools {

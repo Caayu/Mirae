@@ -13,6 +13,7 @@ mod colors;
 mod selecting;
 mod stats;
 mod tools;
+mod transforming;
 
 use app::{App, AppEvent};
 
