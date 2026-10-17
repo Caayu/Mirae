@@ -53,6 +53,37 @@ fn the_composite_is_unchanged_by_a_round_trip() {
     }
 }
 
+/// Merge down (5B) produces nothing the v1 format does not already hold:
+/// a merged document saves, loads and composes exactly, at both depths,
+/// with deterministic bytes.
+#[test]
+fn merged_documents_round_trip_without_a_format_change() {
+    for depth in PixelDepth::ALL {
+        let mut d = sample_document(depth);
+        // The clipped Multiply layer into its (unlocked) base, and the
+        // masked layer into the merged one, keeping nothing of the lower
+        // mask (there is none) and applying the upper one.
+        let base = d.layers().nth(1).unwrap().id();
+        d.set_locked(base, false).unwrap();
+        let clip = d.layer_above(base).unwrap();
+        d.merge_down(clip, tela_document::LowerMask::Apply).unwrap();
+        let masked = d.layer_above(base).unwrap();
+        d.merge_down(masked, tela_document::LowerMask::Apply)
+            .unwrap();
+        let bytes = save(&d);
+        let back = load(&bytes).unwrap();
+        assert!(back.warnings.is_empty(), "{:?}", back.warnings);
+        assert_same(&back.document, &d);
+        assert_eq!(save(&back.document), bytes, "deterministic");
+        for y in -1..3 {
+            for x in -2..4 {
+                let c = TileCoord { x, y };
+                assert_eq!(d.compose_tile(c, None), back.document.compose_tile(c, None));
+            }
+        }
+    }
+}
+
 #[test]
 fn saving_is_deterministic_and_idempotent() {
     for depth in PixelDepth::ALL {
