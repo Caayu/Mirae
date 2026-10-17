@@ -9,7 +9,7 @@ nothing else is started.
 | 5A Colour | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5A-color.md](../parity/5A-color.md); [ADR 0021](../adr/0021-paint-colour-and-colour-tool-state.md) |
 | 5B Layer workflow + D-4C-1 probe, merge down | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5B-transparent-compositing.md](../parity/5B-transparent-compositing.md); [ADR 0022](../adr/0022-blending-over-translucent-backdrops.md), [ADR 0023](../adr/0023-merge-down-and-layer-workflow.md) |
 | 5C Selections | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5C-selection.md](../parity/5C-selection.md); [ADR 0024](../adr/0024-selections.md) |
-| 5D Transform | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
+| 5D Transform | **Approved 2026-10-17, in progress** | below; [parity/5D-transform.md](../parity/5D-transform.md) |
 | 5E Fill | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 | 5F Gradients | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 | 5G Integration | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
