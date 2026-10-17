@@ -15,8 +15,8 @@ use tela_brush::scatter::ScatterMode;
 use tela_brush::texture::{CanvasTexture, TextureMode, TexturePattern, TextureSettings};
 use tela_brush::tip::Tip;
 use tela_brush::{Dab, DabSink, PixelAlpha, StampContext, StrokeBuffer};
-use tela_canvas::{DirtyTiles, IRect, TILE_SIZE, TileCoord};
-use tela_color::{Color, PremulRgba};
+use tela_canvas::{DirtyTiles, IRect, TILE_SIZE, Tile, TileCoord};
+use tela_color::{Color, PixelDepth, PremulRgba, StoragePixel, with_pixel_type};
 use tela_document::{ComposeScratch, Document, Overlay, OverlayPaint, Placement};
 
 /// Counts allocations so "no allocation per dab" is measured, not assumed.
@@ -240,4 +240,85 @@ fn main() {
         allocs,
         reps * coords.len()
     );
+    color_costs();
+}
+
+/// Phase 5A: what the paint colour costs. Stamping never reads the colour
+/// (the stroke is an alpha mask); it enters only where the mask is
+/// composited, in the preview (`paint_over_tile`) and the commit
+/// (`commit_tile`). Both are measured with black and a colour with
+/// independent channels, at both storage depths.
+fn color_costs() {
+    println!(
+        "\npaint colour (soft 120 px stroke, 400 dabs; preview = 2-layer composition with the stroke overlay):\n"
+    );
+    println!("| depth | colour | preview ms / tile | commit ms / tile | allocations |");
+    println!("|---|---|---:|---:|---:|");
+    for depth in PixelDepth::ALL {
+        for (name, color) in [
+            ("black", Color::BLACK),
+            ("37,149,213", Color::from_rgb8([37, 149, 213])),
+        ] {
+            let (preview, commit, allocs) = with_pixel_type!(depth, P => color_cost::<P>(color));
+            println!(
+                "| {}-bit | {name} | {:.3} | {:.3} | {allocs} |",
+                depth.bits(),
+                preview * 1e3,
+                commit * 1e3
+            );
+        }
+    }
+}
+
+fn color_cost<P: StoragePixel>(color: Color) -> (f64, f64, u64) {
+    let mut doc = Document::with_depth(2048, 2048, P::DEPTH);
+    let bottom = doc.active_layer();
+    let top = doc.add_layer(Placement::Top).unwrap();
+    let mut all = DirtyTiles::new();
+    all.mark_rect(IRect::from_size(2048, 2048));
+    for layer in [bottom, top] {
+        doc.modify_tiles(layer, &all, |c, t: &mut Tile<P>| {
+            let (ox, oy) = c.origin();
+            for i in 0..TILE_SIZE {
+                if ox == oy {
+                    *t.get_mut(i, i) = P::from_rgba8([20, 30, 40, 255]);
+                }
+            }
+        })
+        .unwrap();
+    }
+    let mut stroke = StrokeBuffer::new(color, context(Kind::Soft));
+    for d in dabs(Kind::Soft, 120.0, 400) {
+        stroke.dab(&d);
+    }
+    let paint =
+        |c: TileCoord, px: &mut [PremulRgba]| stroke.paint_over_tile(c, px, PixelAlpha::Free);
+    let covers = |c: TileCoord| stroke.touched().contains(c);
+    let overlay = Overlay {
+        target: top,
+        paint: OverlayPaint::Pixels(&paint),
+        covers: &covers,
+    };
+    let coords: Vec<TileCoord> = stroke.touched().iter().collect();
+    let mut scratch = ComposeScratch::new();
+    let mut tile: Tile<P> = Tile::new();
+    let reps = 20;
+    let before = ALLOCS.load(Ordering::Relaxed);
+    let t = Instant::now();
+    for _ in 0..reps {
+        for &c in &coords {
+            doc.compose_tile_into(c, Some(&overlay), &mut scratch);
+        }
+    }
+    let preview = t.elapsed().as_secs_f64() / (reps * coords.len()) as f64;
+    let t = Instant::now();
+    for _ in 0..reps {
+        for &c in &coords {
+            stroke.commit_tile(c, &mut tile, PixelAlpha::Free);
+        }
+    }
+    let commit = t.elapsed().as_secs_f64() / (reps * coords.len()) as f64;
+    let allocs = ALLOCS.load(Ordering::Relaxed) - before;
+    std::hint::black_box(&tile);
+    (preview, commit, allocs)
 }
