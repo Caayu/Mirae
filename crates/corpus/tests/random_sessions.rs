@@ -1,7 +1,7 @@
 //! Seeded random sessions (phase 4G): reproducible sequences of valid
 //! operations across every phase-4 feature — real strokes on pixels and
 //! masks, layer edits, clipping, alpha lock, blend modes, undo/redo,
-//! depth conversion, selections (5C) — with checkpoints that validate the invariants and
+//! depth conversion, selections (5C), transforms (5D) — with checkpoints that validate the invariants and
 //! premultiplied values and save/load the document. A failure prints its
 //! seed; rerun one with `MIRAE_SEED=<n>`.
 
@@ -9,7 +9,10 @@ mod support;
 
 use support::*;
 use tela_color::PixelDepth;
-use tela_document::{BlendMode, Document, LayerPart, Placement, SelectionOp, SelectionShape};
+use tela_document::{
+    BlendMode, Document, Interpolation, LayerPart, Placement, SelectionOp, SelectionShape,
+    Transform, TransformParams,
+};
 
 const OPS: usize = 60;
 const CHECK_EVERY: usize = 15;
@@ -162,6 +165,50 @@ fn op(d: &mut Document, r: &mut Rng, seed: u64, i: usize) {
         },
         18 => {
             d.redo();
+        }
+        // Transforms (5D) of the active layer or its selected part: moves
+        // by whole and fractional pixels, flips, scales, rotations, both
+        // interpolations; or a session cancelled (nothing changes).
+        19 => {
+            let Ok(source) = d.transform_source(d.active_layer()) else {
+                return;
+            };
+            let before = content_digest(d);
+            let mut p = TransformParams::identity(source.centre());
+            match r.below(6) {
+                0 => p.translate = [r.below(80) as f64 - 40.0, r.below(60) as f64 - 30.0],
+                1 => p.translate = [r.unit() as f64 * 30.0, r.unit() as f64 * -20.0],
+                2 => p.scale[r.below(2)] = -1.0,
+                3 => p.scale = [0.2 + r.unit() as f64 * 2.0, 0.2 + r.unit() as f64 * 2.0],
+                4 => p.rotation = r.unit() as f64 * 6.3,
+                _ => {
+                    drop(source);
+                    assert_eq!(
+                        content_digest(d),
+                        before,
+                        "a cancelled transform changes nothing"
+                    );
+                    return;
+                }
+            }
+            let interpolation = if r.below(4) == 0 {
+                Interpolation::Nearest
+            } else {
+                Interpolation::Bicubic
+            };
+            let t = Transform {
+                params: p,
+                interpolation,
+            };
+            let steps = d.history_len();
+            match d.apply_transform(&source, &t) {
+                Ok(dirty) => assert!(
+                    d.history_len() <= steps + 1
+                        && (dirty.is_empty() || d.history_len() == steps + 1),
+                    "one step at most (seed {seed}, op {i})"
+                ),
+                Err(e) => panic!("a fresh source applies: {e} (seed {seed}, op {i})"),
+            }
         }
         _ => {
             if r.below(3) == 0 {

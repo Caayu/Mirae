@@ -45,6 +45,9 @@ enum Edit {
     Deselect,
     Invert,
     Feather(u8),
+    /// A transform of a layer (or its selected part) of `kind`: a move, a
+    /// flip, a reduction, an enlargement, a rotation, nearest neighbour.
+    Transform(usize, u8),
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +83,7 @@ fn hop() -> impl Strategy<Value = HOp> {
         1 => Just(Edit::Deselect),
         1 => Just(Edit::Invert),
         1 => (1u8..12).prop_map(Edit::Feather),
+        2 => (any::<usize>(), 0u8..6).prop_map(|(i, k)| Edit::Transform(i, k)),
     ];
     prop_oneof![
         6 => edit.prop_map(HOp::Edit),
@@ -207,6 +211,29 @@ fn edit(d: &mut Document, removed: &mut Vec<LayerId>, e: &Edit) -> Result<(), La
         Edit::Feather(px) => {
             d.feather_selection(f32::from(px));
             Ok(())
+        }
+        Edit::Transform(i, kind) => {
+            let source = d.transform_source(pick(d, removed, i))?;
+            let mut p = crate::TransformParams::identity(source.centre());
+            match kind {
+                0 => p.translate = [13.0, -7.0],
+                1 => p.scale = [-1.0, 1.0],
+                2 => p.scale = [0.4, 0.6],
+                3 => p.scale = [1.7, 1.7],
+                _ => p.rotation = 0.4,
+            }
+            let interpolation = if kind == 5 {
+                crate::Interpolation::Nearest
+            } else {
+                crate::Interpolation::Bicubic
+            };
+            ok(d.apply_transform(
+                &source,
+                &crate::Transform {
+                    params: p,
+                    interpolation,
+                },
+            ))
         }
     }
 }

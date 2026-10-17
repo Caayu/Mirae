@@ -422,3 +422,170 @@ fn the_selection_bounds_are_the_box_even_over_empty_pixels() {
     );
     assert_eq!(d.next_undo(), Some(HistoryAction::Transform));
 }
+
+mod properties {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// Random content: up to four rectangles of random colour and alpha.
+    fn content() -> impl Strategy<Value = Vec<(i32, i32, i32, i32, [u8; 4])>> {
+        proptest::collection::vec(
+            (0i32..200, 0i32..140, 1i32..90, 1i32..60, any::<[u8; 4]>()),
+            1..4,
+        )
+        .prop_map(|v| {
+            v.into_iter()
+                .map(|(x, y, w, h, c)| (x, y, x + w, y + h, c))
+                .collect()
+        })
+    }
+
+    fn any_params() -> impl Strategy<Value = TransformParams> {
+        (
+            -60.0f64..60.0,
+            -40.0f64..40.0,
+            prop_oneof![Just(1.0), Just(-1.0), 0.2f64..3.0, -3.0f64..-0.2],
+            prop_oneof![Just(1.0), 0.2f64..3.0],
+            prop_oneof![Just(0.0), 0.0f64..std::f64::consts::TAU],
+            0.0f64..300.0,
+            0.0f64..200.0,
+        )
+            .prop_map(|(tx, ty, sx, sy, r, px, py)| {
+                super::params([tx, ty], [sx, sy], r.to_degrees(), [px, py])
+            })
+    }
+
+    fn build(depth: PixelDepth, rects: &[(i32, i32, i32, i32, [u8; 4])]) -> (Document, LayerId) {
+        let mut d = Document::with_depth(300, 200, depth);
+        let id = d.active_layer();
+        let mut tiles = DirtyTiles::new();
+        for &(x0, y0, x1, y1, _) in rects {
+            tiles.mark_rect(IRect::new(x0, y0, x1, y1));
+        }
+        with_pixel_type!(depth, P => {
+            d.modify_tiles(id, &tiles, |c, t: &mut Tile<P>| {
+                let (ox, oy) = c.origin();
+                for &(x0, y0, x1, y1, [r, g, b, a]) in rects {
+                    let a = f32::from(a.max(1)) / 255.0;
+                    let p = PremulRgba::new(f32::from(r) / 255.0 * a, f32::from(g) / 255.0 * a, f32::from(b) / 255.0 * a, a);
+                    for y in y0.max(oy)..y1.min(oy + 256) {
+                        for x in x0.max(ox)..x1.min(ox + 256) {
+                            *t.get_mut((x - ox) as u32, (y - oy) as u32) = P::from_premul(p);
+                        }
+                    }
+                }
+            })
+            .unwrap();
+        });
+        (d, id)
+    }
+
+    /// Every stored pixel is valid premultiplied (TR5).
+    fn premultiplied(d: &Document, id: LayerId) -> bool {
+        with_pixel_type!(d.depth(), P => {
+            let s = d.layer(id).unwrap().pixels().surface::<P>().unwrap();
+            s.tile_coords().all(|c| {
+                s.tile(c).unwrap().pixels().iter().all(|p| {
+                    let q = p.to_premul();
+                    q.r <= q.a + 1e-6 && q.g <= q.a + 1e-6 && q.b <= q.a + 1e-6
+                })
+            })
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        #[test]
+        fn transforms_are_transactional_undoable_and_valid(
+            rects in content(),
+            p in any_params(),
+            selection in 0u8..3,
+            nearest in any::<bool>(),
+            wide in any::<bool>(),
+        ) {
+            let depth = if wide { PixelDepth::Rgba16 } else { PixelDepth::Rgba8 };
+            let (mut d, id) = build(depth, &rects);
+            match selection {
+                1 => drop(d.select(&SelectionShape::Rect([20.0, 10.0], [150.0, 120.0]), false, SelectionOp::Replace)),
+                2 => {
+                    d.select(
+                        &SelectionShape::Ellipse { center: [100.0, 80.0], radii: [70.0, 50.0], rotation: 0.2 },
+                        true,
+                        SelectionOp::Replace,
+                    );
+                    d.feather_selection(5.0);
+                }
+                _ => {}
+            }
+            let Ok(source) = d.transform_source(id) else {
+                return Ok(());
+            };
+            let before = d.digest();
+            let steps = d.history_len();
+            let t = Transform {
+                params: p,
+                interpolation: if nearest { Interpolation::Nearest } else { Interpolation::Bicubic },
+            };
+            // TR9: a refused transform changes nothing.
+            let bad = Transform { params: TransformParams { rotation: f64::NAN, ..p }, ..t };
+            prop_assert_eq!(d.apply_transform(&source, &bad).err(), Some(LayerError::InvalidTransform));
+            prop_assert_eq!(&d.digest(), &before);
+            d.apply_transform(&source, &t).unwrap();
+            d.check_invariants();
+            let after = d.digest();
+            prop_assert!(d.history_len() <= steps + 1, "TR3");
+            prop_assert!(premultiplied(&d, id), "TR5");
+            // TR7: the layer keeps its id and properties.
+            prop_assert_eq!(d.active_layer(), id);
+            let l = d.layer(id).unwrap();
+            prop_assert_eq!((l.opacity(), l.blend_mode(), l.visible(), l.locked()), (1.0, BlendMode::Normal, true, false));
+            if d.history_len() == steps + 1 {
+                d.undo().unwrap();
+                prop_assert_eq!(&d.digest(), &before, "undo(commit) = the source");
+                d.redo().unwrap();
+                prop_assert_eq!(&d.digest(), &after, "redo = the commit");
+            } else {
+                prop_assert_eq!(&after, &before, "no step, no change");
+            }
+        }
+
+        #[test]
+        fn inverse_moves_double_flips_and_full_turns_restore_the_layer(
+            rects in content(),
+            dx in -80i32..80,
+            dy in -60i32..60,
+            wide in any::<bool>(),
+        ) {
+            // TR10 and the identities of the brief: exact, as these are
+            // copies (axis-aligned with unit scale).
+            let depth = if wide { PixelDepth::Rgba16 } else { PixelDepth::Rgba8 };
+            let (mut d, id) = build(depth, &rects);
+            let original = d.digest();
+            let ops: [&dyn Fn(&TransformParams) -> TransformParams; 4] = [
+                &|p| TransformParams { translate: [f64::from(dx), f64::from(dy)], ..*p },
+                &|p| TransformParams { translate: [-f64::from(dx), -f64::from(dy)], ..*p },
+                &|p| TransformParams { scale: [-1.0, 1.0], ..*p },
+                &|p| TransformParams { scale: [-1.0, 1.0], ..*p },
+            ];
+            for op in ops {
+                let source = d.transform_source(id).unwrap();
+                let p = op(&TransformParams::identity(source.centre()));
+                d.apply_transform(&source, &bicubic(p)).unwrap();
+            }
+            let layer_of = |g: crate::document::Digest| g.layers.into_iter().find(|l| l.id == id.get()).unwrap().tiles;
+            prop_assert_eq!(layer_of(d.digest()), layer_of(original.clone()));
+            // Vertical flips twice and a full turn.
+            for p in [
+                |s: &crate::TransformSource| TransformParams { scale: [1.0, -1.0], ..TransformParams::identity(s.centre()) },
+                |s: &crate::TransformSource| TransformParams { scale: [1.0, -1.0], ..TransformParams::identity(s.centre()) },
+                |s: &crate::TransformSource| TransformParams { rotation: std::f64::consts::TAU, ..TransformParams::identity(s.centre()) },
+            ] {
+                let source = d.transform_source(id).unwrap();
+                d.apply_transform(&source, &bicubic(p(&source))).unwrap();
+            }
+            prop_assert_eq!(layer_of(d.digest()), layer_of(original.clone()));
+        }
+    }
+}
