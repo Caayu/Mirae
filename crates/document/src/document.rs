@@ -5,7 +5,7 @@ mod selecting;
 
 use std::num::NonZeroU32;
 
-use tela_canvas::{DirtyTiles, IRect, Tile, TileCoord};
+use tela_canvas::{DirtyTiles, IRect, Tile, TileCoord, TileCoverage};
 use tela_color::{PixelDepth, Rgba, StoragePixel};
 
 use self::history::{Change, History, layer_bytes, mask_bytes, pixels_bytes};
@@ -556,7 +556,31 @@ impl Document {
         tiles: &DirtyTiles,
         mut f: impl FnMut(TileCoord, &mut Tile<u8>),
     ) -> Result<DirtyTiles, LayerError> {
+        self.edit_mask(id, tiles, false, |c, t, _| f(c, t))
+    }
+
+    /// [`Document::modify_mask`] limited by the selection: `f` also gets
+    /// how much it may change each pixel of the tile (the selection's
+    /// coverage, or [`TileCoverage::Full`] without a selection), to pass
+    /// to `StrokeBuffer::commit_alpha_tile_within` (reference 5C S26).
+    pub fn modify_mask_in_selection(
+        &mut self,
+        id: LayerId,
+        tiles: &DirtyTiles,
+        f: impl FnMut(TileCoord, &mut Tile<u8>, TileCoverage),
+    ) -> Result<DirtyTiles, LayerError> {
+        self.edit_mask(id, tiles, true, f)
+    }
+
+    fn edit_mask(
+        &mut self,
+        id: LayerId,
+        tiles: &DirtyTiles,
+        limited: bool,
+        mut f: impl FnMut(TileCoord, &mut Tile<u8>, TileCoverage),
+    ) -> Result<DirtyTiles, LayerError> {
         let i = self.require_unlocked(id)?;
+        let selection = self.selection.as_ref().filter(|_| limited);
         let layer = &mut self.layers[i];
         let mask = layer.mask.as_mut().ok_or(LayerError::NoMask(id))?;
         let mut previous = Vec::with_capacity(tiles.len());
@@ -564,9 +588,10 @@ impl Document {
         for coord in tiles.iter() {
             let old = mask.hidden.tile(coord).cloned();
             let tile = mask.hidden.tile_or_insert(coord);
+            let coverage = selection.map_or(TileCoverage::Full, |s| s.tile(coord));
             // Stored inverted (hidden amount); `f` sees reveal values.
             invert(tile);
-            f(coord, tile);
+            f(coord, tile, coverage);
             invert(tile);
             if tile.is_blank() {
                 mask.hidden.remove_tile(coord);
@@ -633,18 +658,44 @@ impl Document {
         tiles: &DirtyTiles,
         mut f: impl FnMut(TileCoord, &mut Tile<P>),
     ) -> Result<DirtyTiles, LayerError> {
+        self.edit_tiles(id, tiles, false, |c, t, _| f(c, t))
+    }
+
+    /// [`Document::modify_tiles`] limited by the selection: `f` also gets
+    /// how much it may change each pixel of the tile (the selection's
+    /// coverage, or [`TileCoverage::Full`] without a selection), to pass
+    /// to `StrokeBuffer::commit_tile_within`, the same coverage the stroke
+    /// preview used (invariants SEL4, SEL5; reference 5C S22–S24).
+    pub fn modify_tiles_in_selection<P: StoragePixel>(
+        &mut self,
+        id: LayerId,
+        tiles: &DirtyTiles,
+        f: impl FnMut(TileCoord, &mut Tile<P>, TileCoverage),
+    ) -> Result<DirtyTiles, LayerError> {
+        self.edit_tiles(id, tiles, true, f)
+    }
+
+    fn edit_tiles<P: StoragePixel>(
+        &mut self,
+        id: LayerId,
+        tiles: &DirtyTiles,
+        limited: bool,
+        mut f: impl FnMut(TileCoord, &mut Tile<P>, TileCoverage),
+    ) -> Result<DirtyTiles, LayerError> {
         let i = self.require_unlocked(id)?;
         let wrong = LayerError::WrongDepth {
             document: self.depth,
             edit: P::DEPTH,
         };
+        let selection = self.selection.as_ref().filter(|_| limited);
         let layer = &mut self.layers[i];
         let pixels = layer.pixels.surface_mut::<P>().ok_or(wrong)?;
         let mut previous = Vec::with_capacity(tiles.len());
         let (mut before, mut after) = (0, 0);
         for coord in tiles.iter() {
             let old = pixels.tile(coord).cloned();
-            f(coord, pixels.tile_or_insert(coord));
+            let coverage = selection.map_or(TileCoverage::Full, |s| s.tile(coord));
+            f(coord, pixels.tile_or_insert(coord), coverage);
             if old.is_none() && pixels.tile(coord).is_some_and(Tile::is_blank) {
                 pixels.remove_tile(coord);
             }

@@ -246,3 +246,36 @@ fn feathering_too_small_a_selection_away_leaves_no_selection() {
         IRect::new(100, 100, 101, 101)
     );
 }
+
+#[test]
+fn limited_edits_receive_the_selection_coverage_and_others_do_not() {
+    let mut d = Document::new(600, 400);
+    let l = d.active_layer();
+    let mut tiles = DirtyTiles::new();
+    tiles.mark(TileCoord { x: 0, y: 0 });
+    tiles.mark(TileCoord { x: 2, y: 0 });
+    let mut seen = Vec::new();
+    d.modify_tiles_in_selection(l, &tiles, |c, _: &mut Tile<[u8; 4]>, cov| {
+        seen.push((c, matches!(cov, TileCoverage::Full)));
+    })
+    .unwrap();
+    assert!(seen.iter().all(|(_, full)| *full), "no selection: full");
+    d.select(&rect(0.0, 0.0, 300.0, 300.0), false, SelectionOp::Replace);
+    let mut kinds = Vec::new();
+    d.modify_tiles_in_selection(l, &tiles, |_, _: &mut Tile<[u8; 4]>, cov| {
+        kinds.push(cov.get(10, 10));
+    })
+    .unwrap();
+    assert_eq!(kinds, vec![255, 0]);
+    d.add_mask(l).unwrap();
+    let mut mask = Vec::new();
+    d.modify_mask_in_selection(l, &tiles, |_, _, cov| mask.push(cov.get(10, 10)))
+        .unwrap();
+    assert_eq!(mask, vec![255, 0]);
+    // The unlimited path never consults the selection.
+    d.modify_tiles(l, &tiles, |_, t: &mut Tile<[u8; 4]>| {
+        *t.get_mut(10, 10) = [255; 4]
+    })
+    .unwrap();
+    assert_eq!(d.layer(l).unwrap().pixels().pixel(522, 10).a, 1.0);
+}
