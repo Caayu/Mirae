@@ -265,6 +265,8 @@ impl App {
         self.document = doc;
         self.stale.extend(&self.document.content_tiles());
         self.stroke_target = None;
+        self.selection_drag = None;
+        self.outline = None;
         self.file.saved = self.document.revision();
         self.file.path = path;
         self.fit_view();

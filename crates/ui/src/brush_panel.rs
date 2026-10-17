@@ -43,6 +43,8 @@ pub enum PanelAction {
     DismissNotice,
     /// From the colour panel.
     Color(crate::ColorAction),
+    /// From the selection panel.
+    Selection(crate::SelectionAction),
 }
 
 /// Persistent panel state.

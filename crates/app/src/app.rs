@@ -14,21 +14,24 @@ use tela_document::{
 use tela_renderer::{Frame, Renderer};
 use tela_tablet::{DeviceKind, Phase, TabletEvent, TabletSample, TimestampNormalizer, clock};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::event::{
+    ElementState, KeyEvent, MouseButton, MouseScrollDelta, StartCause, WindowEvent,
+};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorIcon, Window, WindowId};
 
 mod files;
 
 use crate::colors::{ColorState, Slot};
+use crate::selecting::{SelectionDrag, SelectionTool};
 use crate::stats::LatencyStats;
-use crate::tools::Tools;
+use crate::tools::{CanvasTool, Tools};
 use files::{FileState, Pending};
 use tela_ui::{
     BrushPanel, ColorAction, ColorModel, ColorPanel, DocumentCommand, DocumentInfo, HistoryButtons,
     HistoryCommand, LayerAction, LayerRow, MergeMaskChoice, PanelAction, PanelModel, PickSource,
-    UiLayer, egui,
+    SelectionAction, SelectionModel, UiLayer, egui,
 };
 
 const DOCUMENT_SIZE: (u32, u32) = (4000, 3000);
@@ -50,7 +53,14 @@ enum Drag {
     /// The eyedropper: every position picks; the last pick is remembered
     /// as a recent colour when the drag ends.
     Pick(PickSource),
+    /// A selection shape being drawn (`App::selection_drag`).
+    Select,
 }
+
+/// Marching-ants speed, points per second.
+const ANTS_SPEED: f32 = 8.0;
+/// How often the ants move while the document is otherwise idle.
+const ANTS_FRAME: std::time::Duration = std::time::Duration::from_millis(125);
 
 struct Gpu {
     window: Arc<Window>,
@@ -89,8 +99,22 @@ pub struct App {
     /// saved with the document; ADR 0021).
     colors: ColorState,
     color_panel: ColorPanel,
-    /// The eyedropper tool is selected: left drags pick.
-    picker: bool,
+    /// What left drags do: paint, pick or select.
+    tool: CanvasTool,
+    /// Selection tool settings (session state, not saved).
+    selection: SelectionTool,
+    /// The selection shape being drawn, in screen pixels.
+    selection_drag: Option<SelectionDrag>,
+    /// The selection's outline in document pixels, for the selection
+    /// revision it was traced at (`None`: trace again).
+    outline: Option<(u64, Vec<Vec<[i32; 2]>>)>,
+    /// When the marching ants started (their phase).
+    ants_epoch: Instant,
+    /// When the ants next move (while a selection or a selection drag is
+    /// shown).
+    ants_due: Instant,
+    /// The cursor last set on the window.
+    cursor_icon: CursorIcon,
     pick_source: PickSource,
     /// The colour the current pick drag last set.
     picked: Option<Color>,
@@ -157,7 +181,13 @@ impl App {
             panel: BrushPanel::default(),
             colors: ColorState::new(),
             color_panel: ColorPanel::default(),
-            picker: false,
+            tool: CanvasTool::Brush,
+            selection: SelectionTool::default(),
+            selection_drag: None,
+            outline: None,
+            ants_epoch: Instant::now(),
+            ants_due: Instant::now(),
+            cursor_icon: CursorIcon::Default,
             pick_source: PickSource::Canvas,
             picked: None,
             last_title: String::new(),
@@ -278,9 +308,38 @@ impl App {
             // The eyedropper tool, or Alt with any tool (the reference
             // picks the displayed colour with Alt; parity record 5A, O10).
             // The stylus eraser end keeps erasing.
+            // The selection tool: Shift, Alt and Shift+Alt at the press
+            // choose the operator (reference 5C S4); the stylus eraser end
+            // keeps erasing.
             (Phase::Down, Drag::None)
-                if self.modifiers.alt_key()
-                    || (self.picker && ev.sample.device_kind != DeviceKind::Eraser) =>
+                if self.tool == CanvasTool::Selection
+                    && ev.sample.device_kind != DeviceKind::Eraser =>
+            {
+                let op = self
+                    .selection
+                    .op(self.modifiers.shift_key(), self.modifiers.alt_key());
+                self.selection_drag = Some(SelectionDrag::begin(&self.selection, op, pos));
+                self.drag = Drag::Select;
+            }
+            (Phase::Move | Phase::Hover, Drag::Select) => {
+                if let Some(d) = &mut self.selection_drag {
+                    d.move_to(pos, self.modifiers.shift_key());
+                }
+            }
+            (Phase::Up, Drag::Select) => {
+                if let Some(d) = &mut self.selection_drag {
+                    d.move_to(pos, self.modifiers.shift_key());
+                }
+                self.finish_selection();
+            }
+            (Phase::Cancel, Drag::Select) => {
+                self.selection_drag = None;
+                self.drag = Drag::None;
+            }
+            (Phase::Down, Drag::None)
+                if (self.modifiers.alt_key() && self.tool != CanvasTool::Selection)
+                    || (self.tool == CanvasTool::Eyedropper
+                        && ev.sample.device_kind != DeviceKind::Eraser) =>
             {
                 let source = if self.modifiers.alt_key() {
                     PickSource::Canvas
@@ -343,22 +402,109 @@ impl App {
             self.stale.extend(stroke.touched());
             let tiles = stroke.touched();
             let doc = &mut self.document;
+            // Limited by the selection exactly as the preview was (the
+            // selection cannot change during a stroke: selection commands
+            // and undo are ignored until it ends, like the reference, S27).
             let committed = target.map(|t| match t.part {
                 // The commit is monomorphized per depth; the document's depth
                 // picks the instance once per stroke.
                 LayerPart::Pixels => with_pixel_type!(doc.depth(), P => {
-                    doc.modify_tiles(t.layer, tiles, |c, tile: &mut Tile<P>| {
-                        stroke.commit_tile(c, tile, t.alpha)
+                    doc.modify_tiles_in_selection(t.layer, tiles, |c, tile: &mut Tile<P>, within| {
+                        stroke.commit_tile_within(c, tile, t.alpha, within)
                     })
                 }),
                 LayerPart::Mask => {
-                    doc.modify_mask(t.layer, tiles, |c, tile| stroke.commit_alpha_tile(c, tile))
+                    doc.modify_mask_in_selection(t.layer, tiles, |c, tile, within| {
+                        stroke.commit_alpha_tile_within(c, tile, within)
+                    })
                 }
             });
             if let Some(Err(e)) = committed {
                 log::warn!(target: "tela::stroke", "stroke discarded: {e}");
             }
             log::debug!(target: "tela::stroke", "{:?}", self.engine.stats());
+        }
+    }
+
+    /// Ends a selection drag: the shape, mapped to the document once
+    /// through the view, combines with the selection (one history step if
+    /// it changed anything; a click in New mode deselects, S5).
+    fn finish_selection(&mut self) {
+        self.drag = Drag::None;
+        if let Some(d) = self.selection_drag.take() {
+            let shape = d.shape(&self.view);
+            self.document.select(&shape, d.anti_alias, d.op);
+        }
+    }
+
+    /// The selection outline and the shape being dragged, in egui points
+    /// (`ppp` physical pixels per point). The outline is traced once per
+    /// selection change; each frame only maps it through the view, keeping
+    /// points at least a point apart (a staircase seen from afar becomes
+    /// its slope).
+    fn outline_on_screen(&mut self, ppp: f32) -> (Vec<Vec<egui::Pos2>>, Vec<egui::Pos2>) {
+        let revision = self.document.selection_revision();
+        if self.outline.as_ref().is_none_or(|(r, _)| *r != revision) {
+            let loops = self
+                .document
+                .selection()
+                .map(|s| s.outline())
+                .unwrap_or_default();
+            self.outline = Some((revision, loops));
+        }
+        let view = &self.view;
+        let to_point = |p: Vec2| egui::Pos2::new(p.x / ppp, p.y / ppp);
+        let mut loops = Vec::new();
+        for l in self.outline.as_ref().map_or(&[][..], |(_, l)| l.as_slice()) {
+            let mut points: Vec<egui::Pos2> = Vec::with_capacity(l.len());
+            for p in l {
+                let s = to_point(view.to_screen(Vec2::new(p[0] as f32, p[1] as f32)));
+                if points.last().is_none_or(|q| q.distance(s) >= 1.0) {
+                    points.push(s);
+                }
+            }
+            if points.len() >= 2 {
+                loops.push(points);
+            }
+        }
+        let dragged = self.selection_drag.as_ref().map_or_else(Vec::new, |d| {
+            let mut path: Vec<egui::Pos2> = d.preview().into_iter().map(to_point).collect();
+            if let Some(&first) = path.first() {
+                path.push(first);
+            }
+            path
+        });
+        (loops, dragged)
+    }
+
+    /// Selection commands. Ignored during a stroke (reference S27) and
+    /// while a selection shape is being drawn.
+    fn apply_selection(&mut self, action: SelectionAction) {
+        let busy = self.engine.is_stroking() || self.drag == Drag::Select;
+        let doc = &mut self.document;
+        match action {
+            SelectionAction::Brush => self.tool = CanvasTool::Brush,
+            SelectionAction::Tool(kind) => {
+                self.tool = CanvasTool::Selection;
+                self.selection.kind = kind;
+            }
+            SelectionAction::Mode(mode) => self.selection.mode = mode,
+            SelectionAction::AntiAlias(on) => self.selection.set_anti_alias(on),
+            SelectionAction::FeatherStrength(px) => self.selection.feather = px,
+            _ if busy => {}
+            SelectionAction::SelectAll => {
+                doc.select_all();
+            }
+            SelectionAction::Deselect => {
+                doc.deselect();
+            }
+            SelectionAction::Invert => {
+                doc.invert_selection();
+            }
+            SelectionAction::Feather(px) => {
+                self.selection.feather = px;
+                doc.feather_selection(px);
+            }
         }
     }
 
@@ -519,6 +665,23 @@ impl App {
                     self.apply_layer(LayerAction::MergeDown);
                     None
                 }
+                // The reference's selection shortcuts (5C S1).
+                PhysicalKey::Code(KeyCode::KeyA) if !shift && !alt => {
+                    self.apply_selection(SelectionAction::SelectAll);
+                    None
+                }
+                PhysicalKey::Code(KeyCode::KeyD) if !shift && !alt => {
+                    self.apply_selection(SelectionAction::Deselect);
+                    None
+                }
+                PhysicalKey::Code(KeyCode::KeyI) if shift && !alt => {
+                    self.apply_selection(SelectionAction::Invert);
+                    None
+                }
+                // Undo/redo would change the selection under a drag.
+                PhysicalKey::Code(KeyCode::KeyZ | KeyCode::KeyY) if self.drag == Drag::Select => {
+                    None
+                }
                 PhysicalKey::Code(KeyCode::KeyZ) if shift => Some(HistoryCommand::Redo),
                 PhysicalKey::Code(KeyCode::KeyZ) => Some(HistoryCommand::Undo),
                 PhysicalKey::Code(KeyCode::KeyY) => Some(HistoryCommand::Redo),
@@ -533,6 +696,10 @@ impl App {
         let p = self.tools.active_mut();
         let user = &mut self.engine.stroke_defaults;
         match &event.logical_key {
+            Key::Named(NamedKey::Escape) if self.drag == Drag::Select => {
+                self.selection_drag = None;
+                self.drag = Drag::None;
+            }
             Key::Named(NamedKey::Home) => self.fit_view(),
             Key::Named(NamedKey::F3) => self.show_stats = !self.show_stats,
             Key::Character(c) => match c.as_str() {
@@ -561,7 +728,14 @@ impl App {
                     }
                 }
                 "c" | "C" => self.clear_canvas(),
-                "e" | "E" => self.tools.eraser_mode = !self.tools.eraser_mode,
+                "e" | "E" => {
+                    self.tools.eraser_mode = !self.tools.eraser_mode;
+                    self.tool = CanvasTool::Brush;
+                }
+                // The reference's selection tool key (5C S2); B returns to
+                // the brush (Mirae's choice: free here).
+                "m" | "M" => self.tool = CanvasTool::Selection,
+                "b" | "B" => self.tool = CanvasTool::Brush,
                 // The reference's X: paint with the other colour (O2).
                 "x" | "X" => self.colors.toggle_active(),
                 // Main black, sub white: unbound in the reference (O3);
@@ -570,6 +744,7 @@ impl App {
                 d if d.len() == 1 && d.as_bytes()[0].is_ascii_digit() => {
                     let i = (d.as_bytes()[0] - b'1') as usize;
                     self.tools.select(i);
+                    self.tool = CanvasTool::Brush;
                 }
                 _ => return,
             },
@@ -589,7 +764,7 @@ impl App {
     /// Undo or redo. Like layer commands, ignored while a stroke is in
     /// progress (reference behaviour, docs/parity/4B-undo-redo.md U18).
     fn apply_history(&mut self, command: HistoryCommand) {
-        if self.engine.is_stroking() {
+        if self.engine.is_stroking() || self.drag == Drag::Select {
             return;
         }
         let dirty = match command {
@@ -753,15 +928,17 @@ impl App {
             .unwrap_or_else(|| StrokeTarget::active(&self.document));
         // Preview and commit share the stroke's compositing rules
         // (paint_over_tile / commit_tile, paint_alpha_tile /
-        // commit_alpha_tile), with the target fixed at stroke start.
+        // commit_alpha_tile), with the target fixed at stroke start, and
+        // the same selection coverage per tile (SEL5).
+        let document = &self.document;
         let pixels = |c: TileCoord, px: &mut [PremulRgba]| {
             if let Some(s) = stroke {
-                s.paint_over_tile(c, px, target.alpha);
+                s.paint_over_tile_within(c, px, target.alpha, document.selection_tile(c));
             }
         };
         let mask = |c: TileCoord, values: &mut [f32]| {
             if let Some(s) = stroke {
-                s.paint_alpha_tile(c, values);
+                s.paint_alpha_tile_within(c, values, document.selection_tile(c));
             }
         };
         let covers = |c: TileCoord| stroke.is_some_and(|s| s.touched().contains(c));
@@ -788,6 +965,21 @@ impl App {
     fn build_ui(&mut self) -> PanelAction {
         let name = self.document_name();
         let modified = self.is_modified();
+        let ppp = self
+            .gpu
+            .as_ref()
+            .map_or(1.0, |g| g.window.scale_factor() as f32);
+        let (loops, dragged) = self.outline_on_screen(ppp);
+        let phase = self.ants_epoch.elapsed().as_secs_f32() * ANTS_SPEED;
+        let selection_model = SelectionModel {
+            active: self.tool == CanvasTool::Selection,
+            kind: self.selection.kind,
+            mode: self.selection.mode,
+            anti_alias: self.selection.anti_alias(),
+            feather: self.selection.feather,
+            has_selection: self.document.has_selection(),
+        };
+        let mut selection_action = None;
         let Some(gpu) = &mut self.gpu else {
             return PanelAction::None;
         };
@@ -843,7 +1035,7 @@ impl App {
             main_active: self.colors.active_slot() == Slot::Main,
             recent: self.colors.recent(),
             swatches: self.colors.swatches(),
-            picker: self.picker,
+            picker: self.tool == CanvasTool::Eyedropper,
             pick_source: self.pick_source,
         };
         let color_panel = &mut self.color_panel;
@@ -856,6 +1048,8 @@ impl App {
         let merging = self.merging.is_some();
         let mut merge_answer = None;
         let repaint = gpu.ui.build(&gpu.window, |ui| {
+            // Painted first, on the background layer: the panels cover it.
+            tela_ui::selection_outline(ui.ctx(), &loops, &dragged, phase);
             // A fixed width: long names and markers are truncated, so the
             // controls never move under the cursor (debt #17).
             let layers = egui::Panel::right("layer-panel")
@@ -872,6 +1066,8 @@ impl App {
                 .default_size(290.0)
                 .show(ui, |ui| {
                     color_action = color_panel.show(ui, &color_model);
+                    ui.separator();
+                    selection_action = tela_ui::selection_panel(ui, &selection_model);
                     ui.separator();
                     action = panel.show(
                         ui,
@@ -918,6 +1114,9 @@ impl App {
         if dismissed {
             return PanelAction::DismissNotice;
         }
+        if let Some(a) = selection_action {
+            return PanelAction::Selection(a);
+        }
         match (
             document_command,
             history_command,
@@ -946,7 +1145,13 @@ impl App {
                 c.add_swatch();
             }
             ColorAction::RemoveSwatch(i) => c.remove_swatch(i),
-            ColorAction::SetPicker(on) => self.picker = on,
+            ColorAction::SetPicker(on) => {
+                self.tool = if on {
+                    CanvasTool::Eyedropper
+                } else {
+                    CanvasTool::Brush
+                };
+            }
             ColorAction::SetPickSource(s) => self.pick_source = s,
         }
     }
@@ -954,8 +1159,15 @@ impl App {
     fn apply(&mut self, action: PanelAction) {
         match action {
             PanelAction::None => return,
-            PanelAction::SelectPreset(i) => self.tools.select(i),
-            PanelAction::ToggleEraser => self.tools.eraser_mode = !self.tools.eraser_mode,
+            PanelAction::SelectPreset(i) => {
+                self.tools.select(i);
+                self.tool = CanvasTool::Brush;
+            }
+            PanelAction::ToggleEraser => {
+                self.tools.eraser_mode = !self.tools.eraser_mode;
+                self.tool = CanvasTool::Brush;
+            }
+            PanelAction::Selection(a) => self.apply_selection(a),
             PanelAction::ClearLayer => self.clear_canvas(),
             PanelAction::Layer(a) => self.apply_layer(a),
             PanelAction::History(c) => self.apply_history(c),
@@ -995,6 +1207,17 @@ impl App {
             workspace: WORKSPACE_COLOR,
         };
         gpu.renderer.render_with(&frame, Some(&mut gpu.ui));
+        // A crosshair while the selection tool is active (5C: the tool is
+        // distinguishable from the brush).
+        let icon = if self.tool == CanvasTool::Selection {
+            CursorIcon::Crosshair
+        } else {
+            CursorIcon::Default
+        };
+        if icon != self.cursor_icon {
+            gpu.window.set_cursor(icon);
+            self.cursor_icon = icon;
+        }
         self.update_title();
         let before = self.stats.summary.len();
         self.stats.submitted();
@@ -1047,6 +1270,11 @@ fn history_label(action: HistoryAction) -> &'static str {
         HistoryAction::ConvertDepth => "convert depth",
         HistoryAction::ImportLayer => "import image",
         HistoryAction::MergeDown => "merge down",
+        HistoryAction::Select => "selection",
+        HistoryAction::SelectAll => "select all",
+        HistoryAction::Deselect => "deselect",
+        HistoryAction::InvertSelection => "invert selection",
+        HistoryAction::FeatherSelection => "feather selection",
     }
 }
 
@@ -1117,6 +1345,27 @@ impl ApplicationHandler<AppEvent> for App {
         }
     }
 
+    /// The marching ants move a few times a second while a selection (or a
+    /// selection drag) is shown; otherwise the loop sleeps until an event.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.document.has_selection() || self.selection_drag.is_some() {
+            let now = Instant::now();
+            if now >= self.ants_due {
+                self.request_redraw();
+                self.ants_due = now + ANTS_FRAME;
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.ants_due));
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
+    }
+
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        if let StartCause::ResumeTimeReached { .. } = cause {
+            self.request_redraw();
+        }
+    }
+
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
             AppEvent::Tablet => self.drain_tablet(),
@@ -1183,6 +1432,7 @@ impl ApplicationHandler<AppEvent> for App {
                 }
                 self.drag = Drag::None;
                 self.mouse_left_down = false;
+                self.selection_drag = None;
                 self.space_held = false;
                 self.request_redraw();
             }

@@ -6,6 +6,18 @@ use tela_brush::preset::builtin::ids;
 use tela_brush::preset::{PaintMode, builtin_presets};
 use tela_tablet::DeviceKind;
 
+/// What a left drag (or the pen) does on the canvas. Alt and right-click
+/// keep picking colours with the brush; the stylus eraser end always
+/// erases with the brush tool.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CanvasTool {
+    #[default]
+    Brush,
+    Eyedropper,
+    /// The selection tool (its shape and settings: `SelectionTool`).
+    Selection,
+}
+
 pub struct Tools {
     pub presets: Vec<BrushPreset>,
     pub brush: usize,
