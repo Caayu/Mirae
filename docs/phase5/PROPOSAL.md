@@ -1,8 +1,8 @@
 # Proposal: the next macrophase
 
-> Status 2026-10-17: the owner approved **5A (colour)** and **5B (layer
-> workflow, D-4C-1, merge down)**, one at a time; both are
-> complete ([PLAN.md](PLAN.md)). Everything else below remains a
+> Status 2026-10-17: the owner approved **5A (colour)**, **5B (layer
+> workflow, D-4C-1, merge down)** and **5C (selections)**, one at a time;
+> all three are complete ([PLAN.md](PLAN.md)). Everything else below remains a
 > proposal, not approved and not started.
 
 Written at the end of phase 4 (4G) for the owner's decision. Nothing here

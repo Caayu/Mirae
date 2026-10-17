@@ -206,6 +206,30 @@ test, which include random merges (succeeding and refused).
 | RN1 | Renaming changes only the name, is allowed on locked layers, and is recorded; refusing nothing else. | `document::tests::*`, `consecutive_renames_of_one_layer_are_one_step`, property models |
 | RN2 | Consecutive renames of one layer are one step (H8). | `consecutive_renames_of_one_layer_are_one_step`, `history_matches_a_stack_of_snapshots` |
 
+## Selections (phase 5C, ADR 0024)
+
+Named SEL (S1–S5 are the sampling invariants above). Also checked by
+`document::selection_properties` (random shapes, operators, invert,
+feather, undo and redo against a plain coverage model), by the history
+snapshot property test (selection edits among every other edit) and by
+`corpus/tests/random_sessions.rs` (selections among strokes).
+
+| # | Invariant | Protected by |
+|---|---|---|
+| SEL1 | Coverage is always a valid 8-bit value, 0 off the canvas; storage is canonical (no blank stored tile, stored bytes 0 off the canvas); a document never keeps an empty selection (it is no selection). | Type (`u8`); `Selection::check` and `Document::check_invariants` after every model step; `selecting::tests::an_empty_result_is_no_selection` |
+| SEL2 | Without a selection, edits are not limited: the coverage is full everywhere and strokes take the unrestricted path. | `selecting::tests::a_new_document_has_no_selection_and_edits_are_unrestricted`, `…::limited_edits_receive_the_selection_coverage_and_others_do_not`, `brush::stroke::tests::a_selection_scales_the_stroke_alpha_identically_in_preview_and_commit` (full = unrestricted bit for bit) |
+| SEL3 | A full selection edits exactly like no selection on the canvas (pixels and masks, both depths). Beyond the canvas a selection covers nothing. | `corpus/tests/selection.rs::a_full_selection_edits_exactly_like_no_selection` |
+| SEL4 | A pixel (or mask value) with coverage 0 is never modified by a limited edit. | `support::stroke` (asserted on every stroke made with a selection, every end-to-end test), `brush::stroke::tests::a_selection_scales_…`, `…::mask_strokes_through_a_selection_match_their_preview` |
+| SEL5 | Partial coverage scales the finished stroke's alpha, `m·s`, deterministically, by the same rule in preview and commit (within the storage's half level), for paint, alpha-preserving paint, erase and masks. | `brush::stroke::tests::painting_through_coverage_is_painting_with_scaled_alpha`, `selection::parity::strokes_through_a_selection_match_the_reference`, `corpus/tests/selection.rs::preview_equals_commit_through_every_kind_of_selection` (32 cases) |
+| SEL6 | The outline (marching ants) and the selection never change the composite, the layers or an export. | `corpus/tests/selection.rs::a_selection_never_changes_the_picture_by_itself`; selection steps return no dirty tiles (`selecting::tests::every_selection_change_is_one_step_and_undoes_bit_exactly`) |
+| SEL7 | `Selection::bounds` is the tightest rectangle holding every covered pixel (computed from the tiles, never cached). | `selection_properties::selections_match_a_plain_coverage_model`, `selection::tests::bounds_hold_every_covered_pixel` |
+| SEL8 | Every selection change that changes something is one history step; undo/redo restore the selection bit for bit (swapping, not copying); no-ops and refusals record nothing. | `selecting::tests::every_selection_change_is_one_step_and_undoes_bit_exactly`, `…::no_ops_and_refusals_record_nothing`, both property tests, `corpus/tests/selection.rs::undo_walks_selections_and_strokes_back_exactly` |
+| SEL9 | The selection is independent of the layers: switching, hiding, adding, removing, undoing layer steps keep it. | `selecting::tests::the_selection_belongs_to_the_document_not_to_a_layer` |
+| SEL10 | The selection is not saved (reference S30): a document with a selection saves the same bytes as without one, and a loaded document has none. | `corpus/tests/selection.rs::files_do_not_keep_the_selection_and_their_bytes_do_not_change`, `support::round_trip` |
+
+The measured rules themselves (operators, feather, shapes, strokes) are
+kept by `document::selection::parity` against the reference's images.
+
 ## Integration (phase 4G)
 
 No new invariant: these rows record where the invariants above are
@@ -224,8 +248,12 @@ history and files (`crates/corpus/tests/`, helpers in `support/mod.rs`).
 Note on I2: a stroke on an **empty**, alpha-locked layer in a non-Normal
 mode previews the tile composed over the paper while the commit stores
 nothing; both show the same pixels on screen (the backdrop), so the
-helper compares what is shown over the paper when one side is empty. Not
-a defect; recorded so the comparison rule is not mistaken for one.
+helper compares what is shown over the paper when one side is empty. The
+same holds when an eraser empties a non-Normal layer's tile (paper
+backdrop in the preview, transparent backdrop after): since 5C the
+helper falls back to the shown picture for any tile whose raw composites
+disagree. Not a defect; recorded so the comparison rule is not mistaken
+for one.
 
 ## Robustness
 

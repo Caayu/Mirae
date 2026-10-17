@@ -83,6 +83,56 @@ table above for the parallel path).
 phase 4E: 0.107–0.110 ms),
 0 allocations in 840 tiles.
 
+### Phase 5C — selections
+
+`cargo run --release -p tela-corpus --example selection_bench` (4096²
+8-bit document, median of runs, ms; Ryzen 7 5800X, one core):
+
+| operation | small | large |
+|---|---:|---:|
+| rectangle (200×150 / 3 900²) | 0.14 | 42 |
+| ellipse, anti-aliased (r 100 / 1 900) | 0.24 | 31 |
+| ellipse, hard (r 100 / 1 900) | 0.14 | 30 |
+| lasso, anti-aliased, 2 000 points (r 150 / 1 800) | 0.55 | 42 |
+| add an ellipse (r 250 on r 300 / r 1 600 on r 1 900) | 1.05 | 33 |
+| subtract (same) | 1.06 | 33 |
+| intersect (same) | 0.81 | 25 |
+| select all / invert it / deselect | 0.000 / 0.001 / 0.001 | |
+| feather 1 / 10 / 50 px (r 100 ellipse) | 0.32 / 0.61 / 6.2 | |
+| feather 1 / 10 / 50 px (r 1 900 ellipse) | | 79 / 85 / 197 |
+| feather 50 px with everything selected | 0.04 | |
+| outline (r 100 / r 1 900 ellipse) | 0.39 | 71 |
+| outline, everything minus 200×150 | 26 | |
+
+A stroke (300 dabs of 500 px, flow 0.3, 72 tiles) previewed and
+committed through a selection:
+
+| selection | preview ms / tile | commit ms / tile |
+|---|---:|---:|
+| none | 0.061 | 0.405 |
+| everything | 0.052 | 0.326 |
+| hard rectangle 3 900² | 0.059 | 0.278 |
+| anti-aliased ellipse r 1 900 | 0.064 | 0.244 |
+| feathered ellipse (50 px) | 0.049 | 0.187 |
+
+- The selection is applied once per pixel of the finished stroke, in the
+  preview/commit rule, never per dab: `stamp_bench` after 5C reads 0.000
+  allocations per dab on every line and composition 0.103 ms per tile,
+  as before. Full and empty tiles take the unrestricted path or return;
+  partial tiles read a coverage row per mask row (no lookup per pixel).
+  Commits through a selection are cheaper: rows the selection excludes
+  are not converted (debt #18 remains for unselected strokes).
+- Select All, Invert and Deselect touch no tile (`coverage XOR fill`).
+- The first measurement read coverage pixel by pixel and fed the feather
+  a whole-region buffer: feather 215–354 ms on the large ellipse with a
+  134 MiB peak, intersect 86 ms, outline 64–98 ms, the preview through a
+  partial tile 2× the unrestricted one. Reading tile rows and feathering
+  one tile column at a time gave the numbers above with unchanged
+  results.
+- Large selections still cost tens of milliseconds on the UI thread when
+  they are made, combined, feathered or traced (debt #39); edits through
+  them do not.
+
 ### Phase 5B — translucent backdrops, merge down, layer workflow
 
 `layer_bench` (Ryzen 7 5800X, release, two dense layers):

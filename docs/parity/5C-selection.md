@@ -106,3 +106,80 @@ compared on 13 000 pixels (`selection_probe rule`).
 | # | Observation |
 |---|---|
 | S31 | Marching ants: a dashed black/white line of constant screen width at every zoom, along the 50 % contour (a feathered rectangle's outline sits on its old edge with rounded corners). A floating "selection launcher" bar appears under the selection. No shading of the unselected area by default. |
+
+S6 explained after the fact: on this machine **Ctrl+Shift+I is registered
+as a global hotkey by another program** (`RegisterHotKey` fails with
+error 1409, as for Ctrl+Shift+S, AI_HANDOFF §9), so it reaches neither
+application; the menu item and Mirae's Invert button work.
+
+## Part 2 — Mirae design from the observations (ADR 0024)
+
+| Topic | Mirae | From |
+|---|---|---|
+| Model | `Document::selection() -> Option<&Selection>`: 8-bit coverage, sparse `coverage XOR fill`, clipped to the canvas; never empty | S12, S13, S17, S18 |
+| Shapes | Rectangle (snaps to pixels unless the view is rotated), ellipse, freehand lasso; one even-odd polygon filler, 16 sub-scanlines when anti-aliased; screen points mapped through the view once | S7–S12 |
+| Anti-aliasing | On/off per shape; defaults rectangle off, ellipse and lasso on | S3, S10 |
+| Operators | New / Add / Subtract / Intersect; Shift, Alt, Shift+Alt at the press; Shift during the drag squares; a click in New deselects | S4, S5, S14–S16 |
+| Commands | Select all (Ctrl+A), Deselect (Ctrl+D), Invert (Ctrl+Shift+I and a button), Feather (strength in px, 0.1–1000) | S1, S19 |
+| Feather | Discrete Gaussian σ = 0.3·px, radius ⌈3σ⌉, renormalized over the canvas | S19–S21 |
+| Editing | Stroke alpha × coverage (`m·s`) in the shared preview/commit rule; paint, alpha lock, erase, masks | S22–S26 |
+| During a stroke | Selection commands and undo ignored | S27 |
+| History | Every change one step, swap-based; a modification (title `*`) | S28, S29, S32 |
+| Files | Not saved; `.mirae` v1 unchanged | S30 |
+| Display | Marching ants on the 50 % contour, white line + moving black dashes, constant screen width; crosshair cursor for the selection tool | S31 |
+| Tool keys | M selection tool; B brush (Mirae's) | S2 |
+
+## Part 3 — Mirae compared
+
+### With the reference's measurements (tests, `document::selection::parity`)
+
+| Check | Result |
+|---|---|
+| Rectangle (S7), 400 % sub-pixel drag with AA Strong (S8) | **Equal**, every pixel |
+| Rectangle in a 30° view (S9) | Same behaviour (screen-aligned, a rotated rectangle in the document); pixels not compared (the reference's drag positions in a rotated view were not recorded precisely) |
+| Ellipse, AA (S10) | Area within 0.4 % (7 694 vs 7 669 px); interior and exterior equal; 345 edge pixels differ by more than 2, at most 68/255 (D-5C-1) |
+| Ellipse, hard (S10) | ≤ 40 pixels differ (the reference thresholds its own flattened curve) |
+| Lasso pentagram (S11) | Even-odd centre equal; 185 of 7 691 covered pixels differ, at the tips the reference rounds (D-5C-2) |
+| Add, Subtract, Intersect on the reference's own A and B (S14–S16) | **Equal**, every pixel (0/255) |
+| Feather 1, 3, 10, 20, 50 px (S19); edge renormalization (S21) | **Within 2/255** everywhere |
+| One and two dense strokes through A, a mask stroke (S22, S23, S26) | **Equal** (0/255; two strokes ≤ 1/255) |
+| Erase through A (S24) | `1 − s` within 1/255 |
+
+### In the running app (2026-10-17, mouse and synthetic pen; screenshots not committed)
+
+| # | Steps | Mirae | Reference |
+|---|---|---|---|
+| 1–3 | Rectangle, brush stroke across its border, Ctrl+D | Stroke only inside; preview as committed; ants gone | S22 |
+| 4–7 | Ellipse; Shift-drag ellipse (Add, squared to a circle); Alt-drag rectangle (Subtract); Shift+Alt rectangle (Intersect) | Union, notch, intersection as expected; one outline each | S4, S14–S16 |
+| 8 | Lasso, concave 7-point path | Filled polygon | S11 |
+| 9 | Feather 30 px, stroke across | Rounded outline on the 50 % contour; the stroke fades at the edge | S19, S22 |
+| 10 | Invert (button; Ctrl+Shift+I held by another program) | Canvas border + inner loop | S17 |
+| 11 | Eraser across lines in and out of the inverted selection | Erased only outside the lasso | S24 |
+| 12 | Mask added, eraser on the mask along a line crossing the feathered lasso | Hidden only where selected, soft at the edge | S26 |
+| 13 | New layer | Selection unchanged | S13 |
+| 14 | Undo × 3, redo × 3 (mask stroke, layer, selection steps) | Each step back and forth | S29 |
+| 15 | Zoom in (wheel), rectangle | Correct document rectangle | — |
+| 16 | View rotated 30° (Shift+wheel), rectangle and Shift-ellipse; fit view | Rectangle and circle follow the screen; a rotated rectangle in the document | S9 |
+| 17 | Convert to 16-bit, stroke through the rotated selection | Clipped to it | — |
+| 18 | Save As `.mirae`, reopen | Content restored, **no selection** | S30 |
+| pen | Rectangle with the synthetic pen, pen stroke through it | Same as the mouse | — |
+| S27 | Ctrl+D in the middle of a mouse stroke | Ignored: selection kept, whole stroke clipped | S27 |
+| keys | Ctrl+A, Ctrl+D | Select all (border ants), deselect | S1 |
+
+## Differences
+
+| # | Difference | Kind | Status |
+|---|---|---|---|
+| D-5C-1 | **Ellipse edge pixels**: the reference flattens its ellipse its own way; Mirae's edge is the exact-area polygon of the analytic ellipse. Up to 68/255 on single edge pixels, area within 0.4 %, hard ellipses ≤ 40 pixels apart. | Quality | Accepted (not reproducible without guessing the reference's internals) |
+| D-5C-2 | **Lasso smoothing**: the reference rounds sharp turns of a freehand path; Mirae keeps the path as drawn (every point ≥ 0.5 screen px apart). | Quality | Open — a stroke-smoothing option for the lasso could reuse the stabilizer later |
+| D-5C-3 | **Anti-aliasing levels**: the reference offers None/Weak/Medium/Strong (bit-identical at 100 % in our probe); Mirae has on/off. | Feature | Accepted unless a difference is measured |
+| D-5C-4 | **Not implemented sub-tools and commands**: polyline, selection pen/eraser, shrink selection, magnetic lasso, reselect (Ctrl+Shift+D), expand/shrink, colour range, quick mask, convert to selection layer, selection launcher bar, hiding the outline. | Feature | Out of 5C scope (owner's brief); later subphases |
+| D-5C-5 | **Modified marker after undo**: undoing a selection back to the saved state is clean in Mirae (D-4F-2, deliberate); the reference keeps `*` (S32). | Behaviour | Deliberate (as D-4F-2) |
+| D-5C-6 | **Off-canvas pixels**: without a selection Mirae's brush still stores pixels beyond the canvas (debt #14); with any selection it does not (the selection is clipped). Invisible; it is why SEL3 is stated on the canvas. | Behaviour | Open with debt #14 |
+| D-5C-7 | **Text-field focus**: after typing in a panel field (feather strength), egui keeps keyboard focus and shortcuts reach the field until something else is clicked. | UI | Open (UI polish) |
+| D-5C-8 | **Feather speed**: Mirae feathers a 3 800 px ellipse by 50 px in ~0.2 s on one core; the reference's speed was not measured. | Performance | Not compared |
+
+Not observed: selection with a real pen; the reference's behaviour on a
+selection change during a stroke with a pen; feather above 50 px; the
+reference's anti-aliasing levels at other zooms; performance and memory
+of the reference.

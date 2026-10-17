@@ -14,7 +14,7 @@ gate.
 | 3 | Professional brush engine: versioned presets, generic effectors, procedural/image tips, canvas-space textures, scatter, time-based airbrush, eraser, egui panel and curve editor, golden corpus, parallel stamping | **Complete** ([report](phase3/README.md)) |
 | 3.5 | Architecture audit, Rust idioms, boundaries enforced, documentation, ADRs, handoff | **Complete** (see STATUS.md) |
 | 4 | Layers and document: 4A layer API · 4B undo/redo · 4C blend modes · 4D masks, clipping, alpha lock · 4E 16-bit · 4F document I/O · 4G integration | **Complete** ([report](phase4/README.md), [plan](phase4/PLAN.md)) |
-| 5 | Editing fundamentals — **5A colour (complete)** · **5B layer workflow + translucent-backdrop probe, merge down (complete)** · 5C selections · 5D transform · 5E fill · 5F gradients · 5G integration | 5A, 5B done ([plan](phase5/PLAN.md)); 5C–5G proposed, awaiting the owner ([proposal](phase5/PROPOSAL.md)) |
+| 5 | Editing fundamentals — **5A colour (complete)** · **5B layer workflow + translucent-backdrop probe, merge down (complete)** · **5C selections (complete)** · 5D transform · 5E fill · 5F gradients · 5G integration | 5A, 5B, 5C done ([plan](phase5/PLAN.md)); 5D–5G proposed, awaiting the owner ([proposal](phase5/PROPOSAL.md)) |
 | later | In the proposal's recommended order: layer folders + GPU compositing decision · vector layers · rulers, symmetry, perspective · advanced brushes (colour mixing, wet media, preset management) · comic tools, colour management | Planned |
 
 The table before phase 4G planned phase 5 as vector layers and phase 6 as

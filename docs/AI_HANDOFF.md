@@ -11,7 +11,7 @@ conversation. Read it fully, then these, all **mandatory**:
    last phase ([phase4/README.md](phase4/README.md)), the phase-5 plan
    ([phase5/PLAN.md](phase5/PLAN.md)) and its proposal
    ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)), and the last subphase's parity
-   record ([parity/5B-transparent-compositing.md](parity/5B-transparent-compositing.md))
+   record ([parity/5C-selection.md](parity/5C-selection.md))
 
 ## 1. Mission
 
@@ -45,9 +45,15 @@ translucent backdrop measured and reproduced (D-4C-1 resolved, ADR 0022),
 merge down (ADR 0023), rename by double-click, drag-and-drop reorder, a
 fixed-width layer panel, transparent export of blend layers, with a parity
 gate ([parity/5B-transparent-compositing.md](parity/5B-transparent-compositing.md)).
-**5C–5G are proposed, not approved, not started**
+**Phase 5C (selections) is complete** (2026-10-17): the document's
+8-bit selection (ADR 0024), rectangle/ellipse/lasso tools, the
+reference's operators and feather (measured), Select All, Deselect,
+Invert, marching ants, strokes and masks limited by the selection in the
+shared preview/commit rule, history steps, not saved, with a parity gate
+([parity/5C-selection.md](parity/5C-selection.md)).
+**5D–5G are proposed, not approved, not started**
 ([phase5/PLAN.md](phase5/PLAN.md)). A new session asks the owner before
-starting 5C or anything else; it never begins a subphase on its own.
+starting 5D or anything else; it never begins a subphase on its own.
 
 ## 3. Repository
 
@@ -78,7 +84,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 455 tests, ~40 s after build
+cargo test --workspace --release        # 503 tests, ~60 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -98,6 +104,7 @@ cargo run --release -p tela-corpus --example depth_bench        # 8 vs 16-bit, ~
 cargo run --release -p tela-io --example io_bench              # .mirae save/load, ~40 s
 cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit banding, ~2 s
 cargo run --release -p tela-corpus --example layer_bench        # merge down, reorder, rename, memory; ~10 s
+cargo run --release -p tela-corpus --example selection_bench    # selections: shapes, operators, feather, outline, strokes, memory; ~15 s
 cargo run --release -p tela-brush --example stabilizer_bench
 cargo run --release -p tela-brush --example interpolation_bench
 ```
@@ -126,7 +133,9 @@ lists the pen devices Windows sees. Pitfalls on this machine: PowerShell swallow
 `[string]::Format([cultureinfo]::InvariantCulture, ...)` when generating
 numbers in PowerShell); kill a running `tela.exe` before rebuilding or the
 link step fails with "Acesso negado". Ctrl+Shift+S never reaches the
-app on this machine (another program holds it as a global hotkey); use
+app on this machine (another program holds it as a global hotkey; so does
+Ctrl+Shift+I, checked with `RegisterHotKey` in 5C: test Invert with its
+button); use
 Shift+Alt+S for Save As.
 
 ## 10. Architecture in brief
@@ -193,6 +202,16 @@ easily broken:
     (`compose_tile_transparent_into`, merge down) uses the measured
     translucent rule. Merge down composes the pair alone and is one
     history step; consecutive renames of one layer are one step (H8).
+14. Selections (ADR 0024, SEL1–SEL10; "S1–S5" are the sampling
+    invariants): the selection is document state, an 8-bit coverage kept
+    as `coverage XOR fill` (Select All/Invert store no tile), never empty
+    (empty = none), clipped to the canvas. Edits get it per tile as
+    `TileCoverage` and the brush applies `m·s` in the one rule preview
+    and commit share (`*_within`, `modify_tiles_in_selection`); coverage
+    0 never changes a pixel; full coverage is the unrestricted path bit
+    for bit. Every change is a history step; it is not saved (files are
+    byte-identical with or without one). The operators and the feather are
+    the reference's measured rules (`selection::parity` keeps them).
 
 ## 14. Architectural decisions
 
@@ -206,11 +225,11 @@ measured against the reference (0014–0017), 16-bit storage per document
 with an 8-bit default (0018), the `.mirae` v1 format (0019), the I/O crate
 and file workflow (0020), the paint colour and colour tool state (0021),
 blending over translucent backdrops (0022), merge down and the layer
-workflow (0023).
+workflow (0023), selections (0024).
 
 ## 15. Completed features
 
-Phases 1–4 + 3.5 and subphases 5A, 5B; see [STATUS.md](STATUS.md#features) and
+Phases 1–4 + 3.5 and subphases 5A, 5B, 5C; see [STATUS.md](STATUS.md#features) and
 [CHANGELOG.md](../CHANGELOG.md). Phase reports: [phase2](phase2/README.md),
 [phase3](phase3/README.md), [phase4](phase4/README.md) (phase 1 has no
 separate report; it is summarized in the changelog).
@@ -223,7 +242,9 @@ optional), GPU texture size limit, undo history uncompressed in memory,
 UI edits not persisted, synchronous saving (no autosave), no layer
 thumbnails or folders, goldens verified on one machine,
 no transparent colour and colour palette not persisted (#35, #36), CPU composition single-threaded and linear in
-layers (#33), over-budget depth conversions hold both copies (#34).
+layers (#33), over-budget depth conversions hold both copies (#34),
+selection gaps (#37–#39: no reselect/saved selections, lasso smoothing,
+more selection tools).
 Memory model: [memory.md](memory.md).
 
 ## 17. Risks
@@ -266,7 +287,7 @@ layers), 12.4 ms (100), 44 ms (100 Soft Light).
 
 ## 21. Next steps
 
-1. Ask the owner whether 5C (or something else) is approved; record the
+1. Ask the owner whether 5D (or something else) is approved; record the
    decision in [phase5/PLAN.md](phase5/PLAN.md) and follow it one
    subphase at a time; never start a phase or subphase without explicit
    approval.

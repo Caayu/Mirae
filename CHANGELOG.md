@@ -3,6 +3,53 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 5C — selections
+
+Approved alone (5D–5G not started). The reference was observed first and
+a parity gate recorded
+([docs/parity/5C-selection.md](docs/parity/5C-selection.md)).
+455 → 503 tests.
+
+### Fixed (found by the baseline run, before 5C began)
+- A merged rename reserved the history bytes of the first name only, so
+  undoing a chain ending in a longer name broke H4; the layer-stack test
+  model took "has a tile" for "has visible paint" after merges (18e1c2e).
+
+### Added
+- `selection_probe`; the reference's measured canvases kept as test data
+  (71e2413).
+- `tela_canvas::TileCoverage` and `StrokeBuffer::*_within`: strokes,
+  erasing and mask strokes scaled by a selection's coverage (`m·s`) in
+  the shared preview/commit rule (5d7b237).
+- The document's selection (ADR 0024): `Selection` (8-bit coverage stored
+  as `coverage XOR fill`, clipped to the canvas, never empty), shapes
+  (rectangle, ellipse, polygon; even-odd, 16 sub-scanlines), the
+  measured operators and feather, swap-based history steps;
+  `Document::select`, `select_all`, `deselect`, `invert_selection`,
+  `feather_selection`, `selection`, `selection_tile`,
+  `selection_coverage`, `selection_revision` (403b838);
+  `modify_tiles_in_selection`, `modify_mask_in_selection` (fbe2059);
+  `Selection::outline` (3b150d9).
+- App: `CanvasTool` (brush, eyedropper, selection), the selection tool
+  (rectangle, ellipse, lasso; modes; Shift/Alt/Shift+Alt; Shift squares;
+  anti-aliasing per shape), Ctrl+A, Ctrl+D, Ctrl+Shift+I, M, B, Esc; the
+  selection panel and marching ants in `tela-ui` (d5bbc2d).
+- `selection_bench` (794e1c7); end-to-end selection tests and selection
+  operations in the random sessions (21fa1d8).
+- Invariants SEL1–SEL10; ADR 0024.
+
+### Changed
+- `support::stroke` (end-to-end tests) previews and commits through the
+  selection and asserts SEL4; its preview/commit comparison falls back
+  to the shown picture when raw composites disagree (note on I2).
+- Large-selection paths read coverage by tile rows; the feather works one
+  tile column at a time (794e1c7).
+
+### Not changed
+- `.mirae` v1 (the selection is not saved), the brush's per-dab path
+  (0.000 allocations per dab), composition (0.103 ms per tile).
+
+
 ## Phase 5B — layer workflow, translucent backdrops, merge down
 
 Approved alone (5C–5G not started). The reference was observed first and

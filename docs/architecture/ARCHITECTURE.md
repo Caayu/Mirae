@@ -47,13 +47,13 @@ paint/
 | Crate | Owns | Must not |
 |---|---|---|
 | `tela-color` | `Color` (the opaque paint colour, ADR 0021), `Hsv`, hex, `Rgba` (straight), `PremulRgba`, `over`, RGBA8/RGBA16 quantization, stored formats (`StoragePixel`, `PixelDepth`, `with_pixel_type!`), sRGB curves | know about space or devices |
-| `tela-canvas` | `TiledSurface<P>`, `Tile<P>`, `TileCoord`, `DirtyTiles`, `IRect`, `ViewTransform` | know about layers, colors or brushes |
+| `tela-canvas` | `TiledSurface<P>`, `Tile<P>`, `TileCoord`, `DirtyTiles`, `IRect`, `ViewTransform`, `TileCoverage` (a borrowed per-tile coverage: how much an edit may change each pixel) | know about layers, colors or brushes |
 | `tela-brush` | the whole stroke engine up to the stroke mask | read devices, own documents, know UI/GPU |
-| `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay` | know brushes, input, view, GPU |
+| `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay`; the selection (`Selection`: shapes, operators, feather, outline; ADR 0024) | know brushes, input, view, GPU |
 | `tela-io` | the `.mirae` format (manifest DTOs, tile codec, limits, versioning), atomic save, hostile-input loading through `Document::from_parts`, PNG export of the composite and PNG import as layer pixels (ADR 0019, 0020) | know paths chosen by the user, dialogs, UI; change a document |
 | `tela-renderer` | GPU device/surface, display texture + mips, canvas shader, `FrameOverlay` | see the document |
 | `tela-tablet` | `TabletSample`/`TabletEvent`, unit normalization, input clock, Windows Ink | know brushes or canvas space |
-| `tela-ui` | brush panel, colour panel, layer panel, document bar, curve editor, egui plumbing | own authoritative state |
+| `tela-ui` | brush panel, colour panel, selection panel and outline (marching ants), layer panel, document bar, curve editor, egui plumbing | own authoritative state |
 | `tela-corpus` | standard trajectories, `render_sheet`, image diff, goldens, `stamp_bench` | ship in the app |
 | `tela-app` | window/event loop, wiring, application state, the file workflow (native dialogs, unsaved-changes prompt, drag-and-drop) | implement engine logic or file formats |
 
@@ -67,7 +67,9 @@ All authoritative state lives in `tela-app`'s `App`:
 |---|---|---|
 | `Document` (depth, layers, pixels) | `App.document` | Changed only through `Document` methods (ADR 0014): layer commands from the panel and shortcuts, `modify_tiles` + `StrokeBuffer::commit_tile` at the end of a stroke, `clear_layer`, `convert_depth` and the document bar (new document of either depth, ADR 0018). Every call returns the tiles it invalidated and is recorded in the document's undo history (ADR 0015). |
 | View (`ViewTransform`) | `App.view` | Screen↔canvas mapping. |
-| Presets being edited, selection, eraser mode | `App.tools` (`Tools`) | The UI edits the active preset in place, lent for one frame. |
+| Presets being edited, eraser mode; the canvas tool (brush, eyedropper, selection) | `App.tools` (`Tools`), `App.tool` (`CanvasTool`) | The UI edits the active preset in place, lent for one frame. |
+| Selection (which pixels edits may change) | `App.document` (`Document::selection`) | Document state and history steps, not saved (ADR 0024). |
+| Selection tool settings (shape, mode, anti-aliasing per shape, feather strength), the shape being dragged, the traced outline | `App.selection` (`SelectionTool`), `App.selection_drag`, `App.outline` | Session tool state and presentation caches (`app::selecting`). |
 | User stroke settings, pressure curve | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
 | Main/sub colour (active slot), recent colours, swatches; eyedropper tool and source | `App.colors` (`ColorState`), `App.picker`, `App.pick_source` | Session tool state (ADR 0021): not in the document, the file or the history. The active colour is copied into `BrushEngine::color` at pen-down. |
 | Stroke in progress | `BrushEngine` (its `StrokeBuffer`) | Separate from the layer until committed. |
@@ -150,13 +152,15 @@ or per dab once buffers have grown (measured, see performance.md).
 5. The app commits into the target it fixed when the stroke began
    (`StrokeTarget`: layer id, its pixels or its mask, alpha free or
    preserved): pixels with
-   `with_pixel_type!(document.depth(), P => document.modify_tiles(layer, stroke.touched(), |c, t: &mut Tile<P>| stroke.commit_tile(c, t, alpha)))`
+   `with_pixel_type!(document.depth(), P => document.modify_tiles_in_selection(layer, stroke.touched(), |c, t: &mut Tile<P>, s| stroke.commit_tile_within(c, t, alpha, s)))`
    (the pixel type is chosen once per stroke; the document refuses an
-   edit for the other depth),
-   a mask with `document.modify_mask(layer, …, |c, t| stroke.commit_alpha_tile(c, t))`,
+   edit for the other depth; `s` is the selection's coverage of the
+   tile, full without a selection),
+   a mask with `document.modify_mask_in_selection(layer, …, |c, t, s| stroke.commit_alpha_tile_within(c, t, s))`,
    and marks the returned tiles stale. Strokes do not start on hidden or
    locked layers or disabled masks (`Document::paint_target`), and layer
-   commands are ignored while a stroke is in progress.
+   and selection commands (and undo) are ignored while a stroke is in
+   progress.
 
 ### Stroke buffer
 
@@ -361,6 +365,26 @@ commit, which quantizes once at the document depth; the panel shows it
 rounded to 8 bits. Nothing about colour is saved in the document or
 recorded in its history (ADR 0021).
 
+## 8d. Selections
+
+```
+selection tool (app::selecting): screen points ──(drag ends)──► view.to_canvas once ──► SelectionShape
+Document::select(shape, anti_alias, op) ──rasterize (even-odd, 16 sub-scanlines)──► coverage tiles
+   ──Replace / Add min(255,a+b) / Subtract max(0,a−b) / Intersect ⌊ab/255⌋──► Selection (or none)
+select_all / invert: fill flag, no tile · feather: discrete Gaussian σ = 0.3·px, renormalized over the canvas
+stroke preview: paint_over_tile_within(c, …, document.selection_tile(c))      (m·s)
+stroke commit:  modify_tiles_in_selection(…, commit_tile_within(c, t, α, s))   (m·s, same rule)
+outline: Selection::outline() once per selection_revision ──► view ──► tela_ui::selection_outline (ants)
+```
+
+A selection is document state (ADR 0024): an 8-bit coverage, sparse as
+`coverage XOR fill` so selecting everything and inverting store nothing,
+clipped to the canvas, never empty (an empty result is no selection).
+Every change is a swap-based history step; none changes the composite;
+it is not saved. Edits get it as `tela_canvas::TileCoverage`, one per
+tile, which the brush applies in its shared preview/commit rule: the
+brush never sees the document. The outline is presentation only.
+
 ## 9. UI overlay
 
 `tela-ui::UiLayer` runs egui each frame and implements the renderer's
@@ -407,7 +431,8 @@ history and files together. See [golden-tests.md](../golden-tests.md),
 
 ## 12. Architectural limits (today)
 
-- Flat layer stack (no groups; clipping groups only); masks without apply/selection; 17 blend modes; merge down only (no merge visible, flatten or merge selected).
+- Flat layer stack (no groups; clipping groups only); masks without apply/mask-from-selection; 17 blend modes; merge down only (no merge visible, flatten or merge selected).
+- Selections: rectangle, ellipse, lasso, four operators, select all, invert, feather; no polyline, magic wand, colour range, quick mask, selection pen, expand/shrink, reselect, transform of a selection, copy/paste or fill (ADR 0024, parity record 5C).
 - Undo history is in memory only, uncompressed, 256 KiB (8-bit) or 512 KiB (16-bit) per changed tile per step (ADR 0015, 0018).
 - 8- or 16-bit layer storage per document, 8-bit masks, 8-bit display (no dithering, no HDR); display texture limited to the GPU's max texture size.
 - Composition is CPU, single-threaded and linear in layers, with no cache below the stroke target: ~12 ms per 256² tile for 100 overlapping Normal layers, ~44 ms for 100 Soft Light (4G, TECHNICAL_DEBT #33).

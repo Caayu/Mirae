@@ -86,6 +86,11 @@ HSV round trips, hex format/parse and garbage text, picking never yields
 NaN, premultiply → pick returns the colour) and
 `brush/tests/color_properties.rs` (erasing and mask strokes ignore the
 colour, coloured paint stays valid premultiplied at both depths).
+Phase 5C adds `document::selection_properties` (random shapes, the four
+operators, invert, select all, deselect, feather, undo and redo against
+a dense coverage model with independently written rules and a direct 2D
+feather; checked against planted Add, Subtract and Intersect bugs) and
+selection edits in the history snapshot test.
 
 ### Parity tests (measured reference data)
 
@@ -121,6 +126,17 @@ Both parity tests also run in **16-bit documents** (phase 4E): the probe
 colours stored at 16-bit precision against the reference's 8-bit
 measurements (the reference has no 16-bit documents), within 2/255.
 
+### Parity tests for selections (phase 5C)
+
+`document::selection::parity` (a `#[cfg(test)]` module: it builds
+selections from measured coverage) reproduces the reference's canvas
+captures in `crates/document/tests/reference/selection/`: rectangles
+(exact), the operators on the reference's own inputs (exact), the feather
+(within 2/255), strokes and a mask stroke through a selection (exact),
+and pins the ellipse and lasso differences (D-5C-1, D-5C-2). To
+re-measure: `selection_probe psd`, the steps in docs/parity/5C-selection.md,
+the `fit-*` and `rule` readers.
+
 ### End-to-end tests (phase 4G)
 
 `crates/corpus/tests/` drives the whole stack through public APIs as the
@@ -129,10 +145,15 @@ app does: `BrushEngine` strokes committed into the active target,
 `support/mod.rs` check after every step:
 
 - **preview == commit** for every stroke (composites compared; when one
-  side is empty, what is shown over the paper — see invariant I2);
+  side is empty or the raw composites disagree, what is shown over the
+  paper — see invariant I2); strokes preview and commit through the
+  document's selection, and with a selection every pixel of coverage 0 is
+  checked unchanged (SEL4);
 - the document's public invariants and premultiplied pixels (`check`);
 - digests of the content, of what undo restores (`history_digest`, which
-  leaves out selection, visibility and the next id, as the history does)
+  leaves out the active layer and part ("selection" in the helpers),
+  visibility and the next id, as the history does; `selection_digest`
+  covers the document's selection)
   and of composites;
 - save → load → identical content, and identical bytes on a second save
   (`round_trip`).
@@ -152,6 +173,7 @@ Which test protects what (regression map):
 | Masks, clipping, alpha lock (4D) | unit tests, `mask_clip_properties.rs` | `clip_parity.rs` | scenarios C, D, E |
 | 16-bit (4E) | `depth_properties.rs`, `banding.rs` | both parity tests at 16 bits | scenario F, pipeline |
 | Files (4F) | `io` unit tests, `corrupt.rs`, `properties.rs`, `fixture.rs` | `png_parity.rs` | scenarios B, C, G; stress (40 cycles) |
+| Selections (5C) | `selection::tests`, `selecting::tests`, `selection_properties.rs`, `brush::stroke` tests | `selection::parity` | `tests/selection.rs`; random sessions; SEL4 in every stroke |
 | Appearance | brush goldens | — | `pipeline.rs` golden |
 
 ### Precision tests (phase 4E)
@@ -184,6 +206,7 @@ cargo run --release -p tela-corpus --example depth_bench        # 8 vs 16-bit: m
 cargo run --release -p tela-io --example io_bench                # .mirae save/load: time, size, MB/s, peak memory, deflate levels
 cargo run --release -p tela-corpus --example doc_bench          # 1-100 layers per mode, realistic 4096² documents, history, memory (--quick: ~3 s)
 cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit banding table
+cargo run --release -p tela-corpus --example selection_bench    # selections: shapes, operators, feather, outline, strokes through them, memory
 cargo run --release -p tela-brush --example stabilizer_bench     # phase 2 stabilizer table
 cargo run --release -p tela-brush --example interpolation_bench  # phase 2 interpolator table
 ```
@@ -240,6 +263,20 @@ On the development machine **Ctrl+Shift+S never reaches Mirae**: another
 program registers it as a global hotkey (`RegisterHotKey` fails with
 error 1409 for it). Use Shift+Alt+S for Save As there; try another
 machine before treating a missing shortcut as a Mirae bug.
+
+
+Phase 5C session (mouse, then the synthetic pen): rectangle, stroke
+across it, Ctrl+D; ellipse, Shift (Add), Alt (Subtract), Shift+Alt
+(Intersect); lasso; feather 30 px and a stroke across the soft edge;
+Invert (button); eraser in and out of the selection; a mask stroke
+through the selection; a new layer; undo/redo; zoom; a 30° view with a
+rectangle and an ellipse, then Home; To 16-bit and a stroke; Save As,
+reopen (no selection); a pen rectangle and pen stroke; Ctrl+D during a
+stroke (ignored); Ctrl+A (`docs/parity/5C-selection.md`, part 3).
+**Ctrl+Shift+I** (Invert) is also a global hotkey of another program on
+the development machine (error 1409); use the Invert button there. After
+typing in a panel field, click a label before using shortcuts (egui
+keeps keyboard focus, D-5C-7).
 
 ### Hardware tests
 

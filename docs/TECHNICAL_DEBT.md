@@ -1,6 +1,6 @@
 # Technical debt
 
-Known, real debt, **updated at the end of phase 5B**. Each item:
+Known, real debt, **updated at the end of phase 5C**. Each item:
 impact, why it is not fixed now, and a possible direction. Priorities:
 **P1** blocks a planned phase or affects users soon; **P2** visible quality
 issue; **P3** latent or cosmetic. Item numbers are stable (other documents
@@ -50,9 +50,15 @@ defect live in [ROADMAP.md](ROADMAP.md).
 | 34 | **A history step larger than the budget is kept alone** (invariant H4), so converting a large document's depth holds both copies: 100 dense 4096² layers 8 → 16 bits peak at ~3× the 8-bit size (6.25 GiB in history + 12.5 GiB live; [memory.md](memory.md)). | Out-of-memory risk on huge documents; typical documents (10 layers, partial) peak at a few hundred MiB. | Measured in 4G; the rule keeps every step undoable (invariant H4, ADR 0015), and changing it needs an ADR. | Warn before a conversion whose step exceeds the budget, or offer it as non-undoable; never drop it silently. |
 | 35 | **Colour state is not persisted**: recent colours and swatches live for the session only; no colour sets from files (D-5A-6). | A user's palette is lost on exit. | No preferences system exists yet; documents must not carry tool state (ADR 0021). | Persist recent colours and swatches with the user-preset store (#8), in a user directory, as versioned JSON. |
 | 36 | **No transparent colour** (the reference's third slot and `C`); picking a transparent pixel keeps the colour (D-5A-1, D-5A-2). | Erasing needs the eraser tool or the stylus eraser end. | `C` is "clear layer" in Mirae; the owner decides whether to add it. | A third slot that paints with the eraser's rule; a shortcut map review. |
+| 37 | **No reselect, no saved selections**: the selection is not kept in files (as in the reference, 5C S30) and there is no Reselect (Ctrl+Shift+D) or named stored selections. | A selection lost by Deselect can only come back by undo; closing a document drops it. | Out of 5C's brief; the reference keeps only Reselect within a session. | Keep the last removed selection in the document for Reselect (a history step); stored selections, if wanted, as an optional manifest field of a future format version (ADR 0019 rules). |
+| 38 | **Selection edges**: ellipse edge pixels differ from the reference by up to 68/255 (D-5C-1); the lasso keeps every sharp turn where the reference smooths (D-5C-2); on/off anti-aliasing instead of four levels (D-5C-3). | Edges look slightly different from the reference's at 100 %. | Not reproducible without guessing the reference's internals; no measured difference between its levels. | Optional lasso smoothing reusing the stabilizer; revisit the ellipse with more probes (several sizes, zooms). |
+| 39 | **Selection tools and UI**: no polyline, selection pen/eraser, magnetic lasso, expand/shrink, colour range, quick mask, selection launcher bar or hidden outline (D-5C-4); after typing in a panel field egui keeps keyboard focus (D-5C-7); large selections cost 40–200 ms (a 3 900² rectangle 42 ms, outline 26–71 ms, feather 50 px 197 ms, all on the UI thread). | Fewer options than the reference; a short hitch after selecting or feathering most of a 4096² canvas. | Out of scope; the costs were measured and accepted for 5C. | Add the tools with 5D–5F as they need them; trace outlines and feather off the UI thread or in parallel bands (deterministic per band) if the hitches matter. |
 
 ## Resolved
 
+- Phase 5C: none resolved; #23 partly unblocked (selections exist; mask
+  from selection not implemented). #14 is now avoided while a selection
+  exists (a selection is clipped to the canvas).
 - Phase 5B: #20 (blending over a translucent backdrop without paper:
   measured and reproduced, ADR 0022; transparent export of blend layers
   no longer refused) and #21 (merge down, ADR 0023). #17 partly (rename,

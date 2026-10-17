@@ -163,7 +163,10 @@ may lower them.
 Undo history (ADR 0015; a loaded document starts with an empty history),
 the view (pan, zoom, rotation), tools and brush presets (ADR 0008),
 composites, thumbnails, colour profiles (Mirae has no colour management
-yet; values are sRGB-encoded), resolution (Mirae documents have none).
+yet; values are sRGB-encoded), resolution (Mirae documents have none),
+the selection (ADR 0024: the reference does not keep it either; a
+document with a selection saves the same bytes as without one, and a
+loaded document has none).
 
 ## Saving
 

@@ -48,12 +48,21 @@ or transparent, 8 or 16 bits), the storage depth with New 8-bit, New
 as `.mirae` files (docs/formats/mirae-v1.md); dropping a `.mirae` on the
 window opens it, dropping a `.png` imports it. Before anything replaces
 or closes a modified document, Mirae asks Save / Don't Save / Cancel.
-The pen works on the panels too.
+Under the colours, the selection panel picks the canvas tool (Brush,
+Rectangle, Ellipse, Lasso), the selection mode (New, Add, Sub, Int),
+anti-aliasing per shape, and holds All, None, Invert and Feather (a
+strength in pixels). A selection limits every stroke (paint, erase, mask)
+until it is removed; it is shown with marching ants, is part of undo and
+is not saved in documents. The pen works on the panels too.
 
 | Input | Action |
 |---|---|
-| Left drag / pen | Paint (pen eraser end erases); picks the colour when the eyedropper is on |
-| Right-click, or Alt + click / pen | Pick the colour shown under the cursor |
+| Left drag / pen | Paint (pen eraser end erases); picks the colour when the eyedropper is on; draws a selection with the selection tool |
+| M / B | Selection tool / brush |
+| Shift, Alt, Shift+Alt at the press (selection tool) | Add, subtract, intersect; Shift during the drag: square |
+| Ctrl+A, Ctrl+D, Ctrl+Shift+I | Select all, deselect, invert the selection |
+| Esc | Cancel the selection being drawn |
+| Right-click, or Alt + click / pen (not with the selection tool) | Pick the colour shown under the cursor |
 | X | Paint with the other colour (main ↔ sub) |
 | D | Main colour black, sub white |
 | 1–8 | Presets: ink pen, pencil, soft round, marker, airbrush, chalk, calligraphy, eraser |

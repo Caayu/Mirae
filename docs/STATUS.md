@@ -1,6 +1,7 @@
 # Status
 
-Factual state of the project at the end of **phase 5B** (layer workflow,
+Factual state of the project at the end of **phase 5C** (selections),
+after **5B** (layer workflow,
 translucent-backdrop compositing, merge down), after **5A** (colour) and
 **phase 4** (4G: integration
 and hardening). The product is named **Mirae** (crates keep their `tela-` names). Update this file at the end of every subphase.
@@ -9,9 +10,9 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 
 | | |
 |---|---|
-| Current phase | **Phase 5B (layer workflow, D-4C-1, merge down) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5B-transparent-compositing.md](parity/5B-transparent-compositing.md)); 5A complete; phase 4 complete ([phase4/README.md](phase4/README.md)); **5C–5G not approved, not started** |
+| Current phase | **Phase 5C (selections) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5C-selection.md](parity/5C-selection.md)); 5A, 5B complete; phase 4 complete ([phase4/README.md](phase4/README.md)); **5D–5G not approved, not started** |
 | Parity | Tracked in [PARITY.md](PARITY.md) (phase-4 summary; phase-5 matrix from 5A); nothing compared with the reference before phase 4 |
-| Tests | **455** passing, 0 failing (5B started at 434; 5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Tests | **503** passing, 0 failing (5C started at 455 + 1 regression test for a 5B defect the baseline found; 5B started at 434; 5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -31,12 +32,13 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 | Scatter | Perpendicular/radial, count, rotation and scale jitter, effector-driven amount |
 | Airbrush | Time instants independent of frame rate; rest detection with delivery-lag compensation; dwell-time flow while moving |
 | Eraser | Destination-out through the same engine; stylus eraser end switches automatically; `E` for the mouse |
-| UI | egui side panels: colour (main/sub, HSV picker, RGB/HSV/hex, eyedropper, recent colours, swatches), presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor; layers, document, history on the right |
+| UI | egui side panels: colour (main/sub, HSV picker, RGB/HSV/hex, eyedropper, recent colours, swatches), selection (tools, mode, commands, feather), presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor; layers, document, history on the right |
 | Colour (5A) | Opaque `f32` paint colour without alpha captured by each stroke (ADR 0021); main/sub with an active slot (`X`), Swap, reset to black on white (`D`); HSV square + hue bar, RGB 0–255, HSV, `#RRGGBB`; eyedropper on the composite over the paper or the active layer (tool, right-click, Alt, also with the pen), document pixel at any zoom; recent colours (newest first, unique, 24) and swatches (session only); alpha lock, clipping, masks, blend modes and eraser behave with colour as measured; HSV readout, 51 % stroke, canvas picks and alpha-lock pixels match the reference |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
 | Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile (2 layers); per tile with every layer drawing: 1.6 ms (10 Normal layers), 12.4 ms (100), 44 ms (100 Soft Light); 0 allocations in composition ([performance.md](performance.md), [memory.md](memory.md)) |
 | Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. no file I/O |
 | Layer workflow (5B) | Rename by double-click (Enter/focus commits, Escape cancels, 64 characters; consecutive renames one step), drag-and-drop reorder (insertion line, Escape cancels, by id), merge down (button, Ctrl+E; lower-mask question; ADR 0023), fixed-width panel; blending over translucent backdrops as measured (ADR 0022); transparent export of blend layers |
+| Selections (5C) | Document-level 8-bit selection (ADR 0024): rectangle (snaps to pixels; screen-aligned in rotated views), ellipse, freehand lasso (even-odd), anti-aliasing per shape (rectangle off, ellipse and lasso on), New/Add/Subtract/Intersect (panel, Shift/Alt/Shift+Alt at the press; the reference's measured 8-bit rules), Select All (Ctrl+A), Deselect (Ctrl+D), Invert (Ctrl+Shift+I, button), Feather (the reference's Gaussian, within 2/255); every stroke (paint, alpha lock, erase, masks) scaled by the coverage in preview and commit; marching ants; history steps; not saved (as the reference); M selection tool, B brush |
 | Blend modes (4C) | Normal + 16 modes (multiply, screen, overlay, darken, lighten, color dodge/burn, hard/soft light, difference, exclusion, hue, saturation, color, luminosity, add); W3C formulas on sRGB-encoded values, paper as backdrop for blend tiles (ADR 0016); matches the reference's measured results within 1–2/255; selector in the layer panel; undoable |
 | Masks, clipping, alpha lock (4D) | One mask per layer (sparse 8-bit, new mask reveals all; paint reveals by stroke alpha, erase hides; enable/disable; delete), clipping groups (isolated, source-atop with the blend result, base opacity/mode/mask apply to the group; new layers inside a group are clipped), lock transparent pixels (source-atop paint, eraser unaffected); all measured against the reference and matching within 2/255 (ADR 0017); panel controls; undoable |
 | Undo/redo (4B) | Linear, swap-based history inside `Document` (ADR 0015): strokes, clear, create/delete/reorder layers, lock, rename, blend mode, opacity (consecutive edits merge); selection and visibility not recorded; add/remove undos restore the active layer; ignored during a stroke; 200 steps / 1 GiB by default; Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Undo/Redo buttons |
@@ -63,6 +65,28 @@ save); no layer thumbnails or folders (debt #17);
 CPU composition single-threaded and linear in layers (TECHNICAL_DEBT #33);
 no transparent colour, palette not persisted (debt #35, #36); preset edits
 not persisted; UI unpolished.
+
+## Phase 5C outcome
+
+Selections, with the reference observed first ([parity/5C-selection.md](parity/5C-selection.md),
+S1–S32; its measured canvas images kept as test data). The selection is
+document state (ADR 0024): an 8-bit coverage stored sparse as
+`coverage XOR fill`, so Select All and Invert cost nothing on any
+canvas; clipped to the canvas; an empty result is no selection, as in the
+reference. Rectangle, ellipse and lasso tools with the reference's
+modifiers and anti-aliasing defaults; the reference's operators (exact on
+its own inputs) and feather (within 2/255 from 1 to 50 px); strokes,
+erasing and mask strokes multiplied by the coverage in the one rule
+preview and commit share (exact against the reference's strokes; 0
+allocations per dab, preview cost unchanged); every change a swap-based
+history step; not saved (the reference does not save it either; `.mirae`
+v1 unchanged). Verified in the running app with the mouse and the
+synthetic pen, at 8 and 16 bits, zoomed and rotated. The baseline run
+found two pre-existing defects from 5B in random property tests (a
+history reservation for merged renames; a test model), fixed before 5C
+started. Remaining: D-5C-1…8 (ellipse edge pixels, lasso smoothing, four
+AA levels, unimplemented sub-tools, Ctrl+Shift+I held by another
+program on this machine).
 
 ## Phase 5B outcome
 
@@ -186,6 +210,6 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-Phase 5B is complete. The next subphase in the proposal is **5C**
-(selections; [phase5/PROPOSAL.md](phase5/PROPOSAL.md)). It is **not
+Phase 5C is complete. The next subphase in the proposal is **5D**
+(transform; [phase5/PROPOSAL.md](phase5/PROPOSAL.md)). It is **not
 approved and not started**: nothing begins until the owner approves it.

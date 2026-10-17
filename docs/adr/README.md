@@ -30,6 +30,7 @@ and both say so.
 | [0021](0021-paint-colour-and-colour-tool-state.md) | The paint colour: opaque straight `f32` `Color` without alpha, captured by the stroke, `(C·m, m)` formula; colour state is session tool state in the app (not the document, not history); eyedropper on the composite or the layer | 5A |
 | [0022](0022-blending-over-translucent-backdrops.md) | Blending over a translucent backdrop (D-4C-1 resolved by measurement): Multiply W3C, the other modes compose the blended colour over the backdrop first, additive alpha for Screen/Dodge/Hard/Soft Light; opaque backdrops unchanged | 5B |
 | [0023](0023-merge-down-and-layer-workflow.md) | Merge down composes the pair alone (lower layer keeps id, name, mode, clip; opacity baked; masks applied or kept as asked), one swap-based step holding only changed tiles; consecutive renames are one step; drag reorder through relative placement | 5B |
+| [0024](0024-selections.md) | Selections: document state, 8-bit coverage stored sparse as coverage XOR fill (select all/invert store nothing), empty = none, measured operators (saturating sum/difference, truncated product) and feather (Gaussian σ = 0.3·px, renormalized over the canvas), strokes scaled by coverage (m·s) in the shared preview/commit rule, swap-based history steps, not saved | 5C |
 
 ## Writing a new ADR
 

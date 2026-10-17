@@ -8,7 +8,7 @@ nothing else is started.
 |---|---|---|
 | 5A Colour | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5A-color.md](../parity/5A-color.md); [ADR 0021](../adr/0021-paint-colour-and-colour-tool-state.md) |
 | 5B Layer workflow + D-4C-1 probe, merge down | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5B-transparent-compositing.md](../parity/5B-transparent-compositing.md); [ADR 0022](../adr/0022-blending-over-translucent-backdrops.md), [ADR 0023](../adr/0023-merge-down-and-layer-workflow.md) |
-| 5C Selections | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
+| 5C Selections | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5C-selection.md](../parity/5C-selection.md); [ADR 0024](../adr/0024-selections.md) |
 | 5D Transform | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 | 5E Fill | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 | 5F Gradients | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
@@ -81,3 +81,43 @@ management, more blend modes, autosave, a format v2.
 Implemented as decided; gate recorded in [PARITY.md](../PARITY.md) and
 [parity/5B-transparent-compositing.md](../parity/5B-transparent-compositing.md).
 Tests 434 → 455. Remaining differences: D-5B-1…9. 5C not started.
+
+## 5C — Selections (approved brief, summarized)
+
+A professional raster selection system as the base for transform, fill,
+gradients and copy/paste: rectangle, ellipse and freehand lasso; Replace,
+Add, Subtract, Intersect; Select All, Deselect, Invert; feather; the
+selection as document state (not a layer, a mask, UI state or a
+temporary bitmap), 8-bit coverage, sparse, with Select All and Invert
+cheap on large canvases; marching ants; strokes, erasing and mask
+strokes limited by it (preview == commit, 0 allocations per dab); undo
+and persistence as the reference behaves (no automatic v2 of `.mirae`);
+zoom and rotation through one screen→document mapping; the reference
+observed first for every rule (28 probes listed in the brief); property
+and random tests, the preview == commit matrix, performance and memory
+measured, a real-app session, invariants, ADR, the parity gate. Out of
+scope: transform, moving pixels, copy/cut/paste, fill, gradients, magic
+wand, colour selection, quick mask, selection from a layer, vector
+selection, GPU processing.
+
+### Decisions (details in ADR 0024)
+
+| # | Decision | Reason |
+|---|---|---|
+| C1 | `Document::selection() -> Option<Selection>`; 8-bit coverage stored as `coverage XOR fill` in sparse tiles | Partial coverage measured (AA, feather); Select All and Invert store nothing |
+| C2 | An empty result is no selection | S5, S17, S18 |
+| C3 | Shapes: one even-odd polygon filler with 16 sub-scanlines; rectangles snap to pixels; screen points mapped through the view once | S7–S12 |
+| C4 | Operators: saturating sum, saturating difference, truncated product | Exact on the reference's doubly partial pixels (S14–S16) |
+| C5 | Feather: discrete Gaussian σ = 0.3·px, radius ⌈3σ⌉, renormalized over the canvas | Within 2/255 from 1 to 50 px (S19–S21) |
+| C6 | Strokes scaled by the coverage (`m·s`) in the shared preview/commit rule (`TileCoverage` in `tela-canvas`) | S22–S26; the brush stays document-free |
+| C7 | Selection changes are history steps, swap-based; ignored during a stroke | S27–S29 |
+| C8 | Not saved; `.mirae` v1 unchanged | S30 (the reference drops it even in its own format); the owner's rule on v1 |
+| C9 | Tool architecture: `CanvasTool` (brush, eyedropper, selection) in the app; `SelectionTool`/`SelectionDrag` hold the selection tool's state | One place decides what a drag does, no framework |
+| C10 | Invariants SEL1–SEL10 (S1–S5 are the sampling invariants) | Name clash |
+
+### Outcome
+
+Implemented as decided; gate recorded in [PARITY.md](../PARITY.md) and
+[parity/5C-selection.md](../parity/5C-selection.md). Tests 455 (+1 for
+a 5B defect the baseline run found) → 503. Remaining differences:
+D-5C-1…8. 5D not started.

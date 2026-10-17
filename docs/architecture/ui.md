@@ -32,6 +32,18 @@ What matters is where it sits in the architecture.
    HSV from RGB and nothing drifts or loops. The picker is drawn with
    vertex-coloured meshes (a 9 × 9 grid, no texture, rebuilt each frame at
    negligible cost). `tela-ui` depends on `tela-color` for `Color`/`Hsv`.
+   The selection panel (`selection_panel`, phase 5C) receives a
+   `SelectionModel` (whether the selection tool is the canvas tool, its
+   shape, mode, anti-aliasing, feather strength, whether a selection
+   exists) and returns a `SelectionAction` (`Brush`, `Tool`, `Mode`,
+   `AntiAlias`, `SelectAll`, `Deselect`, `Invert`, `Feather`,
+   `FeatherStrength`); it owns nothing. `SelectionKind` and
+   `SelectionMode` are UI enums the app maps to the document's
+   `SelectionShape`/`SelectionOp`, so `tela-ui` does not depend on
+   `tela-document`. `selection_outline` paints marching ants (a white
+   line under a black dashed one whose offset moves with time) on egui's
+   background layer, under the panels, from loops the app has already
+   mapped to the screen: presentation only.
 3. **Commands the UI cannot fulfil are returned, not executed.**
    `BrushPanel::show` returns a `PanelAction` (`SelectPreset`,
    `ToggleEraser`, `ClearLayer`, `Layer(..)`); the app applies it. The layer
@@ -76,7 +88,10 @@ What matters is where it sits in the architecture.
 ```
 window event -> UiLayer::on_window_event (egui-winit) -> consumed?
 redraw:
-  App::build_ui: UiLayer::build(|ui| BrushPanel::show(ui, PanelModel{..}))
+  App::build_ui: selection outline traced (once per selection change) and
+                 mapped through the view
+                 UiLayer::build(|ui| selection_outline(..); panels: ColorPanel,
+                                selection_panel, BrushPanel, layer panel)
      -> occupied rects -> InkBackend::set_passthrough
   App::apply(PanelAction)
   Renderer::render_with(frame, Some(&mut UiLayer))   // canvas, then UI
@@ -111,6 +126,13 @@ redraw:
 - Undo/Redo buttons (`history_bar`) receive only labels (`HistoryButtons`)
   and return a `HistoryCommand`; the app maps document `HistoryAction`s to
   text.
+- The canvas tool (`app::tools::CanvasTool`: brush, eyedropper,
+  selection) decides what a left drag does; `M` picks the selection
+  tool, `B` the brush, choosing a preset or the eraser returns to the
+  brush. The selection tool has a crosshair cursor; there is no custom
+  cursor per shape, no selection launcher bar and no command to hide the
+  outline. While a selection exists the window redraws eight times a
+  second to move the ants (one composed-tile-free frame each).
 - The colour panel has no colour wheel, HLS/Lab/CMYK fields or colour
   sets from files; recent colours and swatches are not saved between
   sessions (TECHNICAL_DEBT #35). The eyedropper has no shortcut of its own

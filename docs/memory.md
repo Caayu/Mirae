@@ -11,6 +11,7 @@ allocator) or derived from the types where stated. KiB/MiB/GiB are 1024-based.
 | Pixel tile, 8-bit | 256 KiB | 256 × 256 × RGBA8, premultiplied (ADR 0002, 0018) |
 | Pixel tile, 16-bit | 512 KiB | RGBA16 |
 | Mask tile | 64 KiB | 8-bit at every depth; only tiles that hide something exist |
+| Selection tile | 64 KiB | 8-bit coverage, stored only where the coverage differs from the fill (ADR 0024); Select All and Invert store none |
 | Stroke buffer tile | 256 KiB | f32 coverage per touched tile, plus copy-on-write tail tiles near the pen |
 | Layer without pixels | ~0.3 KiB | header, name, empty tile maps (measured: 100 empty layers = 27 KiB) |
 | `ComposeScratch` | 3.5 MiB | three f32 tile buffers, a mask buffer, the RGBA8 output (measured 3 670 016 B); one per compositor |
@@ -40,6 +41,28 @@ their coverage):
 
 Masks add 64 KiB per tile they hide; in the measured documents (every
 7th layer masked on a third of its tiles) 2–12 MiB.
+
+## Selections (phase 5C)
+
+Measured with `selection_bench` (4096², live bytes of the counting
+allocator):
+
+| Selection | Stored tiles | Selection | History after the step |
+|---|---:|---:|---:|
+| none | 0 | 0 | 0 |
+| small rectangle (200×150) | 4 | 0.25 MiB | ~0 (the step held no previous selection) |
+| select all | 0 | 0 | 0 |
+| select all, then invert (no selection) | 0 | 0 | 0 |
+| anti-aliased ellipse r 1 900 | 148 | 9.25 MiB | ~0 |
+| the same feathered by 50 px | 155 | 9.69 MiB | 3.63 MiB (the changed edge tiles) |
+| 10 rectangles added one by one | 40 | 2.50 MiB | 0.69 MiB |
+
+A selection costs at most one 64 KiB tile per canvas tile (16 MiB on a
+4096² canvas, whatever its shape); select all and invert cost nothing.
+Its history holds the previous selection when it is replaced (moved, not
+copied) and only the changed tiles otherwise. Feathering needs one tile
+column's scratch (the band's rows in f32, ~4 MiB for 4096 rows) besides
+its result.
 
 ## History
 
