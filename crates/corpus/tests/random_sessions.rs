@@ -1,7 +1,7 @@
 //! Seeded random sessions (phase 4G): reproducible sequences of valid
 //! operations across every phase-4 feature — real strokes on pixels and
 //! masks, layer edits, clipping, alpha lock, blend modes, undo/redo,
-//! depth conversion — with checkpoints that validate the invariants and
+//! depth conversion, selections (5C) — with checkpoints that validate the invariants and
 //! premultiplied values and save/load the document. A failure prints its
 //! seed; rerun one with `MIRAE_SEED=<n>`.
 
@@ -9,7 +9,7 @@ mod support;
 
 use support::*;
 use tela_color::PixelDepth;
-use tela_document::{BlendMode, Document, LayerPart, Placement};
+use tela_document::{BlendMode, Document, LayerPart, Placement, SelectionOp, SelectionShape};
 
 const OPS: usize = 60;
 const CHECK_EVERY: usize = 15;
@@ -36,7 +36,7 @@ fn pick(d: &Document, r: &mut Rng) -> tela_document::LayerId {
 /// One random operation; refused ones (locked layers, …) are fine: they
 /// must change nothing, which the checkpoints and the final walk verify.
 fn op(d: &mut Document, r: &mut Rng, seed: u64, i: usize) {
-    match r.below(20) {
+    match r.below(24) {
         0..=5 => {
             let p = random_preset(r);
             let path = random_path(r);
@@ -128,6 +128,38 @@ fn op(d: &mut Document, r: &mut Rng, seed: u64, i: usize) {
         16 | 17 => {
             d.undo();
         }
+        // Selections (5C): shapes combined by every operator, invert,
+        // feather, deselect; later strokes are limited by them.
+        20 | 21 => {
+            let (x, y) = (r.unit() * 600.0 - 40.0, r.unit() * 440.0 - 30.0);
+            let (w, h) = (20.0 + r.unit() * 300.0, 20.0 + r.unit() * 250.0);
+            let shape = match r.below(3) {
+                0 => SelectionShape::Rect([x, y], [x + w, y + h]),
+                1 => SelectionShape::Ellipse {
+                    center: [x, y],
+                    radii: [w * 0.5, h * 0.5],
+                    rotation: r.unit() * 3.0,
+                },
+                _ => SelectionShape::Polygon(vec![
+                    [x, y],
+                    [x + w, y + h * 0.3],
+                    [x + w * 0.2, y + h],
+                ]),
+            };
+            let op = [
+                SelectionOp::Replace,
+                SelectionOp::Add,
+                SelectionOp::Subtract,
+                SelectionOp::Intersect,
+            ][r.below(4)];
+            d.select(&shape, r.below(2) == 0, op);
+        }
+        22 => match r.below(4) {
+            0 => drop(d.invert_selection()),
+            1 => drop(d.deselect()),
+            2 => drop(d.select_all()),
+            _ => drop(d.feather_selection(1.0 + r.unit() * 20.0)),
+        },
         18 => {
             d.redo();
         }
@@ -151,7 +183,7 @@ fn session(seed: u64) {
         PixelDepth::Rgba16
     };
     let mut d = Document::with_depth(520, 380, depth);
-    let empty = history_digest(&d);
+    let empty = (history_digest(&d), selection_digest(&d));
     for i in 0..OPS {
         op(&mut d, &mut r, seed, i);
         if (i + 1) % CHECK_EVERY == 0 {
@@ -162,15 +194,23 @@ fn session(seed: u64) {
     // Walk the whole history back to the empty document and forward again.
     // Visibility is not recorded, so the walk compares everything else.
     // The session may end with redoable steps: redo exactly what is undone.
-    let end = history_digest(&d);
+    let end = (history_digest(&d), selection_digest(&d));
     let picture_end = content_digest(&d);
     let steps = d.history_len();
     while d.undo().is_some() {}
-    assert_eq!(history_digest(&d), empty, "seed {seed}: undo all → empty");
+    assert_eq!(
+        (history_digest(&d), selection_digest(&d)),
+        empty,
+        "seed {seed}: undo all → empty"
+    );
     for _ in 0..steps {
         d.redo().expect("redoable");
     }
-    assert_eq!(history_digest(&d), end, "seed {seed}: redo all → end");
+    assert_eq!(
+        (history_digest(&d), selection_digest(&d)),
+        end,
+        "seed {seed}: redo all → end"
+    );
     assert_eq!(content_digest(&d), picture_end);
     check(&d);
 }

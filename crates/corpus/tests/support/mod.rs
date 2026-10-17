@@ -91,7 +91,8 @@ pub struct Committed {
 /// Paints `path` on the document's current edit target exactly as the
 /// app does: the target (layer, pixels or mask, alpha lock) is fixed when
 /// the stroke begins, the preview is the overlay, the commit goes through
-/// `modify_tiles` / `modify_mask`. `None` if the target refuses paint
+/// `modify_tiles_in_selection` / `modify_mask_in_selection`, both limited
+/// by the document's selection. `None` if the target refuses paint
 /// (hidden, locked, disabled mask).
 pub fn stroke(
     d: &mut Document,
@@ -112,8 +113,14 @@ pub fn stroke(
     let buf = run_stroke(preset, color, path, seed);
     let touched: Vec<TileCoord> = buf.touched().iter().collect();
     // The last frame before the pen lifts: the stroke as an overlay.
-    let pixels = |c: TileCoord, px: &mut [PremulRgba]| buf.paint_over_tile(c, px, alpha);
-    let mask = |c: TileCoord, v: &mut [f32]| buf.paint_alpha_tile(c, v);
+    // Limited by the document's selection, in the preview and the commit
+    // alike (5C; no selection: the unrestricted path).
+    let doc = &*d;
+    let pixels = |c: TileCoord, px: &mut [PremulRgba]| {
+        buf.paint_over_tile_within(c, px, alpha, doc.selection_tile(c))
+    };
+    let mask =
+        |c: TileCoord, v: &mut [f32]| buf.paint_alpha_tile_within(c, v, doc.selection_tile(c));
     let covers = |c: TileCoord| buf.touched().contains(c);
     let overlay = Overlay {
         target: layer,
@@ -128,11 +135,12 @@ pub fn stroke(
         .map(|&c| compose(d, c, Some(&overlay)))
         .collect();
     let tiles = buf.touched().clone();
+    let before = d.has_selection().then(|| d.clone());
     let dirty = match part {
         LayerPart::Pixels => with_pixel_type!(d.depth(), P => {
-            d.modify_tiles(layer, &tiles, |c, t: &mut Tile<P>| buf.commit_tile(c, t, alpha))
+            d.modify_tiles_in_selection(layer, &tiles, |c, t: &mut Tile<P>, s| buf.commit_tile_within(c, t, alpha, s))
         }),
-        LayerPart::Mask => d.modify_mask(layer, &tiles, |c, t| buf.commit_alpha_tile(c, t)),
+        LayerPart::Mask => d.modify_mask_in_selection(layer, &tiles, |c, t, s| buf.commit_alpha_tile_within(c, t, s)),
     }
     .expect("the target accepted paint");
     // Compared as shown: the composite over the paper. A tile can be
@@ -154,29 +162,86 @@ pub fn stroke(
     let mut worst = 0;
     for (c, before) in touched.iter().zip(preview) {
         let after = compose(d, *c, None);
-        match (before, after) {
-            // Both composed: the composites themselves (P3).
-            (Some(a), Some(b)) => {
-                for (p, q) in a.iter().zip(&b) {
-                    for k in 0..4 {
-                        worst = worst.max(p[k].abs_diff(q[k]));
-                    }
-                }
-            }
-            // One side empty: what the display shows.
-            (a, b) => {
-                for (p, q) in shown(a).iter().zip(&shown(b)) {
-                    for k in 0..3 {
-                        worst = worst.max(p[k].abs_diff(q[k]));
-                    }
-                }
-            }
-        }
+        // The composites themselves (P3) when they agree; otherwise what
+        // the display shows. A tile can also be composed over the paper in
+        // the preview (a non-Normal layer still draws there) and over the
+        // transparent backdrop after the commit (an eraser emptied that
+        // layer's tile): different composites, the same picture (note on
+        // I2 in docs/architecture/invariants.md).
+        let raw = match (&before, &after) {
+            (Some(a), Some(b)) => a
+                .iter()
+                .zip(b)
+                .flat_map(|(p, q)| (0..4).map(move |k| p[k].abs_diff(q[k])))
+                .max()
+                .unwrap_or(0),
+            _ => u8::MAX,
+        };
+        let tile_worst = if raw <= 1 {
+            raw
+        } else {
+            shown(before)
+                .iter()
+                .zip(&shown(after))
+                .flat_map(|(p, q)| (0..3).map(move |k| p[k].abs_diff(q[k])))
+                .max()
+                .unwrap_or(0)
+        };
+        worst = worst.max(tile_worst);
+    }
+    if let Some(before) = before {
+        assert_unchanged_outside_selection(&before, d, layer, part, &touched);
     }
     Some(Committed {
         dirty,
         preview_vs_commit: worst,
     })
+}
+
+/// SEL4: an edit leaves every pixel whose selection coverage is 0 exactly
+/// as it was (stored values of the layer's pixels or mask).
+pub fn assert_unchanged_outside_selection(
+    before: &Document,
+    after: &Document,
+    layer: tela_document::LayerId,
+    part: LayerPart,
+    tiles: &[TileCoord],
+) {
+    let (a, b) = (before.layer(layer).unwrap(), after.layer(layer).unwrap());
+    for &c in tiles {
+        let coverage = before.selection_tile(c);
+        let (ox, oy) = c.origin();
+        let reveal = |l: &tela_document::RasterLayer| -> Option<Vec<u8>> {
+            l.mask().map(|m| match m.reveal_tile(c) {
+                Some(v) => v.collect(),
+                None => vec![255; (TILE_SIZE * TILE_SIZE) as usize],
+            })
+        };
+        let (ma, mb) = (reveal(a), reveal(b));
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                if coverage.get(x, y) != 0 {
+                    continue;
+                }
+                let (px, py) = (ox + x as i32, oy + y as i32);
+                match part {
+                    LayerPart::Pixels => assert_eq!(
+                        a.pixels().pixel(px, py),
+                        b.pixels().pixel(px, py),
+                        "SEL4: pixel {px},{py} outside the selection changed"
+                    ),
+                    LayerPart::Mask => {
+                        let i = (y * TILE_SIZE + x) as usize;
+                        assert_eq!(
+                            ma.as_ref().map(|m| m[i]),
+                            mb.as_ref().map(|m| m[i]),
+                            "SEL4: mask {px},{py} outside the selection changed"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// FNV-1a 64.
@@ -372,6 +437,10 @@ pub fn round_trip(d: &Document) -> Document {
     );
     assert_eq!(save_bytes(&back), bytes, "save ∘ load ∘ save = save");
     assert!(!back.can_undo(), "no history in files");
+    assert!(
+        !back.has_selection(),
+        "SEL10: the selection is not saved (5C S30)"
+    );
     back
 }
 
@@ -427,4 +496,22 @@ pub fn compose(d: &Document, c: TileCoord, overlay: Option<&Overlay>) -> Option<
         d.compose_tile_into(c, overlay, &mut s)
             .then(|| s.out.clone())
     })
+}
+
+/// The document's selection, coverage pixel by pixel over its bounds
+/// (0 when there is none).
+pub fn selection_digest(d: &Document) -> u64 {
+    let mut h = Hash::new();
+    if let Some(s) = d.selection() {
+        let b = s.bounds();
+        for v in [b.x0, b.y0, b.x1, b.y1] {
+            h.eat(&v.to_le_bytes());
+        }
+        for y in b.y0..b.y1 {
+            for x in b.x0..b.x1 {
+                h.eat(&[s.coverage(x, y)]);
+            }
+        }
+    }
+    h.finish()
 }
