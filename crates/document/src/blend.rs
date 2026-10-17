@@ -20,6 +20,22 @@
 //! 1/255 (2/255 for `Color` and `Luminosity`), while blending in linear
 //! light misses by up to 196/255 (docs/parity/4C-blend.md).
 //!
+//! Over a **translucent** backdrop (no paper underneath: transparent
+//! export, merge down) the reference departs from that formula, and so
+//! does this module (phase 5B, ADR 0022, measured on 45 900 combinations):
+//! `Multiply` keeps it; every other mode composes the blended colour over
+//! the backdrop first,
+//!
+//! ```text
+//! X  = [αs·B(Cb, Cs) + (1 − αs)·αb·Cb] / αo
+//! C  = [αs·(1 − αb)·Cs + αb·X] / αo          αo = αs + αb·(1 − αs)
+//! ```
+//!
+//! and `Screen`, `ColorDodge`, `HardLight` and `SoftLight` keep that colour
+//! with an additive alpha `min(1, αs + αb)`. Both rules equal the W3C
+//! formula over an opaque backdrop, where the code takes the exact pre-5B
+//! path, so everything composed over the paper is unchanged bit for bit.
+//!
 //! `Normal` keeps its original code path (`over`), bit-identical to the
 //! compositor before blend modes existed. A fully transparent source
 //! pixel leaves the destination untouched in every mode.
@@ -164,6 +180,7 @@ impl BlendMode {
     /// Blends `src` (scaled by `opacity`) onto `dst` in place. The mode is
     /// matched once; each arm runs its own monomorphized pixel loop.
     pub fn composite(self, src: &[PremulRgba], opacity: f32, dst: &mut [PremulRgba]) {
+        let r = self.backdrop();
         match self {
             BlendMode::Normal => {
                 for (d, s) in dst.iter_mut().zip(src) {
@@ -172,30 +189,32 @@ impl BlendMode {
                     }
                 }
             }
-            BlendMode::Multiply => separable(src, opacity, dst, |b, s| b * s),
-            BlendMode::Screen => separable(src, opacity, dst, screen),
-            BlendMode::Overlay => separable(src, opacity, dst, |b, s| hard_light(s, b)),
-            BlendMode::Darken => separable(src, opacity, dst, f32::min),
-            BlendMode::Lighten => separable(src, opacity, dst, f32::max),
-            BlendMode::ColorDodge => separable(src, opacity, dst, color_dodge),
-            BlendMode::ColorBurn => separable(src, opacity, dst, color_burn),
-            BlendMode::HardLight => separable(src, opacity, dst, hard_light),
-            BlendMode::SoftLight => separable(src, opacity, dst, soft_light),
-            BlendMode::Difference => separable(src, opacity, dst, |b, s| (b - s).abs()),
-            BlendMode::Exclusion => separable(src, opacity, dst, |b, s| b + s - 2.0 * b * s),
-            BlendMode::Add => separable(src, opacity, dst, |b, s| (b + s).min(1.0)),
+            BlendMode::Multiply => separable(src, opacity, dst, r, |b, s| b * s),
+            BlendMode::Screen => separable(src, opacity, dst, r, screen),
+            BlendMode::Overlay => separable(src, opacity, dst, r, |b, s| hard_light(s, b)),
+            BlendMode::Darken => separable(src, opacity, dst, r, f32::min),
+            BlendMode::Lighten => separable(src, opacity, dst, r, f32::max),
+            BlendMode::ColorDodge => separable(src, opacity, dst, r, color_dodge),
+            BlendMode::ColorBurn => separable(src, opacity, dst, r, color_burn),
+            BlendMode::HardLight => separable(src, opacity, dst, r, hard_light),
+            BlendMode::SoftLight => separable(src, opacity, dst, r, soft_light),
+            BlendMode::Difference => separable(src, opacity, dst, r, |b, s| (b - s).abs()),
+            BlendMode::Exclusion => separable(src, opacity, dst, r, |b, s| b + s - 2.0 * b * s),
+            BlendMode::Add => separable(src, opacity, dst, r, |b, s| (b + s).min(1.0)),
             BlendMode::Hue => {
-                non_separable(src, opacity, dst, |b, s| {
+                non_separable(src, opacity, dst, r, |b, s| {
                     set_lum(set_sat(s, sat(b)), lum(b))
                 });
             }
             BlendMode::Saturation => {
-                non_separable(src, opacity, dst, |b, s| {
+                non_separable(src, opacity, dst, r, |b, s| {
                     set_lum(set_sat(b, sat(s)), lum(b))
                 });
             }
-            BlendMode::Color => non_separable(src, opacity, dst, |b, s| set_lum(s, lum(b))),
-            BlendMode::Luminosity => non_separable(src, opacity, dst, |b, s| set_lum(b, lum(s))),
+            BlendMode::Color => non_separable(src, opacity, dst, r, |b, s| set_lum(s, lum(b))),
+            BlendMode::Luminosity => {
+                non_separable(src, opacity, dst, r, |b, s| set_lum(b, lum(s)));
+            }
         }
     }
 }
@@ -215,7 +234,43 @@ fn straight(p: PremulRgba) -> [f32; 3] {
     ]
 }
 
-/// The W3C general formula given the blended colour `blend` = B(Cb, Cs).
+/// How a mode combines with a **translucent** backdrop (`0 < αb < 1`),
+/// measured against the reference (docs/parity/5B-transparent-compositing.md,
+/// ADR 0022). Over an opaque backdrop every rule is the W3C formula; over a
+/// transparent one every rule shows the source.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Backdrop {
+    /// The W3C general formula (`Multiply`).
+    W3c,
+    /// The blended colour is composed over the backdrop before the W3C mix:
+    /// `C = [αs(1 − αb)·Cs + αb·X] / αo`, `X = [αs·B + (1 − αs)·αb·Cb] / αo`,
+    /// `αo = αs + αb − αs·αb`.
+    Nested,
+    /// [`Backdrop::Nested`] colour with additive alpha `min(1, αs + αb)`
+    /// (`Screen`, `ColorDodge`, `HardLight`, `SoftLight`).
+    NestedAdditive,
+}
+
+impl BlendMode {
+    /// The rule this mode follows over a translucent backdrop. `Normal`
+    /// is plain source-over and never reaches the general formula.
+    fn backdrop(self) -> Backdrop {
+        match self {
+            BlendMode::Multiply | BlendMode::Normal => Backdrop::W3c,
+            BlendMode::Screen
+            | BlendMode::ColorDodge
+            | BlendMode::HardLight
+            | BlendMode::SoftLight => Backdrop::NestedAdditive,
+            _ => Backdrop::Nested,
+        }
+    }
+}
+
+/// The general formula given the blended colour `blend` = B(Cb, Cs).
+///
+/// Over an opaque backdrop (the paper is under every blend tile on
+/// screen) this is the W3C formula, computed exactly as before 5B; over a
+/// translucent one it follows `rule` (D-4C-1, resolved in 5B).
 #[inline]
 fn general(
     s: PremulRgba,
@@ -223,18 +278,43 @@ fn general(
     d: PremulRgba,
     cs: [f32; 3],
     blend: [f32; 3],
+    rule: Backdrop,
 ) -> PremulRgba {
     let a_s = s.a * opacity;
     let a_b = d.a;
+    if a_b >= 1.0 || rule == Backdrop::W3c {
+        let mix = |cs: f32, b: f32, cb_premul: f32| {
+            let cs_prime = (1.0 - a_b) * cs + a_b * b;
+            a_s * cs_prime + (1.0 - a_s) * cb_premul
+        };
+        return PremulRgba::new(
+            mix(cs[0], blend[0], d.r),
+            mix(cs[1], blend[1], d.g),
+            mix(cs[2], blend[2], d.b),
+            a_s + a_b * (1.0 - a_s),
+        );
+    }
+    let a_u = a_s + a_b * (1.0 - a_s);
+    if a_u <= 0.0 {
+        return d;
+    }
+    // Premultiplied by the union alpha: αs(1 − αb)·Cs + (αb/αu)·(αs·B + (1 − αs)·cb).
+    let k = a_b / a_u;
+    let (a_o, scale) = match rule {
+        Backdrop::NestedAdditive => {
+            let a_o = (a_s + a_b).min(1.0);
+            (a_o, a_o / a_u)
+        }
+        _ => (a_u, 1.0),
+    };
     let mix = |cs: f32, b: f32, cb_premul: f32| {
-        let cs_prime = (1.0 - a_b) * cs + a_b * b;
-        a_s * cs_prime + (1.0 - a_s) * cb_premul
+        scale * (a_s * (1.0 - a_b) * cs + k * (a_s * b + (1.0 - a_s) * cb_premul))
     };
     PremulRgba::new(
         mix(cs[0], blend[0], d.r),
         mix(cs[1], blend[1], d.g),
         mix(cs[2], blend[2], d.b),
-        a_s + a_b * (1.0 - a_s),
+        a_o,
     )
 }
 
@@ -243,13 +323,14 @@ fn separable(
     src: &[PremulRgba],
     opacity: f32,
     dst: &mut [PremulRgba],
+    rule: Backdrop,
     f: impl Fn(f32, f32) -> f32,
 ) {
     for (d, s) in dst.iter_mut().zip(src) {
         if s.a > 0.0 {
             let (cs, cb) = (straight(*s), straight(*d));
             let blend = [f(cb[0], cs[0]), f(cb[1], cs[1]), f(cb[2], cs[2])];
-            *d = general(*s, opacity, *d, cs, blend);
+            *d = general(*s, opacity, *d, cs, blend, rule);
         }
     }
 }
@@ -259,12 +340,13 @@ fn non_separable(
     src: &[PremulRgba],
     opacity: f32,
     dst: &mut [PremulRgba],
+    rule: Backdrop,
     f: impl Fn([f32; 3], [f32; 3]) -> [f32; 3],
 ) {
     for (d, s) in dst.iter_mut().zip(src) {
         if s.a > 0.0 {
             let (cs, cb) = (straight(*s), straight(*d));
-            *d = general(*s, opacity, *d, cs, f(cb, cs));
+            *d = general(*s, opacity, *d, cs, f(cb, cs), rule);
         }
     }
 }
@@ -553,9 +635,17 @@ mod tests {
             for c in [o.r, o.g, o.b] {
                 proptest::prop_assert!(c <= o.a + eps, "{:?}: colour exceeds alpha {:?}", mode, o);
             }
-            // Alpha is the W3C union in every mode (no mode adds coverage).
+            // Alpha is the W3C union, except the additive modes over a
+            // translucent backdrop (ADR 0022); no mode loses coverage.
             let a_s = if s.a > 0.0 { s.a * opacity } else { 0.0 };
-            let want = if s.a > 0.0 { a_s + d.a * (1.0 - a_s) } else { d.a };
+            let additive = mode.backdrop() == Backdrop::NestedAdditive && d.a < 1.0;
+            let want = if s.a <= 0.0 {
+                d.a
+            } else if additive && a_s + d.a * (1.0 - a_s) > 0.0 {
+                (a_s + d.a).min(1.0)
+            } else {
+                a_s + d.a * (1.0 - a_s)
+            };
             proptest::prop_assert!((o.a - want).abs() <= eps, "{:?} alpha {} want {}", mode, o.a, want);
         }
 

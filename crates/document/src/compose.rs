@@ -96,6 +96,31 @@ impl Document {
         overlay: Option<&Overlay>,
         scratch: &mut ComposeScratch,
     ) -> bool {
+        self.compose(coord, overlay, scratch, true)
+    }
+
+    /// The composite of tile `coord` over **transparency**, as if there
+    /// were no paper: every layer, non-Normal ones included, blends with
+    /// the translucent stack below it by the rule measured against the
+    /// reference (ADR 0022). This is the transparent PNG export's
+    /// composite, and what the reference shows without its paper layer.
+    /// Writes into `scratch` like [`Document::compose_tile_into`] (no
+    /// allocation) and returns whether the tile has content.
+    pub fn compose_tile_transparent_into(
+        &self,
+        coord: TileCoord,
+        scratch: &mut ComposeScratch,
+    ) -> bool {
+        self.compose(coord, None, scratch, false)
+    }
+
+    fn compose(
+        &self,
+        coord: TileCoord,
+        overlay: Option<&Overlay>,
+        scratch: &mut ComposeScratch,
+        paper: bool,
+    ) -> bool {
         let in_doc = coord.rect().intersect(&self.bounds());
         if in_doc.is_empty() {
             return false;
@@ -110,7 +135,7 @@ impl Document {
             return false;
         }
 
-        let backdrop = if blends_with_paper(layers, &draws) {
+        let backdrop = if paper && blends_with_paper(layers, &draws) {
             self.background().premultiply()
         } else {
             PremulRgba::TRANSPARENT
@@ -197,9 +222,10 @@ impl Document {
 
     /// Whether [`Document::compose_tile_into`] composes tile `coord` (with
     /// no overlay) over the opaque paper: a visible non-Normal layer that
-    /// blends with the stack draws there. Such a tile has no transparent
-    /// composite to export: blending over a translucent backdrop without
-    /// the paper is the reference behaviour not yet known (D-4C-1).
+    /// blends with the stack draws there. In such a tile the composite
+    /// over the paper is not the transparent composite
+    /// ([`Document::compose_tile_transparent_into`]) with the paper put
+    /// under it afterwards, since blending sees the paper.
     pub fn paper_backdrop(&self, coord: TileCoord) -> bool {
         let draws = |l: &RasterLayer| l.visible() && l.pixels().has_tile(coord);
         blends_with_paper(self.layer_slice(), &draws)
@@ -258,7 +284,15 @@ fn load_layer(
                 *p = p.scale(*r);
             }
         }
-    } else if let Some(t) = hidden {
+    } else {
+        apply_mask(m, coord, layer);
+    }
+}
+
+/// Scales one decoded tile of a layer by its mask's reveal values (the
+/// mask's enabled flag is the caller's business).
+pub(crate) fn apply_mask(m: &crate::LayerMask, coord: TileCoord, layer: &mut [PremulRgba]) {
+    if let Some(t) = m.hidden_tile(coord) {
         for (p, h) in layer.iter_mut().zip(t.pixels()) {
             if *h != 0 {
                 *p = p.scale(f32::from(255 - h) / 255.0);

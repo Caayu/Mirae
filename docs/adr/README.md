@@ -28,6 +28,7 @@ and both say so.
 | [0019](0019-mirae-document-format-v1.md) | `.mirae` v1: ZIP + JSON manifest + raw premultiplied tiles, explicit sparsity, exact numbers, strict versioning, validated loading, limits, atomic save, no history, fixtures as contract | 4F |
 | [0020](0020-io-crate-and-file-workflow.md) | `tela-io` crate and dependencies (zip deflate-only, png), errors/warnings, revision-based save point, app-owned workflow with egui prompts and native file dialogs | 4F |
 | [0021](0021-paint-colour-and-colour-tool-state.md) | The paint colour: opaque straight `f32` `Color` without alpha, captured by the stroke, `(C·m, m)` formula; colour state is session tool state in the app (not the document, not history); eyedropper on the composite or the layer | 5A |
+| [0022](0022-blending-over-translucent-backdrops.md) | Blending over a translucent backdrop (D-4C-1 resolved by measurement): Multiply W3C, the other modes compose the blended colour over the backdrop first, additive alpha for Screen/Dodge/Hard/Soft Light; opaque backdrops unchanged | 5B |
 
 ## Writing a new ADR
 

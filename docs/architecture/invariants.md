@@ -88,17 +88,18 @@ Added in phase 4B (ADR 0015). Unit tests in
 | T5 | The view transform round-trips and zoom/rotate keep the anchor fixed. | `canvas::view::tests::*`, `properties.rs::view_round_trips_and_pins_the_anchor` |
 | T6 | The display is seam-free when minified and rotated; magnified texels are flat squares. | `display_quality.rs::no_seams_when_minified_and_rotated`, `display_quality.rs::magnified_texels_are_flat_squares` |
 
-## Blend modes (phase 4C, ADR 0016)
+## Blend modes (phase 4C, ADR 0016; translucent backdrops 5B, ADR 0022)
 
 | # | Invariant | Protected by |
 |---|---|---|
 | C1 | `Normal` composition is bit-identical to the pre-4C compositor (same code path); tiles where only Normal layers draw keep a transparent backdrop. | `document::compose::tests::normal_only_tiles_keep_a_transparent_backdrop`, existing compose tests, brush goldens |
 | C2 | A fully transparent source pixel leaves the destination unchanged in every mode. | `document::blend::tests::transparent_source_is_the_identity_in_every_mode`, property test `transparent_source_never_changes_the_destination` |
-| C3 | Every mode outputs finite, valid premultiplied pixels (components in [0,1], colour ≤ alpha) with the W3C alpha `αs + αb(1 − αs)`. | property test `every_mode_yields_valid_premultiplied_pixels` |
+| C3 | Every mode outputs finite, valid premultiplied pixels (components in [0,1], colour ≤ alpha) with the W3C alpha `αs + αb(1 − αs)`, except Screen, Color Dodge, Hard Light and Soft Light over a translucent backdrop, whose alpha is `min(1, αs + αb)` (ADR 0022, 5B; was the W3C alpha for every mode until 5B). | property test `every_mode_yields_valid_premultiplied_pixels` |
 | C4 | Blending uses the published W3C formula and blend functions on sRGB-encoded values; a tile in which a non-Normal layer blends with the stack (a group base or a base-less layer; clipped layers blend inside their group) has the paper as opaque bottom backdrop. | `opaque_results_follow_the_published_blend_functions`, `non_separable_modes_keep_the_published_components`, `blend_layers_see_the_paper` |
 | C5 | Over its paper, Tela matches the reference's measured blend results within 1/255 (2/255 Color, Luminosity) for every probed combination. | `crates/document/tests/blend_parity.rs` (3 400 combinations) |
 | C6 | The blend sheet renders deterministically and equal to its reviewed golden (± 1/255). | `crates/document/tests/blend_sheet.rs` |
 | C7 | Composition stays allocation-free in every mode. | `blend_bench` (allocations column), `stamp_bench` |
+| C8 | Over a translucent backdrop (no paper: transparent export, merge down) every mode follows the rule measured in the reference (ADR 0022): Multiply the W3C formula, the others the blended colour composed over the backdrop first; over an opaque backdrop the code takes the pre-5B W3C path, so composites over the paper are unchanged bit for bit. Tela matches the reference within 2/255 premultiplied on 45 900 combinations (Color Dodge/Burn 5/255 in 8-bit documents, a storage-precision effect). | `crates/document/tests/backdrop_parity.rs` (both depths), `backdrop_parity.rs::the_w3c_formula_does_not_explain_the_data` (planted alternative), `blend_parity.rs::every_mode_matches_the_reference_without_paper` |
 
 T3 (`over` is associative) holds for Normal only; the other modes are not
 associative, so the stack order matters.

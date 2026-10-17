@@ -153,17 +153,16 @@ fn over_paper(depth: PixelDepth) {
 }
 
 #[test]
-fn formula_matches_the_reference_without_paper_except_over_translucent_backdrops() {
-    // Without a paper layer the backdrop can be translucent. Over opaque
-    // or fully transparent backdrops the reference follows the same
-    // formula; over translucent ones it does not (a known, recorded
-    // difference — docs/parity/4C-blend.md, D-4C-1), so those rows are
-    // only counted here.
+fn every_mode_matches_the_reference_without_paper() {
+    // Without a paper layer the backdrop can be translucent. Until 5B the
+    // translucent rows (the teal swatch at alpha 128) were only counted:
+    // the reference does not follow the W3C formula there (D-4C-1). The
+    // rule measured in 5B (ADR 0022, `backdrop_parity.rs`) reproduces
+    // them too.
     let mut translucent = 0;
     for r in rows("blend_without_paper.csv") {
         if r.bottom[3] != 0 && r.bottom[3] != 255 {
             translucent += 1;
-            continue;
         }
         let premul = |c: [u8; 4]| PremulRgba::from_rgba8(stored(c));
         let mut d = [premul(r.bottom)];
