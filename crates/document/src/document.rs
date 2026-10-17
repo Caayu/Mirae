@@ -1,3 +1,4 @@
+mod filling;
 mod history;
 mod merge;
 mod parts;
@@ -41,6 +42,16 @@ pub enum Placement {
     Top,
     /// Below every layer.
     Bottom,
+}
+
+/// What an edit of stored tiles did, before it is recorded: the history
+/// change (the previous content of the tiles that changed), its cost, the
+/// tiles that changed and whether they show (visible layer, enabled mask).
+struct TileEdit {
+    change: Change,
+    cost: usize,
+    changed: DirtyTiles,
+    shown: bool,
 }
 
 /// A raster document: size, paper color and a layer stack.
@@ -578,13 +589,38 @@ impl Document {
         id: LayerId,
         tiles: &DirtyTiles,
         limited: bool,
-        mut f: impl FnMut(TileCoord, &mut Tile<u8>, TileCoverage),
+        f: impl FnMut(TileCoord, &mut Tile<u8>, TileCoverage),
     ) -> Result<DirtyTiles, LayerError> {
+        let edit = self.mask_edit(id, tiles, limited, f)?;
+        let dirty = if edit.shown {
+            tiles.clone()
+        } else {
+            DirtyTiles::new()
+        };
+        self.record(
+            HistoryAction::PaintMask,
+            vec![edit.change],
+            self.active,
+            edit.cost,
+        );
+        Ok(dirty)
+    }
+
+    /// Runs `f` on the declared mask tiles (as [`Document::modify_mask`]
+    /// describes) without recording: the caller records `change`.
+    fn mask_edit(
+        &mut self,
+        id: LayerId,
+        tiles: &DirtyTiles,
+        limited: bool,
+        mut f: impl FnMut(TileCoord, &mut Tile<u8>, TileCoverage),
+    ) -> Result<TileEdit, LayerError> {
         let i = self.require_unlocked(id)?;
         let selection = self.selection.as_ref().filter(|_| limited);
         let layer = &mut self.layers[i];
         let mask = layer.mask.as_mut().ok_or(LayerError::NoMask(id))?;
         let mut previous = Vec::with_capacity(tiles.len());
+        let mut changed = DirtyTiles::new();
         let (mut before, mut after) = (0, 0);
         for coord in tiles.iter() {
             let old = mask.hidden.tile(coord).cloned();
@@ -602,21 +638,20 @@ impl Document {
                 before += usize::from(old.is_some());
                 after += usize::from(new.is_some());
                 previous.push((coord, old));
+                changed.mark(coord);
             }
         }
-        let dirty = if layer.visible && mask.enabled {
-            tiles.clone()
-        } else {
-            DirtyTiles::new()
-        };
         let cost = before.max(after) * history::MASK_TILE_BYTES
             + previous.len() * std::mem::size_of::<(TileCoord, Option<Tile<u8>>)>();
-        let change = Change::MaskTiles {
-            layer: id,
-            tiles: previous,
-        };
-        self.record(HistoryAction::PaintMask, vec![change], self.active, cost);
-        Ok(dirty)
+        Ok(TileEdit {
+            change: Change::MaskTiles {
+                layer: id,
+                tiles: previous,
+            },
+            cost,
+            changed,
+            shown: layer.visible && mask.enabled,
+        })
     }
 
     /// Whether a stroke may edit `part` of `id`: the layer must exist, be
@@ -681,8 +716,32 @@ impl Document {
         id: LayerId,
         tiles: &DirtyTiles,
         limited: bool,
-        mut f: impl FnMut(TileCoord, &mut Tile<P>, TileCoverage),
+        f: impl FnMut(TileCoord, &mut Tile<P>, TileCoverage),
     ) -> Result<DirtyTiles, LayerError> {
+        let edit = self.tile_edit(id, tiles, limited, f)?;
+        let dirty = if edit.shown {
+            tiles.clone()
+        } else {
+            DirtyTiles::new()
+        };
+        self.record(
+            HistoryAction::Paint,
+            vec![edit.change],
+            self.active,
+            edit.cost,
+        );
+        Ok(dirty)
+    }
+
+    /// Runs `f` on the declared tiles (as [`Document::modify_tiles`]
+    /// describes) without recording: the caller records `change`.
+    fn tile_edit<P: StoragePixel>(
+        &mut self,
+        id: LayerId,
+        tiles: &DirtyTiles,
+        limited: bool,
+        mut f: impl FnMut(TileCoord, &mut Tile<P>, TileCoverage),
+    ) -> Result<TileEdit, LayerError> {
         let i = self.require_unlocked(id)?;
         let wrong = LayerError::WrongDepth {
             document: self.depth,
@@ -692,6 +751,7 @@ impl Document {
         let layer = &mut self.layers[i];
         let pixels = layer.pixels.surface_mut::<P>().ok_or(wrong)?;
         let mut previous = Vec::with_capacity(tiles.len());
+        let mut changed = DirtyTiles::new();
         let (mut before, mut after) = (0, 0);
         for coord in tiles.iter() {
             let old = pixels.tile(coord).cloned();
@@ -705,21 +765,20 @@ impl Document {
                 before += usize::from(old.is_some());
                 after += usize::from(new.is_some());
                 previous.push((coord, old));
+                changed.mark(coord);
             }
         }
-        let dirty = if layer.visible {
-            tiles.clone()
-        } else {
-            DirtyTiles::new()
-        };
         let cost = before.max(after) * tile_bytes(self.depth)
             + previous.len() * std::mem::size_of::<(TileCoord, Option<Tile<P>>)>();
-        let change = Change::Tiles {
-            layer: id,
-            tiles: TileBackup::new(previous),
-        };
-        self.record(HistoryAction::Paint, vec![change], self.active, cost);
-        Ok(dirty)
+        Ok(TileEdit {
+            change: Change::Tiles {
+                layer: id,
+                tiles: TileBackup::new(previous),
+            },
+            cost,
+            changed,
+            shown: layer.visible,
+        })
     }
 
     /// Removes every pixel of a layer. Refused on locked layers. The

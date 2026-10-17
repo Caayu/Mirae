@@ -48,6 +48,9 @@ enum Edit {
     /// A transform of a layer (or its selected part) of `kind`: a move, a
     /// flip, a reduction, an enlargement, a rotation, nearest neighbour.
     Transform(usize, u8),
+    /// A fill of a layer of `kind` (bucket on the pixels, the composite,
+    /// erasing, Edit › Fill, on the mask) from a seed picked by the byte.
+    Fill(usize, u8, u8),
 }
 
 #[derive(Clone, Debug)]
@@ -84,6 +87,7 @@ fn hop() -> impl Strategy<Value = HOp> {
         1 => Just(Edit::Invert),
         1 => (1u8..12).prop_map(Edit::Feather),
         2 => (any::<usize>(), 0u8..6).prop_map(|(i, k)| Edit::Transform(i, k)),
+        2 => (any::<usize>(), 0u8..5, any::<u8>()).prop_map(|(i, k, p)| Edit::Fill(i, k, p)),
     ];
     prop_oneof![
         6 => edit.prop_map(HOp::Edit),
@@ -234,6 +238,31 @@ fn edit(d: &mut Document, removed: &mut Vec<LayerId>, e: &Edit) -> Result<(), La
                     interpolation,
                 },
             ))
+        }
+        Edit::Fill(i, kind, p) => {
+            let layer = pick(d, removed, i);
+            let part = if kind == 4 {
+                crate::LayerPart::Mask
+            } else {
+                crate::LayerPart::Pixels
+            };
+            let target = crate::FillTarget { layer, part };
+            let colour = tela_color::Color::from_rgb8([p, 255 - p, p / 2]);
+            let fill = crate::ConnectedFill {
+                seed: (i32::from(p) * 4, i32::from(p) % 256),
+                reference: if kind == 1 {
+                    crate::FillReference::Composite
+                } else {
+                    crate::FillReference::Target
+                },
+                tolerance: crate::Tolerance::from_tenths(u16::from(p) * 3),
+                anti_alias: p % 2 == 0,
+            };
+            ok(match kind {
+                2 => d.fill_connected(target, &fill, crate::FillPaint::Erase),
+                3 => d.fill_selection(target, crate::FillPaint::Color(colour)),
+                _ => d.fill_connected(target, &fill, crate::FillPaint::Color(colour)),
+            })
         }
     }
 }

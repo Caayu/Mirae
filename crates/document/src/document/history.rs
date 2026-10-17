@@ -102,6 +102,9 @@ pub enum HistoryAction {
     /// flipped ([`Document::apply_transform`]): pixels, mask and selection
     /// in one step.
     Transform,
+    /// A layer's pixels or mask filled ([`Document::fill_connected`],
+    /// [`Document::fill_selection`]).
+    Fill,
 }
 
 impl HistoryAction {

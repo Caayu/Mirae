@@ -1426,6 +1426,7 @@ fn history_label(action: HistoryAction) -> &'static str {
         HistoryAction::InvertSelection => "invert selection",
         HistoryAction::FeatherSelection => "feather selection",
         HistoryAction::Transform => "transform",
+        HistoryAction::Fill => "fill",
     }
 }
 

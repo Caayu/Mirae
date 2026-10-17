@@ -28,6 +28,9 @@ mod blend;
 mod compose;
 mod document;
 mod error;
+mod fill;
+#[cfg(test)]
+mod fill_properties;
 #[cfg(test)]
 mod history_properties;
 mod layer;
@@ -46,6 +49,9 @@ pub use document::{
     MAX_TILE_COORD, MaskParts, PartsError, Placement, Revision,
 };
 pub use error::LayerError;
+pub use fill::{
+    ConnectedFill, FillPaint, FillReference, FillRegion, FillStats, FillTarget, Tolerance,
+};
 pub use layer::{LayerId, LayerMask, RasterLayer};
 pub use pixels::LayerPixels;
 pub use selection::{MAX_FEATHER, OUTLINE_THRESHOLD, Selection, SelectionOp, SelectionShape};
