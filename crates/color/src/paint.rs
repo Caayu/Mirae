@@ -32,8 +32,8 @@ pub struct Color {
 }
 
 fn channel(v: f32) -> f32 {
-    // `clamp` keeps NaN; `max` maps it to 0.
-    v.max(0.0).min(1.0)
+    // `clamp` keeps NaN; a colour never holds one (COL1).
+    if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
 }
 
 impl Color {
@@ -113,7 +113,7 @@ impl Color {
     /// colour; at very low alpha the result is as coarse as the storage
     /// (an 8-bit pixel at alpha 1/255 can only be 0 or 1 per channel).
     pub fn from_premultiplied(p: PremulRgba) -> Option<Self> {
-        if !(p.a > 0.0) || !p.a.is_finite() {
+        if p.a.is_nan() || p.a <= 0.0 || !p.a.is_finite() {
             return None;
         }
         let inv = 1.0 / p.a;

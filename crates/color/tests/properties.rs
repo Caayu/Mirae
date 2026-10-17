@@ -102,7 +102,7 @@ proptest! {
     fn picking_never_yields_nan(r in any_f32(), g in any_f32(), b in any_f32(), a in any_f32()) {
         match Color::from_premultiplied(PremulRgba::new(r, g, b, a)) {
             Some(c) => prop_assert!(valid(c) && a > 0.0),
-            None => prop_assert!(!(a > 0.0) || !a.is_finite()),
+            None => prop_assert!(a.is_nan() || a <= 0.0 || !a.is_finite()),
         }
     }
 
