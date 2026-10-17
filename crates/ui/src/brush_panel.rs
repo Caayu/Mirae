@@ -45,6 +45,8 @@ pub enum PanelAction {
     Color(crate::ColorAction),
     /// From the selection panel.
     Selection(crate::SelectionAction),
+    /// From the fill panel.
+    Fill(crate::FillAction),
     /// From the transform panel.
     Transform(crate::TransformAction),
     /// The answer to "Apply the transform?".

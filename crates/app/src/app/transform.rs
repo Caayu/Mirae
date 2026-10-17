@@ -199,6 +199,7 @@ impl App {
                 action,
                 PanelAction::Layer(_)
                     | PanelAction::Selection(_)
+                    | PanelAction::Fill(_)
                     | PanelAction::SelectPreset(_)
                     | PanelAction::ToggleEraser
                     | PanelAction::ClearLayer

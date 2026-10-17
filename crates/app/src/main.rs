@@ -10,6 +10,7 @@
 
 mod app;
 mod colors;
+mod filling;
 mod selecting;
 mod stats;
 mod tools;

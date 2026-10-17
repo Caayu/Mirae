@@ -19,6 +19,9 @@ pub enum CanvasTool {
     /// Drags move the active layer, or the selected part of it (one
     /// transform per drag; phase 5D).
     Move,
+    /// A click fills the connected area under it (phase 5E); the stylus
+    /// eraser end clears it.
+    Fill,
 }
 
 pub struct Tools {

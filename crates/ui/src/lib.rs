@@ -1,8 +1,8 @@
 //! Minimal brush-editing UI built with egui.
 //!
 //! **Responsibility:** the brush panel ([`BrushPanel`]), the colour panel
-//! ([`ColorPanel`]), the selection panel ([`selection_panel()`]) and the
-//! selection outline ([`selection_outline()`]), the transform panel
+//! ([`ColorPanel`]), the selection panel ([`selection_panel()`]), the fill
+//! panel ([`fill_panel()`]) and the selection outline ([`selection_outline()`]), the transform panel
 //! ([`transform_panel()`]) and box ([`transform_box()`]), the layer panel
 //! ([`layer_panel()`]), the document bar ([`document_bar()`]), the curve editor ([`curve_editor`]), egui
 //! input/output plumbing ([`UiLayer`]) and
@@ -22,6 +22,7 @@ pub mod brush_panel;
 pub mod color_panel;
 pub mod curve_editor;
 pub mod document_bar;
+pub mod fill_panel;
 pub mod history_bar;
 pub mod layer_panel;
 pub mod prompt;
@@ -34,6 +35,7 @@ pub use document_bar::{DocumentCommand, DocumentInfo, ExportChoice, document_bar
 pub use egui;
 use egui::{ClippedPrimitive, TexturesDelta, ViewportId};
 use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
+pub use fill_panel::{FillAction, FillModel, fill_panel};
 pub use history_bar::{HistoryButtons, HistoryCommand, history_bar};
 pub use layer_panel::{LayerAction, LayerRow, layer_panel};
 pub use prompt::{

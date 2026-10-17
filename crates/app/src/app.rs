@@ -8,8 +8,8 @@ use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha};
 use tela_canvas::{DirtyTiles, Tile, TileCoord, ViewTransform};
 use tela_color::{Color, PixelDepth, PremulRgba, with_pixel_type};
 use tela_document::{
-    BlendMode, ComposeScratch, Document, HistoryAction, LayerId, LayerPart, LowerMask, Overlay,
-    OverlayPaint, Placement,
+    BlendMode, ComposeScratch, Document, FillPaint, FillReference, FillTarget, HistoryAction,
+    LayerId, LayerPart, LowerMask, Overlay, OverlayPaint, Placement, Tolerance,
 };
 use tela_renderer::{Frame, Renderer};
 use tela_tablet::{DeviceKind, Phase, TabletEvent, TabletSample, TimestampNormalizer, clock};
@@ -25,15 +25,16 @@ mod files;
 mod transform;
 
 use crate::colors::{ColorState, Slot};
+use crate::filling::{self, FillTool};
 use crate::selecting::{SelectionDrag, SelectionTool};
 use crate::stats::LatencyStats;
 use crate::tools::{CanvasTool, Tools};
 use crate::transforming::{TransformSession, TransformTool};
 use files::{FileState, Pending};
 use tela_ui::{
-    BrushPanel, ColorAction, ColorModel, ColorPanel, DocumentCommand, DocumentInfo, HistoryButtons,
-    HistoryCommand, LayerAction, LayerRow, MergeMaskChoice, PanelAction, PanelModel, PickSource,
-    SelectionAction, SelectionModel, TransformModel, UiLayer, egui,
+    BrushPanel, ColorAction, ColorModel, ColorPanel, DocumentCommand, DocumentInfo, FillAction,
+    FillModel, HistoryButtons, HistoryCommand, LayerAction, LayerRow, MergeMaskChoice, PanelAction,
+    PanelModel, PickSource, SelectionAction, SelectionModel, TransformModel, UiLayer, egui,
 };
 use transform::AfterTransform;
 
@@ -108,6 +109,8 @@ pub struct App {
     tool: CanvasTool,
     /// Selection tool settings (session state, not saved).
     selection: SelectionTool,
+    /// Fill tool settings (session state, not saved).
+    fill_tool: FillTool,
     /// The selection shape being drawn, in screen pixels.
     selection_drag: Option<SelectionDrag>,
     /// The selection's outline in document pixels, for the selection
@@ -195,6 +198,7 @@ impl App {
             color_panel: ColorPanel::default(),
             tool: CanvasTool::Brush,
             selection: SelectionTool::default(),
+            fill_tool: FillTool::default(),
             selection_drag: None,
             outline: None,
             ants_epoch: Instant::now(),
@@ -379,6 +383,10 @@ impl App {
             }
             (Phase::Move | Phase::Hover, Drag::Pick(source)) => self.pick(pos, source),
             (Phase::Up | Phase::Cancel, Drag::Pick(_)) => self.end_pick(),
+            // The fill tool fills at the press (Alt still picks, above).
+            (Phase::Down, Drag::None) if self.tool == CanvasTool::Fill => {
+                self.bucket(pos, ev.sample.device_kind);
+            }
             (Phase::Down, Drag::None) => {
                 let target = StrokeTarget::active(&self.document);
                 if let Err(e) = self.document.paint_target(target.layer, target.part) {
@@ -452,6 +460,78 @@ impl App {
                 log::warn!(target: "tela::stroke", "stroke discarded: {e}");
             }
             log::debug!(target: "tela::stroke", "{:?}", self.engine.stats());
+        }
+    }
+
+    /// A bucket fill at screen point `pos` into the edit target (the active
+    /// layer's pixels or mask), with the active colour captured now, or
+    /// clearing with the stylus eraser end or eraser mode (the reference's
+    /// transparent colour erases, 5E BK24; Mirae has no transparent colour,
+    /// debt #36). One history step; hidden and locked targets do nothing
+    /// (BK31).
+    fn bucket(&mut self, pos: Vec2, device: DeviceKind) {
+        let t = StrokeTarget::active(&self.document);
+        let target = FillTarget {
+            layer: t.layer,
+            part: t.part,
+        };
+        let colour = self.colors.active();
+        let paint = if self.tools.eraser_mode || device == DeviceKind::Eraser {
+            FillPaint::Erase
+        } else {
+            FillPaint::Color(colour)
+        };
+        let fill = self.fill_tool.connected(filling::seed_at(&self.view, pos));
+        let started = Instant::now();
+        match self.document.fill_connected(target, &fill, paint) {
+            Ok(dirty) => {
+                log::debug!(
+                    target: "tela::fill",
+                    "{} tiles in {:.1} ms",
+                    dirty.len(),
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+                if !dirty.is_empty() && matches!(paint, FillPaint::Color(_)) {
+                    self.colors.remember(colour);
+                }
+                self.stale.extend(&dirty);
+            }
+            Err(e) => log::info!(target: "tela::fill", "not filling: {e}"),
+        }
+    }
+
+    /// Fill panel requests. Filling waits for a stroke or a drag to end.
+    fn apply_fill(&mut self, action: FillAction) {
+        match action {
+            FillAction::Tool => self.tool = CanvasTool::Fill,
+            FillAction::Canvas(canvas) => {
+                self.fill_tool.reference = if canvas {
+                    FillReference::Composite
+                } else {
+                    FillReference::Target
+                };
+            }
+            FillAction::Tolerance(t) => self.fill_tool.tolerance = Tolerance::from_percent(t),
+            FillAction::AntiAlias(on) => self.fill_tool.anti_alias = on,
+            FillAction::FillSelection => {
+                if self.engine.is_stroking() || self.drag != Drag::None {
+                    return;
+                }
+                let t = StrokeTarget::active(&self.document);
+                let target = FillTarget {
+                    layer: t.layer,
+                    part: t.part,
+                };
+                let paint = if self.tools.eraser_mode {
+                    FillPaint::Erase
+                } else {
+                    FillPaint::Color(self.colors.active())
+                };
+                match self.document.fill_selection(target, paint) {
+                    Ok(dirty) => self.stale.extend(&dirty),
+                    Err(e) => log::info!(target: "tela::fill", "not filling: {e}"),
+                }
+            }
         }
     }
 
@@ -684,6 +764,12 @@ impl App {
             self.request_redraw();
             return;
         }
+        // The reference's Edit › Fill (Alt+Delete, 5E BK32).
+        if alt && !ctrl && !shift && event.logical_key == Key::Named(NamedKey::Delete) {
+            self.apply_fill(FillAction::FillSelection);
+            self.request_redraw();
+            return;
+        }
         if ctrl && !shift && !alt && event.physical_key == PhysicalKey::Code(KeyCode::KeyT) {
             self.begin_transform();
             self.request_redraw();
@@ -795,6 +881,9 @@ impl App {
                 // The Move tool (Mirae's key; the reference's Move layer
                 // tool was not observed, docs/parity/5D-transform.md).
                 "k" | "K" => self.tool = CanvasTool::Move,
+                // The reference's G (it cycles gradient and fill, 5E BK4;
+                // Mirae has no gradient tool yet).
+                "g" | "G" => self.tool = CanvasTool::Fill,
                 "b" | "B" => self.tool = CanvasTool::Brush,
                 // The reference's X: paint with the other colour (O2).
                 "x" | "X" => self.colors.toggle_active(),
@@ -1103,6 +1192,14 @@ impl App {
             has_selection: self.document.has_selection(),
         };
         let mut selection_action = None;
+        let fill_model = FillModel {
+            active: self.tool == CanvasTool::Fill,
+            canvas: self.fill_tool.reference == FillReference::Composite,
+            tolerance: self.fill_tool.tolerance.percent(),
+            anti_alias: self.fill_tool.anti_alias,
+            has_selection: self.document.has_selection(),
+        };
+        let mut fill_action = None;
         let Some(gpu) = &mut self.gpu else {
             return PanelAction::None;
         };
@@ -1195,6 +1292,8 @@ impl App {
                     ui.separator();
                     selection_action = tela_ui::selection_panel(ui, &selection_model);
                     ui.separator();
+                    fill_action = tela_ui::fill_panel(ui, &fill_model);
+                    ui.separator();
                     transform_action = tela_ui::transform_panel(ui, &transform_model);
                     ui.separator();
                     action = panel.show(
@@ -1254,6 +1353,9 @@ impl App {
         }
         if let Some(a) = selection_action {
             return PanelAction::Selection(a);
+        }
+        if let Some(a) = fill_action {
+            return PanelAction::Fill(a);
         }
         match (
             document_command,
@@ -1315,6 +1417,7 @@ impl App {
                 self.tool = CanvasTool::Brush;
             }
             PanelAction::Selection(a) => self.apply_selection(a),
+            PanelAction::Fill(a) => self.apply_fill(a),
             PanelAction::ClearLayer => self.clear_canvas(),
             PanelAction::Layer(a) => self.apply_layer(a),
             PanelAction::History(c) => self.apply_history(c),
@@ -1349,7 +1452,7 @@ impl App {
         // press would grab.
         let icon = if let Some(icon) = self.transform_cursor() {
             icon
-        } else if self.tool == CanvasTool::Selection {
+        } else if matches!(self.tool, CanvasTool::Selection | CanvasTool::Fill) {
             CursorIcon::Crosshair
         } else {
             CursorIcon::Default
