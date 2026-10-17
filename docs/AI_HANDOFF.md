@@ -11,7 +11,7 @@ conversation. Read it fully, then these, all **mandatory**:
    last phase ([phase4/README.md](phase4/README.md)), the phase-5 plan
    ([phase5/PLAN.md](phase5/PLAN.md)) and its proposal
    ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)), and the last subphase's parity
-   record ([parity/5C-selection.md](parity/5C-selection.md))
+   record ([parity/5D-transform.md](parity/5D-transform.md))
 
 ## 1. Mission
 
@@ -51,9 +51,16 @@ reference's operators and feather (measured), Select All, Deselect,
 Invert, marching ants, strokes and masks limited by the selection in the
 shared preview/commit rule, history steps, not saved, with a parity gate
 ([parity/5C-selection.md](parity/5C-selection.md)).
-**5D–5G are proposed, not approved, not started**
+**Phase 5D (transform) is complete** (2026-10-17): move, scale, rotate,
+flip of a layer or its selected part with its mask, as an explicit
+session committed as one history step (ADR 0025); the reference's
+resampler measured and reproduced (Keys cubic a = −1 premultiplied,
+pyramid, rounded axis-aligned edges, distance-anti-aliased rotated
+edges; nearest neighbour); with a parity gate
+([parity/5D-transform.md](parity/5D-transform.md)).
+**5E–5G are proposed, not approved, not started**
 ([phase5/PLAN.md](phase5/PLAN.md)). A new session asks the owner before
-starting 5D or anything else; it never begins a subphase on its own.
+starting 5E or anything else; it never begins a subphase on its own.
 
 ## 3. Repository
 
@@ -84,7 +91,7 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 503 tests, ~60 s after build
+cargo test --workspace --release        # 537 tests, ~60 s after build
 ```
 
 ## 7. Clippy and the full gate
@@ -105,6 +112,7 @@ cargo run --release -p tela-io --example io_bench              # .mirae save/loa
 cargo run --release -p tela-corpus --example banding            # 8 vs 16-bit banding, ~2 s
 cargo run --release -p tela-corpus --example layer_bench        # merge down, reorder, rename, memory; ~10 s
 cargo run --release -p tela-corpus --example selection_bench    # selections: shapes, operators, feather, outline, strokes, memory; ~15 s
+cargo run --release -p tela-corpus --example transform_bench    # transforms: source, preview, commit, undo, memory, 256²–4096²; ~3 min (--quick ~25 s)
 cargo run --release -p tela-brush --example stabilizer_bench
 cargo run --release -p tela-brush --example interpolation_bench
 ```
@@ -212,6 +220,15 @@ easily broken:
     for bit. Every change is a history step; it is not saved (files are
     byte-identical with or without one). The operators and the feather are
     the reference's measured rules (`selection::parity` keeps them).
+15. Transforms (ADR 0025, TR1–TR10): a transform is an app-side
+    `TransformSession`; the document does not change until
+    `apply_transform`, which is one history step (pixels, mask,
+    selection); a cancel changes nothing. Preview and commit call the one
+    per-tile function (`TransformSource::transform_pixels_tile`,
+    `transform_mask_tile`), so the commit is the preview quantized once
+    (bit-exact). The resampler is the reference's measured one
+    (`transform::parity` keeps it): never change the kernel, the pyramid
+    rule, the edge rounding or the edge anti-aliasing without new probes.
 
 ## 14. Architectural decisions
 
@@ -225,11 +242,11 @@ measured against the reference (0014–0017), 16-bit storage per document
 with an 8-bit default (0018), the `.mirae` v1 format (0019), the I/O crate
 and file workflow (0020), the paint colour and colour tool state (0021),
 blending over translucent backdrops (0022), merge down and the layer
-workflow (0023), selections (0024).
+workflow (0023), selections (0024), transforms (0025).
 
 ## 15. Completed features
 
-Phases 1–4 + 3.5 and subphases 5A, 5B, 5C; see [STATUS.md](STATUS.md#features) and
+Phases 1–4 + 3.5 and subphases 5A, 5B, 5C, 5D; see [STATUS.md](STATUS.md#features) and
 [CHANGELOG.md](../CHANGELOG.md). Phase reports: [phase2](phase2/README.md),
 [phase3](phase3/README.md), [phase4](phase4/README.md) (phase 1 has no
 separate report; it is summarized in the changelog).
@@ -244,7 +261,8 @@ thumbnails or folders, goldens verified on one machine,
 no transparent colour and colour palette not persisted (#35, #36), CPU composition single-threaded and linear in
 layers (#33), over-budget depth conversions hold both copies (#34),
 selection gaps (#37–#39: no reselect/saved selections, lasso smoothing,
-more selection tools).
+more selection tools), transforms of whole large layers slow on one core
+and the rotated-edge and interpolation gaps (#40, #41).
 Memory model: [memory.md](memory.md).
 
 ## 17. Risks
@@ -287,7 +305,7 @@ layers), 12.4 ms (100), 44 ms (100 Soft Light).
 
 ## 21. Next steps
 
-1. Ask the owner whether 5D (or something else) is approved; record the
+1. Ask the owner whether 5E (or something else) is approved; record the
    decision in [phase5/PLAN.md](phase5/PLAN.md) and follow it one
    subphase at a time; never start a phase or subphase without explicit
    approval.

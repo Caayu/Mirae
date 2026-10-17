@@ -25,7 +25,7 @@ palette were shown for the observations and hidden again; interpolation,
 "keep aspect" and the reference point were set back to their defaults.
 Nothing was read from the reference's files.
 
-Mirae: commits after `56974bf`, same machine; mouse and the synthetic
+Mirae: commits after `ee22784` (`fef166a`, `6f31cd7`, `8ea053b`), same machine; mouse and the synthetic
 Windows Ink pen (`inject_pen`). No physical tablet.
 
 Measured images: `crates/document/tests/reference/transform/` (README
@@ -104,3 +104,77 @@ scope), perspective, mesh, "keep original image", the reference's
 behaviour on an empty selection, a mask with a selection, 90° rotations,
 anisotropic reductions (one axis ≤ ½, the other not), performance and
 memory of the reference, a real pen.
+
+## Part 2 — Mirae design from the observations (ADR 0025)
+
+| Topic | Mirae | From |
+|---|---|---|
+| Session | `TransformSession` in the app (source + list of edits); Ctrl+T, the panel's Transform, Flip H/V (open a session with the flip, as the reference's menu does); Enter / OK commits one history step; Escape / Cancel discards and restores tool settings changed during the session; undo/redo inside the session walk its edits; the document never changes before the commit | T2–T5, T13–T15 |
+| Map | `x' = pivot + translate + R(θ)·S·(x − pivot)`; negative scale = flip; angle clockwise; the pivot's cross can be dragged (same map about another point) | T9, T15, T21 |
+| Handles | corners scale about the opposite corner, sides about the opposite side; keep aspect (on by default) makes both proportional, Shift too when it is off (the smaller ratio); inside moves; outside or the round handle rotates; a click does nothing | T6–T12 |
+| Fields | W %, H % (H follows with keep aspect), angle, keep aspect, Bicubic / Nearest, Reset | T2, T3, T16 |
+| What moves | no selection: content bounds of pixels ∪ mask, both moved; selection: its bounds, `p·s` over `p·(1 − s)`, the selection follows (same resampling, 8-bit, clipped to the canvas); the mask stays when there is a selection (unobserved) | T27–T33 |
+| Refusals | hidden, locked: silently (log); empty layer: notice "There is nothing to transform."; alpha lock ignored; clipping kept; off-canvas pixels kept | T34–T39 |
+| Resampler | Keys cubic a = −1 premultiplied; pyramid ≤ ½; clamped sample; un-premultiplied by raw alpha; rounded axis-aligned edges; distance anti-aliasing when rotated; nearest neighbour ties down, hard edges | T16–T25 |
+| Depth | the same `f32` arithmetic at both depths, quantized once at the document's depth | T26 (8-bit only in the reference) |
+| Interruptions | another layer or tool (panel) asks "Apply the transform?" Yes / No / Cancel; tool keys do nothing; New/Open/Save/Save As/import/convert wait (export allowed); closing the window asks the same question first | T41–T43 |
+| View | handles in screen space (constant size), box through the view transform | T44, T45 |
+| Move tool | K: a drag moves the layer or the selected part, one step per drag (Mirae's: the reference's Move layer tool was not observed) | — |
+
+## Part 3 — Mirae compared
+
+### With the reference's measurements (tests, `document::transform::parity`, both depths)
+
+| Check | Result |
+|---|---|
+| Content box without a selection (T2) | Equal (168..232 × 118..182) |
+| Bicubic 200, 110, 75, 50, 45, 33, 30 % and 150 × 60 % (T17–T20) | Within **3/255**, at most 2 pixels over 2/255 per image (the reference stores straight colour at 8 bits, Mirae premultiplied: D-5D-5); rounded edges equal |
+| Bicubic rotations 15°, 45°, −30°, 30° about a moved pivot (T21) | Interior within 2/255; 44–51 of ~3 300 pixels differ by more (max 25–31/255), all on the outermost, partly covered ring (D-5D-1) |
+| Nearest neighbour 200 %, 30 %, 15° (T22) | **Equal**, every pixel |
+| Flip horizontal (T15) | **Equal** |
+| Alpha lock on, 150 % (T37) | Within 3/255 (3 pixels over 2) |
+| Move through a hard selection (T30) | **Equal** |
+| Move through a 10 px feathered selection (T31) | Within 3/255 (mean 0.3) |
+| Layer with a mask, 150 % (T33) | Box equal (union); within 3/255 |
+| Rectangle selection rotated 15° (T32) | Area equal (3 000 px²); every pixel within 2/255 except 2 per corner (≤ 23/255, D-5D-2) |
+| Moved off the canvas and back (T39) | **Equal** (the original) |
+
+### In the running app (2026-10-17, mouse and synthetic pen; screenshots not committed)
+
+| # | Steps | Mirae | Reference |
+|---|---|---|---|
+| 1–2 | Three coloured strokes; rectangle selection over their crossing; Ctrl+T | Box on the selection's bounds, 8 square handles, round rotation handle, pivot cross; marching ants hidden; panel with W/H/angle/keep aspect/Bicubic/Nearest/Reset/OK/Cancel | T2, T28 |
+| 3–6 | Drag inside; corner drag; drag outside | Moves (a hole where the selection was, unselected strokes stay); 132 %/132 % proportional about the opposite corner; rotation 18° about the pivot | T7, T8, T10, T30 |
+| 7 | Escape | The document as before (screen identical); ants back | T5 |
+| 8 | The same, Enter | Committed; the selection follows the rotated content; preview and commit identical on screen except the box/ants | T4, T32, TR4 |
+| 9–10 | Ctrl+Z, Ctrl+Y | Back to the original exactly; the result exactly (screen captures equal apart from the ants) | T14 |
+| 11–13 | Ellipse selection feathered 10 px, Ctrl+T, dragging the pivot; Flip H | The pivot moved, the content did not; Flip H opened a session at W −100 % with the soft-edged content mirrored | T9, T15, T31 |
+| 14 | New empty layer, Ctrl+T | Notice "There is nothing to transform." | T36 |
+| 15 | Green stroke on the new layer, clipped to Layer 1, transformed | Moves its own pixels, still shown only inside the base | T38 |
+| 16 | Click Layer 1 during the session | "Apply the transform?" Yes / No / Cancel; Yes committed and Layer 1 became active | T41 |
+| 17 | Mask on Layer 1, a stripe erased on it, Ctrl+T rotate | The box covers pixels and mask; the hidden stripe turns with the content | T33 |
+| 18 | Zoom 2.3× and view rotated 30°, Ctrl+T, side handle | Box turned with the canvas, handles at their screen size; 103.4 %/103.4 % with keep aspect | T11, T44, T45 |
+| 19 | To 16-bit; Move tool (K) dragged with the **synthetic pen** | The layer (with its mask) moved, one step | — |
+| 20 | Save As `.mirae`, New, Open it | Reopened identical on screen (no session or selection kept) | — |
+| 21 | Export PNG | The committed picture, 4000 × 3000 | — |
+| 22 | Ctrl+T, drag, Ctrl+Z, Ctrl+S, Escape | The drag undone inside the session (screen identical to its start); Ctrl+S ignored, the title unmodified | T13, T43 |
+
+## Differences
+
+| # | Difference | Kind | Status |
+|---|---|---|---|
+| D-5D-1 | **Rotated edge ring colour**: the outermost, partly covered pixels of a rotated box get a "purer" source colour in the reference (up to 24–31/255 on ~1.5 % of the pixels); Mirae samples the clamped position. Alpha matches (distance anti-aliasing). | Quality | Open: the reference's rule for that ring was not identified (supersampling, mirroring, renormalization and other edge models scored worse) |
+| D-5D-2 | **Rotated selection corners**: two pixels per corner up to 23/255 apart (the product of the sides' coverages vs the reference's own corner rule; the minimum scored worse). | Quality | Open |
+| D-5D-3 | **Interpolation modes**: the reference's bilinear ("Suavizar bordas", measured: the same pipeline with a bilinear kernel) and "Alta precisão (cores médias)" are not implemented; Mirae offers the default (bicubic) and nearest neighbour. | Feature | Accepted for 5D (the brief: the default's parity, no filters for completeness) |
+| D-5D-4 | **Not implemented**: free transform's distortions (distort, skew, perspective, mesh, puppet), "keep original image", reference-point presets other than centre and a dragged pivot, "adjust position", the floating selection bar, transforming several layers or folders. | Feature | Out of 5D's scope |
+| D-5D-5 | **Storage after a transform**: the reference stores straight colour at 8 bits, Mirae premultiplied (ADR 0001): up to 3/255 apart on a few pixels of a scaled image. | Quality | Deliberate |
+| D-5D-6 | **Speed of large previews**: ~64 ns per destination pixel on one core: whole 2048² layers preview in 70–285 ms per change, 4096² in 0.27–1.1 s; selections of common size in milliseconds. The reference's speed was not measured. | Performance | Open (debt #40) |
+| D-5D-7 | **A mask with a selection**: Mirae transforms only the pixels then; the reference's behaviour was not observed. | Behaviour | Open (not guessed) |
+| D-5D-8 | **Closing the window during a session**: Mirae asks "Apply the transform?" first; the reference disables its quit command (T43). | Behaviour | Deliberate (no state is lost) |
+| D-5D-9 | **Unmeasured corners of the resampler**: odd-sized pyramid levels (Mirae: beyond the box counts as transparent), anisotropic reductions (one axis ≤ ½: no pyramid in Mirae), 90° rotations. | Quality | Not compared |
+| D-5D-10 | **Move tool**: Mirae's K tool (one transform per drag) is its own design; the reference's Move layer tool was not observed (could not be activated by automation). | Feature | Not compared |
+| D-5D-11 | **Sub-steps in a History panel**: the reference lists a session's edits while it is open; Mirae has no History panel (D-4B-2) but undo/redo walk them the same way. | UI | As D-4B-2 |
+
+Not observed: a real pen; the reference's performance and memory;
+behaviour with several layers selected; Shift during rotation (angle
+snapping).

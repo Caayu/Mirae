@@ -1,6 +1,7 @@
 # Status
 
-Factual state of the project at the end of **phase 5C** (selections),
+Factual state of the project at the end of **phase 5D** (transform), after
+**5C** (selections),
 after **5B** (layer workflow,
 translucent-backdrop compositing, merge down), after **5A** (colour) and
 **phase 4** (4G: integration
@@ -10,9 +11,9 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 
 | | |
 |---|---|
-| Current phase | **Phase 5C (selections) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5C-selection.md](parity/5C-selection.md)); 5A, 5B complete; phase 4 complete ([phase4/README.md](phase4/README.md)); **5D–5G not approved, not started** |
+| Current phase | **Phase 5D (transform) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5D-transform.md](parity/5D-transform.md)); 5A, 5B, 5C complete; phase 4 complete ([phase4/README.md](phase4/README.md)); **5E–5G not approved, not started** |
 | Parity | Tracked in [PARITY.md](PARITY.md) (phase-4 summary; phase-5 matrix from 5A); nothing compared with the reference before phase 4 |
-| Tests | **503** passing, 0 failing (5C started at 455 + 1 regression test for a 5B defect the baseline found; 5B started at 434; 5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Tests | **537** passing, 0 failing (5D started at 503; 5C started at 455 + 1 regression test for a 5B defect the baseline found; 5B started at 434; 5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -32,13 +33,14 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 | Scatter | Perpendicular/radial, count, rotation and scale jitter, effector-driven amount |
 | Airbrush | Time instants independent of frame rate; rest detection with delivery-lag compensation; dwell-time flow while moving |
 | Eraser | Destination-out through the same engine; stylus eraser end switches automatically; `E` for the mouse |
-| UI | egui side panels: colour (main/sub, HSV picker, RGB/HSV/hex, eyedropper, recent colours, swatches), selection (tools, mode, commands, feather), presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor; layers, document, history on the right |
+| UI | egui side panels: colour (main/sub, HSV picker, RGB/HSV/hex, eyedropper, recent colours, swatches), selection (tools, mode, commands, feather), transform (start, Move tool, flips, W/H/angle, keep aspect, Bicubic/Nearest, OK/Cancel), presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor; layers, document, history on the right |
 | Colour (5A) | Opaque `f32` paint colour without alpha captured by each stroke (ADR 0021); main/sub with an active slot (`X`), Swap, reset to black on white (`D`); HSV square + hue bar, RGB 0–255, HSV, `#RRGGBB`; eyedropper on the composite over the paper or the active layer (tool, right-click, Alt, also with the pen), document pixel at any zoom; recent colours (newest first, unique, 24) and swatches (session only); alpha lock, clipping, masks, blend modes and eraser behave with colour as measured; HSV readout, 51 % stroke, canvas picks and alpha-lock pixels match the reference |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
 | Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile (2 layers); per tile with every layer drawing: 1.6 ms (10 Normal layers), 12.4 ms (100), 44 ms (100 Soft Light); 0 allocations in composition ([performance.md](performance.md), [memory.md](memory.md)) |
 | Layers (4A) | Layer stack with stable ids (ADR 0014): create, select, delete, reorder, visibility, opacity, lock; hidden/locked layers not paintable; layer commands ignored during a stroke; right-side layer panel and Ctrl+Shift+N. no file I/O |
 | Layer workflow (5B) | Rename by double-click (Enter/focus commits, Escape cancels, 64 characters; consecutive renames one step), drag-and-drop reorder (insertion line, Escape cancels, by id), merge down (button, Ctrl+E; lower-mask question; ADR 0023), fixed-width panel; blending over translucent backdrops as measured (ADR 0022); transparent export of blend layers |
 | Selections (5C) | Document-level 8-bit selection (ADR 0024): rectangle (snaps to pixels; screen-aligned in rotated views), ellipse, freehand lasso (even-odd), anti-aliasing per shape (rectangle off, ellipse and lasso on), New/Add/Subtract/Intersect (panel, Shift/Alt/Shift+Alt at the press; the reference's measured 8-bit rules), Select All (Ctrl+A), Deselect (Ctrl+D), Invert (Ctrl+Shift+I, button), Feather (the reference's Gaussian, within 2/255); every stroke (paint, alpha lock, erase, masks) scaled by the coverage in preview and commit; marching ants; history steps; not saved (as the reference); M selection tool, B brush |
+| Transform (5D) | Move, scale (free or proportional), rotate, flip of the active layer or the selected part of it, with the layer's mask (ADR 0025): a session (Ctrl+T, the panel, Flip H/V, the Move tool K) with a box, corner/side/rotation handles and a movable pivot at constant screen size in zoomed and rotated views, W/H/angle fields, keep aspect (Shift), Bicubic (the reference's measured default) or Nearest; Enter commits one history step, Escape cancels, undo/redo inside the session walk its edits; another layer or tool asks "Apply the transform?"; file commands wait; the selection follows the content; preview equals commit bit for bit after one quantization at 8 or 16 bits; scales within 3/255, nearest neighbour, flips and moves exactly as the reference |
 | Blend modes (4C) | Normal + 16 modes (multiply, screen, overlay, darken, lighten, color dodge/burn, hard/soft light, difference, exclusion, hue, saturation, color, luminosity, add); W3C formulas on sRGB-encoded values, paper as backdrop for blend tiles (ADR 0016); matches the reference's measured results within 1–2/255; selector in the layer panel; undoable |
 | Masks, clipping, alpha lock (4D) | One mask per layer (sparse 8-bit, new mask reveals all; paint reveals by stroke alpha, erase hides; enable/disable; delete), clipping groups (isolated, source-atop with the blend result, base opacity/mode/mask apply to the group; new layers inside a group are clipped), lock transparent pixels (source-atop paint, eraser unaffected); all measured against the reference and matching within 2/255 (ADR 0017); panel controls; undoable |
 | Undo/redo (4B) | Linear, swap-based history inside `Document` (ADR 0015): strokes, clear, create/delete/reorder layers, lock, rename, blend mode, opacity (consecutive edits merge); selection and visibility not recorded; add/remove undos restore the active layer; ignored during a stroke; 200 steps / 1 GiB by default; Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Undo/Redo buttons |
@@ -63,8 +65,35 @@ document size bounded by GPU texture size; undo history uncompressed in memory;
 saving and loading synchronous (no autosave, recent files or background
 save); no layer thumbnails or folders (debt #17);
 CPU composition single-threaded and linear in layers (TECHNICAL_DEBT #33);
-no transparent colour, palette not persisted (debt #35, #36); preset edits
+no transparent colour, palette not persisted (debt #35, #36); transforms of
+whole large layers preview slowly on one core (debt #40); preset edits
 not persisted; UI unpolished.
+
+## Phase 5D outcome
+
+Transform, with the reference observed first ([parity/5D-transform.md](parity/5D-transform.md),
+T1–T45; its measured layers kept as test data). A probe of our own read
+over white and over black gave the transformed layer's premultiplied
+pixels exactly, and the reference's default resampler was fitted on
+every pixel: Keys' cubic with `a = −1` on premultiplied colour, a 2 × 2
+pyramid while both scales are ≤ ½, the sample clamped to the edge pixels,
+un-premultiplied by the raw alpha, whole-pixel edges when axis-aligned
+and distance-anti-aliased sides when rotated; nearest neighbour ties to
+the lower pixel. Mirae reproduces it (ADR 0025): scales within 3/255
+(Mirae stores premultiplied, the reference straight 8-bit), nearest
+neighbour, flips and moves exactly, rotations inside a one-pixel edge
+ring. The transform is an explicit session in the app (the document does
+not change until the commit, which is one history step; a cancel changes
+nothing); with a selection `p·s` moves over `p·(1 − s)` and the selection
+follows; the mask moves with its layer; hidden, locked and empty layers
+are refused as in the reference; off-canvas pixels are kept. Preview and
+commit call one per-tile function (bit-exact after the single
+quantization, both depths). Verified in the running app with the mouse
+and the synthetic pen at 8 and 16 bits, zoomed and rotated, through
+save/reopen and export. Costs: a few ms for common selections, 70–285 ms
+per change for a whole 2048² layer, ~1 s for 4096² (debt #40).
+Remaining: D-5D-1…11 (rotated edge ring and selection corners, bilinear
+and "average colours" modes, distortions out of scope, large previews).
 
 ## Phase 5C outcome
 
@@ -210,6 +239,6 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-Phase 5C is complete. The next subphase in the proposal is **5D**
-(transform; [phase5/PROPOSAL.md](phase5/PROPOSAL.md)). It is **not
+Phase 5D is complete. The next subphase in the proposal is **5E**
+(fill; [phase5/PROPOSAL.md](phase5/PROPOSAL.md)). It is **not
 approved and not started**: nothing begins until the owner approves it.

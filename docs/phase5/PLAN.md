@@ -9,7 +9,7 @@ nothing else is started.
 | 5A Colour | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5A-color.md](../parity/5A-color.md); [ADR 0021](../adr/0021-paint-colour-and-colour-tool-state.md) |
 | 5B Layer workflow + D-4C-1 probe, merge down | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5B-transparent-compositing.md](../parity/5B-transparent-compositing.md); [ADR 0022](../adr/0022-blending-over-translucent-backdrops.md), [ADR 0023](../adr/0023-merge-down-and-layer-workflow.md) |
 | 5C Selections | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5C-selection.md](../parity/5C-selection.md); [ADR 0024](../adr/0024-selections.md) |
-| 5D Transform | **Approved 2026-10-17, in progress** | below; [parity/5D-transform.md](../parity/5D-transform.md) |
+| 5D Transform | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5D-transform.md](../parity/5D-transform.md); [ADR 0025](../adr/0025-transform.md) |
 | 5E Fill | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 | 5F Gradients | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 | 5G Integration | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
@@ -121,3 +121,43 @@ Implemented as decided; gate recorded in [PARITY.md](../PARITY.md) and
 [parity/5C-selection.md](../parity/5C-selection.md). Tests 455 (+1 for
 a 5B defect the baseline run found) → 503. Remaining differences:
 D-5C-1…8. 5D not started.
+
+## 5D — Transform (approved brief, summarized)
+
+Professional raster transform of selected content: move, free and
+proportional scale, rotate, flip, a pivot, an interactive box, a
+non-destructive preview, commit/cancel, a proper resampler, 8 and 16
+bits, the selection and masks, one undo step, a parity gate. The
+reference observed first for every rule (29 probes listed in the brief:
+selection, none, feather, partial alpha, mask, lock, hidden, clipping,
+undo/redo, interpolation, outside the canvas, zoomed and rotated views);
+an explicit affine map; a source snapshot so previews never resample
+previous results; premultiplied resampling without fringes; preview ==
+commit; the session outside the document and never saved; interruptions
+(layer, tool, undo, save, open, new, close) decided by observation; Move
+reusing the same engine; handles at constant screen size through the
+5C view mapping; property and random tests, performance and memory
+measured, a real-app session, invariants TR1–TR10, ADR, the gate. Out of
+scope: perspective, free distortion, mesh, warp, liquify, multi-layer
+and folder transforms, copy/cut/paste, fill, gradients, GPU transforms.
+
+### Decisions (details in ADR 0025)
+
+| # | Decision | Reason |
+|---|---|---|
+| D1 | `TransformSession` in the app (source + edits); the document changes only at the commit, one step; cancel = drop | TR1–TR3; T13, T14 |
+| D2 | `TransformParams` (translate, signed scale, clockwise rotation, pivot) → `Affine`; flips are negative scales | T9, T15, T21 |
+| D3 | Without a selection: content bounds of pixels ∪ mask, the mask moves too; with one: its bounds, `p·s` over `p·(1 − s)`, the selection follows | T27–T33 |
+| D4 | The reference's measured resampler (Keys a = −1 premultiplied, pyramid ≤ ½, clamped sample, raw-alpha un-premultiply; rounded axis-aligned edges; distance anti-aliasing when rotated) + nearest neighbour | T16–T22; the brief: the default's parity, no filters for completeness |
+| D5 | One per-tile function for preview (`OverlayPaint::Layer`) and commit | TR4 by construction |
+| D6 | Dense premultiplied `f32` snapshot with lazy pyramid levels; history holds only changed tiles | Simple, exact; memory measured (debt #40) |
+| D7 | Interruptions: another layer or tool asks Apply? Yes/No/Cancel; file commands wait; closing asks | T41–T43 |
+| D8 | Move tool (K): one drag = one translation transform | The brief: no second engine |
+| D9 | No new golden image | The reference's own transformed images are the test data (`transform::parity`), and preview == commit is checked bit for bit on 60 combinations; a sheet would duplicate them without adding a measured source |
+| D10 | Invariants TR1–TR10 | — |
+
+### Outcome
+
+Implemented as decided; gate recorded in [PARITY.md](../PARITY.md) and
+[parity/5D-transform.md](../parity/5D-transform.md). Tests 503 → 537.
+Remaining differences: D-5D-1…11. 5E not started.

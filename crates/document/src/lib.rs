@@ -5,7 +5,9 @@
 //! channel, in [`LayerPixels`]; masks are 8-bit), the layer stack with
 //! stable [`LayerId`]s and the rules for changing it ([`Document`]), and per-tile composition
 //! ([`Document::compose_tile_into`]) with an optional [`Overlay`] for
-//! content that is not committed yet (the stroke preview).
+//! content that is not committed yet (a stroke or a transform preview); the
+//! selection ([`Selection`]) and transforms ([`TransformSource`],
+//! [`Document::apply_transform`], ADR 0025).
 //! **Does not:** know about brushes, input, the view or the GPU. Brushes
 //! reach it only through the `Overlay` callbacks and by the app committing
 //! a finished stroke with [`Document::modify_tiles`].
@@ -14,7 +16,8 @@
 //! Invariants: layer ids are unique and never reused, the stack is never
 //! empty, the active layer always exists, opacity stays in `0..=1`, refused
 //! operations change nothing, and pixels change only through
-//! `modify_tiles`/`clear_layer` in the tiles declared to them (L1–L9 in
+//! `modify_tiles`/`clear_layer` (and the other recorded edits: merge,
+//! transform, …) in the tiles declared to them (L1–L9 in
 //! docs/architecture/invariants.md). Composition of a tile is a pure
 //! function of the layers and the overlay (preview and commit share the
 //! overlay's paint function); `compose_tile_into` does not allocate; pixels

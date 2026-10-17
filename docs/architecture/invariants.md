@@ -230,6 +230,31 @@ snapshot property test (selection edits among every other edit) and by
 The measured rules themselves (operators, feather, shapes, strokes) are
 kept by `document::selection::parity` against the reference's images.
 
+## Transform (phase 5D, ADR 0025)
+
+Named TR (T1–T6 are the storage invariants above). Also checked by the
+history snapshot property test (transforms among every other edit, undo
+and redo) and by `corpus/tests/random_sessions.rs` (transforms and
+cancelled sessions among strokes and selections).
+
+| # | Invariant | Protected by |
+|---|---|---|
+| TR1 | A transform session never changes the document: taking the source and previewing change no pixel, mask, selection, revision or history. | `document::document::transforming::tests::a_commit_is_one_step_that_undoes_and_redoes_bit_exactly` (digest and revision after `transform_source`); the preview reads the document only (`TransformSource` holds no reference to it) |
+| TR2 | Cancelling (dropping the session) leaves the document bit-exact as before. | `…::an_identity_records_nothing_and_a_cancel_is_simply_no_apply`, `random_sessions.rs` (cancelled sessions), the app's Escape (checked in the running app) |
+| TR3 | A commit is exactly one history step (pixels, mask and selection together), or none when nothing changes; undo restores the source and the selection exactly, redo the result. | `…::a_commit_is_one_step_that_undoes_and_redoes_bit_exactly`, `…::properties::transforms_are_transactional_undoable_and_valid`, `history_properties::history_matches_a_stack_of_snapshots` |
+| TR4 | The preview is the commit: the commit stores exactly the preview's `f32` tile quantized once at the document's depth (bit for bit), and the composed preview equals the composed commit within 1/255. | `…::the_preview_quantized_once_is_the_commit` (60 combinations: moves, scales, rotation, flip × both depths × no, hard and feathered selection × both interpolations), `…::the_composed_preview_equals_the_composed_commit` |
+| TR5 | Resampling is premultiplied: results are valid premultiplied pixels and no colour appears beside an opaque edge (no hidden-colour or dark fringe). | `transform::tests::premultiplied_resampling_leaves_no_fringe`, `…::properties::transforms_are_transactional_undoable_and_valid` |
+| TR6 | 16-bit content never passes through 8 bits: copies keep every 16-bit value, resampled results keep values off the 8-bit grid. | `…::sixteen_bit_content_never_passes_through_eight_bits`, `transform::parity` (both depths) |
+| TR7 | A transform keeps the layer's id, position, properties (opacity, blend mode, clipping, lock, alpha lock, visibility) and the active layer; the clipping relation is kept. | `…::a_commit_is_one_step_that_undoes_and_redoes_bit_exactly`, `…::properties::transforms_are_transactional_undoable_and_valid` |
+| TR8 | With a selection, a pixel of coverage 0 changes only where transformed content lands. | `…::pixels_outside_the_selection_change_only_where_content_lands`, `transform::parity::moving_selected_content_splits_it_by_the_coverage` |
+| TR9 | A refused transform (hidden, locked, nothing to transform, stale source, invalid parameters, beyond the addressable tiles) changes nothing, history included. | `…::refusals_change_nothing`, `…::properties::transforms_are_transactional_undoable_and_valid` |
+| TR10 | Exact identities: a whole-pixel move and its inverse, two flips of an axis and a full turn restore the layer bit for bit (axis-aligned unit scales copy pixels). | `…::properties::inverse_moves_double_flips_and_full_turns_restore_the_layer`, `transform::tests::a_full_turn_and_double_flips_restore_the_content`, `transform::parity::pixels_moved_off_the_canvas_are_kept` |
+
+The measured resampler is kept by `transform::parity` against the
+reference's images (scales within 3/255, nearest neighbour and flips
+exact, rotations inside the edge ring, the selection split, the mask, the
+rotated selection).
+
 ## Integration (phase 4G)
 
 No new invariant: these rows record where the invariants above are

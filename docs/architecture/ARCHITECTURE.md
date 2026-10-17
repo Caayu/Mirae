@@ -49,11 +49,11 @@ paint/
 | `tela-color` | `Color` (the opaque paint colour, ADR 0021), `Hsv`, hex, `Rgba` (straight), `PremulRgba`, `over`, RGBA8/RGBA16 quantization, stored formats (`StoragePixel`, `PixelDepth`, `with_pixel_type!`), sRGB curves | know about space or devices |
 | `tela-canvas` | `TiledSurface<P>`, `Tile<P>`, `TileCoord`, `DirtyTiles`, `IRect`, `ViewTransform`, `TileCoverage` (a borrowed per-tile coverage: how much an edit may change each pixel) | know about layers, colors or brushes |
 | `tela-brush` | the whole stroke engine up to the stroke mask | read devices, own documents, know UI/GPU |
-| `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay`; the selection (`Selection`: shapes, operators, feather, outline; ADR 0024) | know brushes, input, view, GPU |
+| `tela-document` | authoritative pixels and the layer stack: `Document` (depth, layer ids, rules, the only pixel-mutation path), `RasterLayer`, `LayerPixels` (8- or 16-bit storage), composition, `Overlay`; the selection (`Selection`: shapes, operators, feather, outline; ADR 0024); transforms (`TransformSource`, `TransformParams`, the measured resampler; ADR 0025) | know brushes, input, view, GPU |
 | `tela-io` | the `.mirae` format (manifest DTOs, tile codec, limits, versioning), atomic save, hostile-input loading through `Document::from_parts`, PNG export of the composite and PNG import as layer pixels (ADR 0019, 0020) | know paths chosen by the user, dialogs, UI; change a document |
 | `tela-renderer` | GPU device/surface, display texture + mips, canvas shader, `FrameOverlay` | see the document |
 | `tela-tablet` | `TabletSample`/`TabletEvent`, unit normalization, input clock, Windows Ink | know brushes or canvas space |
-| `tela-ui` | brush panel, colour panel, selection panel and outline (marching ants), layer panel, document bar, curve editor, egui plumbing | own authoritative state |
+| `tela-ui` | brush panel, colour panel, selection panel and outline (marching ants), transform panel and box, layer panel, document bar, curve editor, prompts, egui plumbing | own authoritative state |
 | `tela-corpus` | standard trajectories, `render_sheet`, image diff, goldens, `stamp_bench` | ship in the app |
 | `tela-app` | window/event loop, wiring, application state, the file workflow (native dialogs, unsaved-changes prompt, drag-and-drop) | implement engine logic or file formats |
 
@@ -70,6 +70,7 @@ All authoritative state lives in `tela-app`'s `App`:
 | Presets being edited, eraser mode; the canvas tool (brush, eyedropper, selection) | `App.tools` (`Tools`), `App.tool` (`CanvasTool`) | The UI edits the active preset in place, lent for one frame. |
 | Selection (which pixels edits may change) | `App.document` (`Document::selection`) | Document state and history steps, not saved (ADR 0024). |
 | Selection tool settings (shape, mode, anti-aliasing per shape, feather strength), the shape being dragged, the traced outline | `App.selection` (`SelectionTool`), `App.selection_drag`, `App.outline` | Session tool state and presentation caches (`app::selecting`). |
+| A transform in progress (its source, its edits, the handle being dragged), transform tool settings (keep aspect, interpolation), the question "Apply the transform?" | `App.transform` (`TransformSession`), `App.transform_tool` (`TransformTool`), `App.transform_exit` | Session state (`transforming`, `app::transform`): never in the document, its history or its file until committed (ADR 0025). |
 | User stroke settings, pressure curve | `App.engine` (`BrushEngine` public fields) | Read when a stroke begins. |
 | Main/sub colour (active slot), recent colours, swatches; eyedropper tool and source | `App.colors` (`ColorState`), `App.picker`, `App.pick_source` | Session tool state (ADR 0021): not in the document, the file or the history. The active colour is copied into `BrushEngine::color` at pen-down. |
 | Stroke in progress | `BrushEngine` (its `StrokeBuffer`) | Separate from the layer until committed. |
@@ -385,6 +386,37 @@ it is not saved. Edits get it as `tela_canvas::TileCoverage`, one per
 tile, which the brush applies in its shared preview/commit rule: the
 brush never sees the document. The outline is presentation only.
 
+## 8e. Transforms
+
+```
+Ctrl+T / panel / flip / Move tool
+  Document::transform_source(active) ──► TransformSource       (dense premultiplied f32 box × selection
+                                          refused: hidden, locked,  coverage, mask hidden amounts; pyramid
+                                          nothing to transform       levels built lazily)
+  App.transform = TransformSession { source, edits: [TransformParams], drag }   (the document never changes)
+pointer (screen) ─hit test in screen space─► handle ─view.to_canvas─► TransformParams edit
+  x' = pivot + translate + R(θ)·S(scale)·(x − pivot)   ─► Geometry: rounded edges when axis-aligned
+preview: compose_tile_into(c, Overlay { target, OverlayPaint::Layer { pixels, mask } })
+           pixels: TransformSource::transform_pixels_tile(t, c, selection_tile(c), stored f32)
+           mask:   TransformSource::transform_mask_tile(t, c, reveal)
+Enter:  Document::apply_transform(source, t)  ── same per-tile functions ─► quantize once at the depth
+          one history step: Change::Tiles + Change::MaskTiles + Change::SelectionSwap
+Escape: drop the session (nothing to undo)
+```
+
+What moves (ADR 0025, measured in the reference): without a selection,
+the layer's content bounds and its mask; with one, the selection's bounds,
+`p·s` moving over `p·(1 − s)` that stays, the selection following the
+content. The resampler is the reference's: Keys' cubic `a = −1` on
+premultiplied colour, a pyramid of 2 × 2 averages while both scales are
+≤ ½, the sample clamped to the edge pixels' centres, un-premultiplied by
+the raw alpha; axis-aligned results get whole-pixel edges (moves and flips
+copy), rotated ones distance-anti-aliased sides; nearest neighbour for
+pixel art. Because the preview and the commit call the same function on
+the same stored tile, the commit is the preview quantized once (TR4).
+During a session the app routes the canvas to it; another layer or tool
+asks "Apply the transform?"; file commands wait.
+
 ## 9. UI overlay
 
 `tela-ui::UiLayer` runs egui each frame and implements the renderer's
@@ -432,7 +464,8 @@ history and files together. See [golden-tests.md](../golden-tests.md),
 ## 12. Architectural limits (today)
 
 - Flat layer stack (no groups; clipping groups only); masks without apply/mask-from-selection; 17 blend modes; merge down only (no merge visible, flatten or merge selected).
-- Selections: rectangle, ellipse, lasso, four operators, select all, invert, feather; no polyline, magic wand, colour range, quick mask, selection pen, expand/shrink, reselect, transform of a selection, copy/paste or fill (ADR 0024, parity record 5C).
+- Selections: rectangle, ellipse, lasso, four operators, select all, invert, feather; no polyline, magic wand, colour range, quick mask, selection pen, expand/shrink, reselect, copy/paste or fill (ADR 0024, parity record 5C).
+- Transforms: move, scale, rotate, flip of one layer (or its selected part) with its mask; bicubic (the reference's default) and nearest neighbour; no free distortion, perspective, mesh, multi-layer or folder transforms, no bilinear or "average colours" modes; the resampler runs on one core (~64 ns per destination pixel: whole 4096² layers preview at ~1 frame per second; ADR 0025, debt #40).
 - Undo history is in memory only, uncompressed, 256 KiB (8-bit) or 512 KiB (16-bit) per changed tile per step (ADR 0015, 0018).
 - 8- or 16-bit layer storage per document, 8-bit masks, 8-bit display (no dithering, no HDR); display texture limited to the GPU's max texture size.
 - Composition is CPU, single-threaded and linear in layers, with no cache below the stroke target: ~12 ms per 256² tile for 100 overlapping Normal layers, ~44 ms for 100 Soft Light (4G, TECHNICAL_DEBT #33).

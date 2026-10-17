@@ -43,7 +43,16 @@ What matters is where it sits in the architecture.
    `tela-document`. `selection_outline` paints marching ants (a white
    line under a black dashed one whose offset moves with time) on egui's
    background layer, under the panels, from loops the app has already
-   mapped to the screen: presentation only.
+   mapped to the screen: presentation only. The transform panel
+   (`transform_panel`, phase 5D) receives a `TransformModel` (whether a
+   session is open, the Move tool, width and height in percent, angle,
+   keep aspect, nearest) and returns a `TransformAction`; it owns
+   nothing and knows no `TransformParams` (the app converts).
+   `transform_box` paints the box, square handles of constant screen
+   size (`HANDLE`), the rotation handle and the pivot's cross from points
+   the app mapped to the screen; the app hit-tests the same points.
+   `apply_transform_prompt` asks "Apply the transform?" (Yes / No /
+   Cancel) as the other prompts do.
 3. **Commands the UI cannot fulfil are returned, not executed.**
    `BrushPanel::show` returns a `PanelAction` (`SelectPreset`,
    `ToggleEraser`, `ClearLayer`, `Layer(..)`); the app applies it. The layer

@@ -53,7 +53,14 @@ Rectangle, Ellipse, Lasso), the selection mode (New, Add, Sub, Int),
 anti-aliasing per shape, and holds All, None, Invert and Feather (a
 strength in pixels). A selection limits every stroke (paint, erase, mask)
 until it is removed; it is shown with marching ants, is part of undo and
-is not saved in documents. The pen works on the panels too.
+is not saved in documents. The transform panel below it starts a
+transform of the active layer, or of the selected part of it, with its
+mask (Transform, Ctrl+T), the Move tool, and flips; during a transform
+a box with handles appears: drag inside to move, outside or the round
+handle to rotate, a corner or a side to scale (Keep aspect, or Shift),
+the centre cross to move the pivot; W, H and Angle fields, Bicubic or
+Nearest; Enter or OK applies it as one undo step, Escape or Cancel
+discards it. The pen works on the panels too.
 
 | Input | Action |
 |---|---|
@@ -61,7 +68,10 @@ is not saved in documents. The pen works on the panels too.
 | M / B | Selection tool / brush |
 | Shift, Alt, Shift+Alt at the press (selection tool) | Add, subtract, intersect; Shift during the drag: square |
 | Ctrl+A, Ctrl+D, Ctrl+Shift+I | Select all, deselect, invert the selection |
-| Esc | Cancel the selection being drawn |
+| Esc | Cancel the selection being drawn; discard a transform |
+| Ctrl+T, Enter | Transform the layer (or the selection); apply it |
+| K | Move tool (drag moves the layer or the selection) |
+| Ctrl+Z, Ctrl+Y during a transform | Undo, redo its last edit |
 | Right-click, or Alt + click / pen (not with the selection tool) | Pick the colour shown under the cursor |
 | X | Paint with the other colour (main ↔ sub) |
 | D | Main colour black, sub white |

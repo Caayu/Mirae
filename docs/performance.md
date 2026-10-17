@@ -83,6 +83,43 @@ table above for the parallel path).
 phase 4E: 0.107–0.110 ms),
 0 allocations in 840 tiles.
 
+### Phase 5D — transform
+
+`cargo run --release -p tela-corpus --example transform_bench`
+(`-- --quick` without 4096²; `BREAKDOWN=1` also times the per-tile
+function alone). Ryzen 7 5800X, one core, ms. Content of side² soft,
+coloured, partly transparent pixels; "preview" = every tile the transform
+touches composed once through the preview overlay (what one change of
+the transform costs on screen; only tiles on the canvas are composed);
+"commit" includes content landing beyond the canvas (kept, T39) and the
+history copy.
+
+| content | bits | selection | transform | preview | commit | undo / redo |
+|---:|---:|---|---|---:|---:|---:|
+| 256² | 8 / 16 | none, hard, feathered | move | 1.6–2.4 | 2.3–3.1 | < 0.02 |
+| 256² | 8 / 16 | none, hard, feathered | scale 50 % / 200 % | 2–8 / 14–30 | 2–7 / 30–51 | < 0.02 |
+| 256² | 8 / 16 | none, hard, feathered | rotate 15° / 45° | 3.3–5.3 / 7–14 | 5.6–7.2 / 12–15 | < 0.02 |
+| 2048² | 8 / 16 | none | move | 70 | 70–77 | 0.02 / 0.01 |
+| 2048² | 8 / 16 | none | scale 50 % / 200 % | 60–68 / 340–375 | 56–68 / 1 070–1 230 | ≤ 0.07 |
+| 2048² | 8 / 16 | none | rotate 15° / 45° | 270–285 | 300–360 | ≤ 0.03 |
+| 2048² | 8 / 16 | hard (75 % of the side) | move / rotate 15° | 42–44 / 182–206 | 70–84 / 346–401 | ≤ 0.02 |
+| 2048² | 8 / 16 | feathered 8 px ellipse | move / rotate 15° | 29 / 130 | 49–54 / 245–280 | ≤ 0.02 |
+| 4096² | 8 / 16 | none | move | 268–278 | 269–293 | 0.07 / 0.03 |
+| 4096² | 8 / 16 | none | scale 50 % | 235–242 | 219–250 | 0.07 / 0.03 |
+| 4096² | 8 / 16 | none | rotate 15° / 45° | 1 020–1 120 | 1 200–1 290 | 0.08 / 0.05 |
+
+Taking the source (the snapshot) costs 0.2–0.9 ms (256²), 14–32 ms
+(2048²), 54–64 ms (4096²). The bicubic costs ~64 ns per destination
+pixel on one core (`BREAKDOWN=1`: 2048² rotated, 270 ms for 4.2 M
+pixels); nearest neighbour and copies (whole-pixel moves, flips) less.
+16-bit costs the same as 8-bit within noise (the arithmetic is `f32` at
+both depths; only decode and quantization differ). Undo and redo swap
+tiles (< 0.1 ms at any size). Common content (a selection of a few
+hundred pixels) previews in a few milliseconds; whole 2048² layers at
+3–15 frames per second, 4096² at 1–4: recorded as D-5D-6 and debt #40
+(parallel per-tile rendering, a coarse preview while dragging), not moved
+to the GPU in 5D. Memory: [memory.md](memory.md).
+
 ### Phase 5C — selections
 
 `cargo run --release -p tela-corpus --example selection_bench` (4096²

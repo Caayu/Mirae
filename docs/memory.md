@@ -100,6 +100,8 @@ conversion of a big document: converting 100 dense 4096² layers from 8 to
 | PNG import | one decoded row and the new layer's tiles; an interlaced image is decoded whole first (bounded by `Limits::max_image_decode_bytes`, 2 GiB) | — |
 | Depth conversion | the new depth's copy of every layer, while the old one moves into history | 8 → 16: old size + twice the old size |
 | Merge down (5B) | the copies of the lower layer's changed tiles (kept for undo) + two tile buffers; the upper layer moves into history; no third full copy | two dense 4096² layers: +66 MiB peak (8-bit), +130 MiB (16-bit) (`layer_bench`) |
+| Transform session (5D) | the source snapshot: 16 bytes per pixel of the box (premultiplied `f32`), +4 per pixel for a selection's coverage or a moving mask, + the pyramid levels built (a quarter, a sixteenth, …); the preview reuses `ComposeScratch` | box 256²: 0.6–1.2 MiB; 2048²: 31–80 MiB; 4096²: 256–320 MiB, both depths (`transform_bench`) |
+| Transform commit (5D) | the snapshot, the changed tiles' previous content (kept for undo, as a stroke's) and one new tile at a time | peak above the document: 256²: ~5 MiB; 2048²: 42–137 MiB (8-bit), 49–210 MiB (16-bit); 4096² (no selection): 330–342 MiB (8-bit), 362–408 MiB (16-bit); history held: 4096² move 72 MiB (8-bit) / 145 MiB (16-bit) |
 
 ## Worst cases, in short
 

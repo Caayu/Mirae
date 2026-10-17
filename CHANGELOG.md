@@ -3,6 +3,39 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Phase 5D — transform
+
+Approved alone (5E–5G not started). The reference was observed first and
+a parity gate recorded
+([docs/parity/5D-transform.md](docs/parity/5D-transform.md)).
+503 → 537 tests.
+
+### Added
+- `transform_probe`; the reference's transformed layers (decoded
+  premultiplied) kept as test data (ee22784).
+- `tela_document::transform` (ADR 0025): `TransformParams`, `Affine`,
+  `Interpolation` (bicubic, the reference's measured default; nearest
+  neighbour), `Transform`, `TransformSource` (dense premultiplied
+  snapshot, lazy pyramid, `transform_pixels_tile`, `transform_mask_tile`,
+  `corners`, `affected_tiles`, `dest_bounds`); `Document::transform_source`
+  and `Document::apply_transform` (one history step: pixels, mask,
+  selection); `HistoryAction::Transform`; `LayerError::NothingToTransform`,
+  `InvalidTransform`, `StaleTransform`; `OverlayPaint::Layer` (pixels and
+  mask previewed together) (fef166a).
+- App: the transform session (Ctrl+T, box, corner/side/rotation handles,
+  movable pivot, Enter/Escape, undo/redo inside the session, the "Apply
+  the transform?" question, file commands waiting), the Move tool (K);
+  `tela-ui`: the transform panel and box, `apply_transform_prompt`
+  (6f31cd7).
+- Transforms in the history property test and the random sessions; TR
+  property tests (8ea053b); `transform_bench`.
+- Invariants TR1–TR10; ADR 0025.
+
+### Changed
+- Debt #32: imported images can be moved, scaled and rotated (still plain
+  raster layers). New debt #40 (transform cost on large content), #41
+  (transform gaps against the reference).
+
 ## Phase 5C — selections
 
 Approved alone (5D–5G not started). The reference was observed first and

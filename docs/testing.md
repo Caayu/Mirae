@@ -137,6 +137,16 @@ and pins the ellipse and lasso differences (D-5C-1, D-5C-2). To
 re-measure: `selection_probe psd`, the steps in docs/parity/5C-selection.md,
 the `fit-*` and `rule` readers.
 
+`document::transform::parity` (phase 5D) reproduces the reference's
+transformed layers in `crates/document/tests/reference/transform/`
+(decoded premultiplied RGBA, see its README) at both depths: scales
+within 3/255, nearest neighbour, flips and moves exactly, moves through a
+hard and a feathered selection, a masked layer, the rotated selection,
+and pins the rotated edge ring (D-5D-1, D-5D-2). To re-measure:
+`transform_probe psd`, the steps in docs/parity/5D-transform.md, and
+`transform_probe decode`/`fit` (every scored model stays selectable by
+environment variables, see the example's header).
+
 ### End-to-end tests (phase 4G)
 
 `crates/corpus/tests/` drives the whole stack through public APIs as the
