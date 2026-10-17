@@ -98,6 +98,7 @@ compared on 13 000 pixels (`selection_probe rule`).
 |---|---|---|
 | S28 | History palette | Every selection change is a **step of the document history**: "Área de seleção/…/Retângulo" (or Elipse; also with Add/Subtract/Intersect), "Cancelar seleção", "Selecionar tudo", "Inverter área selecionada", "Desfocar borda". |
 | S29 | Undo after a fill; undo again; redo | The fill goes, the selection stays; the next undo removes the selection; redo brings it back. Undo of Add and of Subtract restores the previous selection. |
+| S32 | A fresh document (title without `*`), a rectangle selection; then undo | The title gets the **modified** marker `*` from the selection alone; undoing it leaves the `*` (as in 4F: the reference never clears it by undo). |
 | S30 | Save as CLIP STUDIO format with a selection, close, reopen | **No selection** after reopening (Reselect disabled too): the reference does **not persist** the active selection, even in its own format. History is not kept either. |
 
 ### Display

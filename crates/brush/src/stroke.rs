@@ -351,7 +351,12 @@ impl StrokeBuffer {
             TileCoverage::Empty => {}
             partial @ TileCoverage::Partial { .. } => {
                 let mut row = [0.0f32; TILE_SIZE as usize];
-                for (y, run) in pixels.chunks_exact_mut(TILE_SIZE as usize).enumerate() {
+                for (y, run) in pixels
+                    .as_chunks_mut::<{ TILE_SIZE as usize }>()
+                    .0
+                    .iter_mut()
+                    .enumerate()
+                {
                     if partial.scale_row(y as u32, mask.row(y as u32), &mut row) {
                         self.paint_over(run, &row, alpha);
                     }
@@ -488,7 +493,12 @@ impl StrokeBuffer {
             TileCoverage::Empty => {}
             partial @ TileCoverage::Partial { .. } => {
                 let mut row = [0.0f32; TILE_SIZE as usize];
-                for (y, run) in values.chunks_exact_mut(TILE_SIZE as usize).enumerate() {
+                for (y, run) in values
+                    .as_chunks_mut::<{ TILE_SIZE as usize }>()
+                    .0
+                    .iter_mut()
+                    .enumerate()
+                {
                     if partial.scale_row(y as u32, mask.row(y as u32), &mut row) {
                         self.alpha_over(run, &row);
                     }
