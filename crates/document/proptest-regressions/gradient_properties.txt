@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 618dc4ec5e1b16b3b0773e7b5713211f41cbc7fc739337c12dc7673ded956d59 # shrinks to s = Spec { shape: Elliptical, extend: Repeat, mixing: Standard, start: [0.0, 18.441022850212782], end: [231.71213041834304, 0.0], stops: [(0.0, [0.0, 0.0, 0.0], 0.0), (0.6060938, [0.0, 0.0, 0.0], 1.0)], dither: false }

@@ -1,4 +1,5 @@
 mod filling;
+mod gradients;
 mod history;
 mod merge;
 mod parts;
@@ -10,6 +11,7 @@ use std::num::NonZeroU32;
 use tela_canvas::{DirtyTiles, IRect, Tile, TileCoord, TileCoverage};
 use tela_color::{PixelDepth, Rgba, StoragePixel};
 
+pub use self::gradients::GradientPreview;
 use self::history::{Change, History, layer_bytes, mask_bytes, pixels_bytes};
 pub use self::history::{HistoryAction, HistoryLimits, Revision};
 pub use self::merge::LowerMask;

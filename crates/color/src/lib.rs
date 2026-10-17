@@ -27,7 +27,8 @@ pub mod srgb;
 mod storage;
 
 pub use paint::{Color, HexError, Hsv};
-pub use storage::{PixelDepth, StoragePixel, narrow16, unorm16, widen8};
+pub mod gradient;
+pub use storage::{PixelDepth, StoragePixel, dither_threshold, narrow16, unorm16, widen8};
 
 /// Straight-alpha color, components in `0.0..=1.0`.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]

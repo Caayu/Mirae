@@ -105,6 +105,9 @@ pub enum HistoryAction {
     /// A layer's pixels or mask filled ([`Document::fill_connected`],
     /// [`Document::fill_selection`]).
     Fill,
+    /// A gradient drawn into a layer's pixels or mask
+    /// ([`Document::apply_gradient`]).
+    Gradient,
 }
 
 impl HistoryAction {

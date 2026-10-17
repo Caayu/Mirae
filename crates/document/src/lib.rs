@@ -31,6 +31,9 @@ mod error;
 mod fill;
 #[cfg(test)]
 mod fill_properties;
+mod gradient;
+#[cfg(test)]
+mod gradient_properties;
 #[cfg(test)]
 mod history_properties;
 mod layer;
@@ -45,16 +48,20 @@ mod transform;
 pub use blend::BlendMode;
 pub use compose::{ComposeScratch, Overlay, OverlayPaint};
 pub use document::{
-    Document, DocumentParts, HistoryAction, HistoryLimits, LayerPart, LayerParts, LowerMask,
-    MAX_TILE_COORD, MaskParts, PartsError, Placement, Revision,
+    Document, DocumentParts, GradientPreview, HistoryAction, HistoryLimits, LayerPart, LayerParts,
+    LowerMask, MAX_TILE_COORD, MaskParts, PartsError, Placement, Revision,
 };
 pub use error::LayerError;
 pub use fill::{
     ConnectedFill, FillPaint, FillReference, FillRegion, FillStats, FillTarget, Tolerance,
 };
+pub use gradient::{
+    Gradient, GradientExtend, GradientGeometry, GradientPaint, GradientShape, MIN_LENGTH,
+};
 pub use layer::{LayerId, LayerMask, RasterLayer};
 pub use pixels::LayerPixels;
 pub use selection::{MAX_FEATHER, OUTLINE_THRESHOLD, Selection, SelectionOp, SelectionShape};
+pub use tela_color::gradient::{ColorRamp, GradientStop, GradientStops, Mixing, ease};
 pub use tela_color::{PixelDepth, StoragePixel};
 pub use transform::{
     Affine, Interpolation, MAX_SCALE, MIN_SCALE, Transform, TransformParams, TransformSource,

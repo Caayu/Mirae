@@ -66,6 +66,43 @@ pub trait StoragePixel: Copy + Default + PartialEq + Debug + Send + Sync + 'stat
 
     /// The nearest 8-bit pixel (see the module docs).
     fn to_rgba8(self) -> [u8; 4];
+
+    /// Quantizes with a dither threshold in `0..1`: every channel becomes
+    /// `⌊v · max + threshold⌋` (channels clamped to `0..=1`). A threshold
+    /// of ½ is [`StoragePixel::from_premul`] exactly; thresholds spread
+    /// evenly over `0..1` keep the mean (see [`dither_threshold`]). All
+    /// four channels use the same threshold, so `rgb <= a` survives.
+    fn from_premul_dithered(c: PremulRgba, threshold: f32) -> Self;
+}
+
+/// An 8 × 8 ordered-dither (Bayer) matrix: each value `0..64` once.
+const BAYER8: [[u8; 8]; 8] = [
+    [0, 32, 8, 40, 2, 34, 10, 42],
+    [48, 16, 56, 24, 50, 18, 58, 26],
+    [12, 44, 4, 36, 14, 46, 6, 38],
+    [60, 28, 52, 20, 62, 30, 54, 22],
+    [3, 35, 11, 43, 1, 33, 9, 41],
+    [51, 19, 59, 27, 49, 17, 57, 25],
+    [15, 47, 7, 39, 13, 45, 5, 37],
+    [63, 31, 55, 23, 61, 29, 53, 21],
+];
+
+/// The dither threshold of document pixel `(x, y)` for
+/// [`StoragePixel::from_premul_dithered`]: `(B + ½) / 64` with `B` the
+/// 8 × 8 Bayer matrix, anchored to document coordinates (the same pixel
+/// always gets the same threshold, whatever the tile or the drag). The 64
+/// thresholds average ½, so dithering keeps the mean (phase 5F; Mirae's
+/// own pattern, not the reference's, D-5F-4).
+#[inline]
+pub fn dither_threshold(x: i32, y: i32) -> f32 {
+    let b = BAYER8[(y & 7) as usize][(x & 7) as usize];
+    (f32::from(b) + 0.5) / 64.0
+}
+
+#[inline]
+fn dithered(v: f32, max: f32, threshold: f32) -> f32 {
+    // `clamp` keeps NaN; the casts below turn it into 0.
+    v.clamp(0.0, 1.0) * max + threshold
 }
 
 impl StoragePixel for [u8; 4] {
@@ -90,6 +127,12 @@ impl StoragePixel for [u8; 4] {
     fn to_rgba8(self) -> [u8; 4] {
         self
     }
+
+    #[inline]
+    fn from_premul_dithered(c: PremulRgba, threshold: f32) -> Self {
+        let q = |v: f32| dithered(v, 255.0, threshold) as u8;
+        [q(c.r), q(c.g), q(c.b), q(c.a)]
+    }
 }
 
 impl StoragePixel for [u16; 4] {
@@ -113,6 +156,12 @@ impl StoragePixel for [u16; 4] {
     #[inline]
     fn to_rgba8(self) -> [u8; 4] {
         self.map(narrow16)
+    }
+
+    #[inline]
+    fn from_premul_dithered(c: PremulRgba, threshold: f32) -> Self {
+        let q = |v: f32| dithered(v, 65535.0, threshold) as u16;
+        [q(c.r), q(c.g), q(c.b), q(c.a)]
     }
 }
 
@@ -247,6 +296,71 @@ mod tests {
             for c in (0..=a).step_by(1031) {
                 let p8 = [c, c, c, a].to_rgba8();
                 assert!(p8[0] <= p8[3], "{c} {a}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_half_threshold_is_plain_rounding() {
+        for i in 0..=4096 {
+            let v = i as f32 / 4096.0;
+            let c = PremulRgba::new(v * 0.3, v * 0.6, v * 0.9, v);
+            assert_eq!(
+                <[u8; 4]>::from_premul_dithered(c, 0.5),
+                <[u8; 4]>::from_premul(c)
+            );
+            assert_eq!(
+                <[u16; 4]>::from_premul_dithered(c, 0.5),
+                <[u16; 4]>::from_premul(c)
+            );
+        }
+        let odd = PremulRgba::new(f32::NAN, -1.0, 2.0, 1.0);
+        assert_eq!(<[u8; 4]>::from_premul_dithered(odd, 0.99), [0, 0, 255, 255]);
+        assert_eq!(
+            <[u16; 4]>::from_premul_dithered(odd, 0.0),
+            [0, 0, 65535, 65535]
+        );
+    }
+
+    #[test]
+    fn the_dither_matrix_is_a_permutation_with_a_mean_of_one_half() {
+        let mut seen = [false; 64];
+        let mut sum = 0.0;
+        for y in 0..8 {
+            for x in 0..8 {
+                let t = dither_threshold(x, y);
+                let b = (t * 64.0 - 0.5).round() as usize;
+                assert!(!seen[b], "{x} {y}");
+                seen[b] = true;
+                sum += t;
+                // Anchored to document coordinates, negative ones included.
+                assert_eq!(t, dither_threshold(x - 8, y + 16));
+            }
+        }
+        assert!((sum / 64.0 - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dithering_keeps_the_mean_and_premultiplied_order() {
+        for i in 0..=200 {
+            let v = i as f32 / 200.0 * 0.37;
+            let c = PremulRgba::new(v * 0.5, v, v, (v * 1.7).min(1.0));
+            let mut mean = [0.0f64; 4];
+            for y in 0..8 {
+                for x in 0..8 {
+                    let q = <[u8; 4]>::from_premul_dithered(c, dither_threshold(x, y));
+                    assert!(q[0] <= q[3] && q[1] <= q[3] && q[2] <= q[3], "{c:?}");
+                    for k in 0..4 {
+                        mean[k] += f64::from(q[k]) / 64.0;
+                    }
+                }
+            }
+            for (k, want) in [c.r, c.g, c.b, c.a].iter().enumerate() {
+                // Exact to a 64th of a level (the matrix's resolution).
+                assert!(
+                    (mean[k] - f64::from(*want) * 255.0).abs() <= 1.0 / 64.0 + 1e-4,
+                    "{c:?} {mean:?}"
+                );
             }
         }
     }
