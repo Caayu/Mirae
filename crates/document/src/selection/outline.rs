@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use tela_canvas::{IRect, TILE_SIZE};
+use tela_canvas::IRect;
 
 use super::Selection;
 
@@ -28,8 +28,6 @@ impl Selection {
         }
         let inside = self.inside_bitmap(area);
         let (w, h) = (area.width(), area.height());
-        let at =
-            |x: i32, y: i32| x >= 0 && y >= 0 && x < w && y < h && inside[(y * w + x) as usize];
         // Directed unit edges, inside on the right (y down).
         let mut next: HashMap<Vertex, [Option<Vertex>; 2]> = HashMap::new();
         let mut add = |from: (i32, i32), to: (i32, i32)| {
@@ -41,24 +39,41 @@ impl Selection {
             }
         };
         let mut starts = Vec::new();
+        let none = vec![false; w as usize];
         for y in 0..h {
-            for x in 0..w {
-                if !at(x, y) {
-                    continue;
+            let row = |y: i32| -> &[bool] {
+                if (0..h).contains(&y) {
+                    &inside[(y * w) as usize..((y + 1) * w) as usize]
+                } else {
+                    &none
                 }
-                if !at(x, y - 1) {
-                    add((x, y), (x + 1, y));
-                    starts.push((x, y));
+            };
+            let (above, cur, below) = (row(y - 1), row(y), row(y + 1));
+            let mut x = 0;
+            while x < w {
+                // A run of inside pixels [x, end): a left and a right edge,
+                // top and bottom edges where the neighbour row is outside.
+                let Some(skip) = cur[x as usize..].iter().position(|&v| v) else {
+                    break;
+                };
+                x += skip as i32;
+                let len = cur[x as usize..]
+                    .iter()
+                    .position(|&v| !v)
+                    .unwrap_or((w - x) as usize);
+                let end = x + len as i32;
+                add((x, y + 1), (x, y));
+                add((end, y), (end, y + 1));
+                for px in x..end {
+                    if !above[px as usize] {
+                        add((px, y), (px + 1, y));
+                        starts.push((px, y));
+                    }
+                    if !below[px as usize] {
+                        add((px + 1, y + 1), (px, y + 1));
+                    }
                 }
-                if !at(x + 1, y) {
-                    add((x + 1, y), (x + 1, y + 1));
-                }
-                if !at(x, y + 1) {
-                    add((x + 1, y + 1), (x, y + 1));
-                }
-                if !at(x - 1, y) {
-                    add((x, y + 1), (x, y));
-                }
+                x = end;
             }
         }
         let mut loops = Vec::new();
@@ -104,19 +119,14 @@ impl Selection {
     fn inside_bitmap(&self, area: IRect) -> Vec<bool> {
         let (w, h) = (area.width() as usize, area.height() as usize);
         let mut inside = vec![false; w * h];
-        for c in area.tiles() {
-            let part = c.rect().intersect(&area);
-            let coverage = self.tile(c);
-            let (ox, oy) = c.origin();
-            for y in part.y0..part.y1 {
-                let row = (y - area.y0) as usize * w;
-                for x in part.x0..part.x1 {
-                    let v = coverage.get((x - ox) as u32, (y - oy) as u32);
-                    inside[row + (x - area.x0) as usize] = v >= OUTLINE_THRESHOLD;
-                }
+        let mut line = vec![0u8; w];
+        for (y, out) in (area.y0..area.y1).zip(inside.chunks_exact_mut(w)) {
+            self.read_line(area.x0, y, &mut line);
+            for (o, &v) in out.iter_mut().zip(&line) {
+                *o = v >= OUTLINE_THRESHOLD;
             }
-            debug_assert!(part.width() <= TILE_SIZE as i32);
         }
+        debug_assert_eq!(inside.len(), w * h);
         inside
     }
 }

@@ -157,6 +157,23 @@ impl Selection {
         }
     }
 
+    /// Coverage of row `y` from `x0` for `out.len()` pixels (0 off the
+    /// canvas), read a tile row at a time.
+    pub(crate) fn read_line(&self, x0: i32, y: i32, out: &mut [u8]) {
+        let mut row = [0u8; TILE_SIZE as usize];
+        let end = x0 + out.len() as i32;
+        let mut x = x0;
+        while x < end {
+            let c = TileCoord::containing(x, y);
+            let (ox, oy) = c.origin();
+            let seg_end = (ox + TILE_SIZE as i32).min(end);
+            self.tile(c).row((y - oy) as u32, &mut row);
+            out[(x - x0) as usize..(seg_end - x0) as usize]
+                .copy_from_slice(&row[(x - ox) as usize..(seg_end - ox) as usize]);
+            x = seg_end;
+        }
+    }
+
     /// Whether no pixel has any coverage. A [`Document`](crate::Document)
     /// never keeps an empty selection (it becomes "no selection").
     pub fn is_empty(&self) -> bool {
@@ -291,14 +308,14 @@ impl Selection {
     /// this one's is).
     pub(crate) fn intersected(&self, shape: &TiledSurface<u8>) -> Selection {
         let mut out = TiledSurface::new();
+        let mut row = [0u8; TILE_SIZE as usize];
         for c in shape.tile_coords() {
             let s = shape.tile(c).expect("listed");
+            let current = self.tile(c);
             let mut new = Tile::<u8>::new();
-            for (i, (n, &b)) in new.pixels_mut().iter_mut().zip(s.pixels()).enumerate() {
-                if b > 0 {
-                    let (x, y) = (i as u32 % TILE_SIZE, i as u32 / TILE_SIZE);
-                    let (ox, oy) = c.origin();
-                    let a = self.coverage(ox + x as i32, oy + y as i32);
+            for y in 0..TILE_SIZE {
+                current.row(y, &mut row);
+                for ((n, &b), &a) in new.row_mut(y).iter_mut().zip(s.row(y)).zip(&row) {
                     *n = SelectionOp::Intersect.combine(a, b);
                 }
             }

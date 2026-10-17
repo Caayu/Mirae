@@ -28,6 +28,7 @@ Policy:
 | `crates/corpus/examples/depth_bench.rs` | benchmark | Counting `GlobalAlloc` forwarding to `System` (phase 4E; row added in the 4G audit) | Documented |
 | `crates/corpus/examples/doc_bench.rs` | benchmark | Counting `GlobalAlloc` (allocations and live bytes) forwarding to `System` | Documented |
 | `crates/corpus/examples/layer_bench.rs` | benchmark | Counting `GlobalAlloc` (live and peak bytes) forwarding to `System` (phase 5B) | Documented |
+| `crates/corpus/examples/selection_bench.rs` | benchmark | Counting `GlobalAlloc` (live and peak bytes) forwarding to `System` (phase 5C) | Documented |
 | `crates/io/examples/io_bench.rs` | benchmark | Counting `GlobalAlloc` (live and peak bytes) forwarding to `System` | Documented |
 | `crates/brush/tests/allocation.rs` | test | Counting `GlobalAlloc` (thread-local counters, const-initialized) forwarding to `System` | Documented |
 

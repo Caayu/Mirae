@@ -7,9 +7,10 @@
 //! Applied separably (the canvas is a rectangle, so the renormalization
 //! factorizes). Only pixels within the radius of a stored value can change:
 //! everything else stays the fill, so the work is bounded by the stored
-//! region, not by the canvas.
+//! region, not by the canvas. The region is processed one tile column at a
+//! time, so the scratch memory is one band, whatever the selection's size.
 
-use tela_canvas::{IRect, Tile, TileCoord};
+use tela_canvas::{IRect, TILE_SIZE, Tile, TileCoord};
 
 use super::Selection;
 
@@ -18,6 +19,9 @@ pub(crate) const SIGMA_PER_PX: f32 = 0.3;
 
 /// The largest strength accepted, in pixels.
 pub const MAX_FEATHER: f32 = 1000.0;
+
+/// Columns gathered at once for the vertical pass.
+const BLOCK: usize = 16;
 
 /// The stored tiles feathering `sel` by `strength` px changes, with their
 /// new content (`None` = absent). Reads only; changes nothing.
@@ -31,63 +35,79 @@ pub(crate) fn feather_tiles(sel: &Selection, strength: f32) -> Vec<(TileCoord, O
         .map(|k| (-((k * k) as f32) / (2.0 * sigma * sigma)).exp())
         .collect();
     let canvas = sel.canvas();
-    let grow = |r: IRect, d: i32| IRect::new(r.x0 - d, r.y0 - d, r.x1 + d, r.y1 + d);
+    let grow = |r: IRect, dx: i32, dy: i32| IRect::new(r.x0 - dx, r.y0 - dy, r.x1 + dx, r.y1 + dy);
     // Output region: where a stored value is within reach.
-    let out = grow(sel.stored_bounds(), radius).intersect(&canvas);
+    let out = grow(sel.stored_bounds(), radius, radius).intersect(&canvas);
     if out.is_empty() {
         return Vec::new();
     }
-    // Input region: the output region plus the kernel, on the canvas.
-    let input = grow(out, radius).intersect(&canvas);
-    let (w, h) = (out.width() as usize, input.height() as usize);
-    // Horizontal pass: rows of the input region, columns of the output.
-    let mut line = vec![0.0f32; input.width() as usize];
-    let mut horizontal = vec![0.0f32; w * h];
-    let mut runs = Vec::new();
-    for (row, y) in (input.y0..input.y1).enumerate() {
-        for (v, x) in line.iter_mut().zip(input.x0..input.x1) {
-            *v = f32::from(sel.coverage(x, y));
-        }
-        convolve(
-            &line,
-            input.x0,
-            out.x0,
-            &weights,
-            &mut runs,
-            &mut horizontal[row * w..(row + 1) * w],
-        );
-    }
-    // Vertical pass, column by column into the output region.
-    let mut column = vec![0.0f32; h];
-    let mut result = vec![0.0f32; w * out.height() as usize];
-    let mut blurred = vec![0.0f32; out.height() as usize];
-    for x in 0..w {
-        for (v, row) in column.iter_mut().zip(0..h) {
-            *v = horizontal[row * w + x];
-        }
-        convolve(&column, input.y0, out.y0, &weights, &mut runs, &mut blurred);
-        for (y, v) in blurred.iter().enumerate() {
-            result[y * w + x] = *v;
-        }
-    }
-    // New stored tiles where the output region changed something.
     let fill = if sel.is_inverted_storage() { 255u8 } else { 0 };
+    // Input rows: the output rows plus the kernel, on the canvas.
+    let rows = grow(out, 0, radius).intersect(&canvas);
+    let h = rows.height() as usize;
+    let (mut bytes, mut line, mut runs, mut horizontal) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut column = vec![0.0f32; h];
+    let mut blurred = vec![0.0f32; out.height() as usize];
+    let mut block = vec![0.0f32; BLOCK * h];
     let mut changed = Vec::new();
-    for coord in out.tiles() {
-        let old = sel.stored.tile(coord);
-        let mut tile = old.cloned().unwrap_or_default();
-        let part = coord.rect().intersect(&out);
-        let (ox, oy) = coord.origin();
-        for y in part.y0..part.y1 {
-            for x in part.x0..part.x1 {
-                let v = result[(y - out.y0) as usize * w + (x - out.x0) as usize];
-                *tile.get_mut((x - ox) as u32, (y - oy) as u32) =
-                    (v.round().clamp(0.0, 255.0) as u8) ^ fill;
+    let t = TILE_SIZE as i32;
+    for tx in out.x0.div_euclid(t)..=(out.x1 - 1).div_euclid(t) {
+        // One band: the output columns of this tile column.
+        let band = IRect::new(tx * t, out.y0, tx * t + t, out.y1).intersect(&out);
+        let bw = band.width() as usize;
+        let input = grow(band, radius, 0).intersect(&canvas);
+        bytes.resize(input.width() as usize, 0u8);
+        line.resize(input.width() as usize, 0.0f32);
+        horizontal.clear();
+        horizontal.resize(bw * h, 0.0f32);
+        for (row, y) in (rows.y0..rows.y1).enumerate() {
+            sel.read_line(input.x0, y, &mut bytes);
+            for (l, &b) in line.iter_mut().zip(&bytes) {
+                *l = f32::from(b);
+            }
+            convolve(
+                &line,
+                input.x0,
+                band.x0,
+                &weights,
+                &mut runs,
+                &mut horizontal[row * bw..(row + 1) * bw],
+            );
+        }
+        // The band's tiles, starting from their current content.
+        let ty0 = band.y0.div_euclid(t);
+        let mut tiles: Vec<(TileCoord, Tile<u8>)> = (ty0..=(band.y1 - 1).div_euclid(t))
+            .map(|ty| {
+                let c = TileCoord { x: tx, y: ty };
+                (c, sel.stored.tile(c).cloned().unwrap_or_default())
+            })
+            .collect();
+        // Vertical pass, gathering a block of columns per sweep of rows.
+        for first in (0..bw).step_by(BLOCK) {
+            let n = BLOCK.min(bw - first);
+            for (row, chunk) in horizontal.chunks_exact(bw).enumerate() {
+                for (i, &v) in chunk[first..first + n].iter().enumerate() {
+                    block[i * h + row] = v;
+                }
+            }
+            for i in 0..n {
+                column.copy_from_slice(&block[i * h..(i + 1) * h]);
+                convolve(&column, rows.y0, band.y0, &weights, &mut runs, &mut blurred);
+                let x = (band.x0 + (first + i) as i32).rem_euclid(t) as u32;
+                for (y, &v) in (band.y0..band.y1).zip(&blurred) {
+                    let tile = &mut tiles[(y.div_euclid(t) - ty0) as usize].1;
+                    *tile.get_mut(x, y.rem_euclid(t) as u32) =
+                        (v.round().clamp(0.0, 255.0) as u8) ^ fill;
+                }
             }
         }
-        let new = (!tile.is_blank()).then_some(tile);
-        if new.as_ref() != old {
-            changed.push((coord, new));
+        for (c, tile) in tiles {
+            let old = sel.stored.tile(c);
+            let new = (!tile.is_blank()).then_some(tile);
+            if new.as_ref() != old {
+                changed.push((c, new));
+            }
         }
     }
     changed

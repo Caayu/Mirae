@@ -38,17 +38,38 @@ impl TileCoverage<'_> {
         }
     }
 
+    /// The coverage of tile row `y`, all 256 values.
+    pub fn row(&self, y: u32, out: &mut [u8; TILE_SIZE as usize]) {
+        match *self {
+            TileCoverage::Full => out.fill(255),
+            TileCoverage::Empty => out.fill(0),
+            TileCoverage::Partial { stored, xor, clip } => {
+                out.fill(0);
+                if y < clip[1] || y >= clip[3] {
+                    return;
+                }
+                let (x0, x1) = (clip[0] as usize, clip[2] as usize);
+                match stored {
+                    Some(t) => {
+                        for (o, &s) in out[x0..x1].iter_mut().zip(&t.row(y)[x0..x1]) {
+                            *o = s ^ xor;
+                        }
+                    }
+                    None => out[x0..x1].fill(xor),
+                }
+            }
+        }
+    }
+
     /// `mask` (one row of a tile) scaled by the coverage of row `y`, into
     /// `out`: `m · c / 255`. Returns whether any value is non-zero. A full
     /// coverage leaves values exactly unchanged (`m · 1.0`).
     pub fn scale_row(&self, y: u32, mask: &[f32], out: &mut [f32; TILE_SIZE as usize]) -> bool {
+        let mut coverage = [0u8; TILE_SIZE as usize];
+        self.row(y, &mut coverage);
         let mut any = false;
-        for (x, (o, &m)) in out.iter_mut().zip(mask).enumerate() {
-            *o = if m > 0.0 {
-                m * (f32::from(self.get(x as u32, y)) / 255.0)
-            } else {
-                0.0
-            };
+        for ((o, &m), &c) in out.iter_mut().zip(mask).zip(&coverage) {
+            *o = m * (f32::from(c) / 255.0);
             any |= *o > 0.0;
         }
         any
@@ -78,6 +99,36 @@ mod tests {
         };
         assert_eq!(absent.get(5, 5), 255);
         assert_eq!(absent.get(5, 200), 0);
+    }
+
+    #[test]
+    fn rows_agree_with_single_pixels() {
+        let mut t = Tile::<u8>::new();
+        for (i, v) in t.pixels_mut().iter_mut().enumerate() {
+            *v = (i * 7 % 251) as u8;
+        }
+        for c in [
+            TileCoverage::Full,
+            TileCoverage::Empty,
+            TileCoverage::Partial {
+                stored: Some(&t),
+                xor: 255,
+                clip: [3, 5, 200, 250],
+            },
+            TileCoverage::Partial {
+                stored: None,
+                xor: 255,
+                clip: [0, 0, 100, 256],
+            },
+        ] {
+            let mut row = [0u8; 256];
+            for y in [0, 4, 5, 100, 249, 250, 255] {
+                c.row(y, &mut row);
+                for (x, &v) in row.iter().enumerate() {
+                    assert_eq!(v, c.get(x as u32, y), "{c:?} at {x},{y}");
+                }
+            }
+        }
     }
 
     #[test]
