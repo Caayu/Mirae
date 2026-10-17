@@ -259,3 +259,51 @@ fn feathering_changes_only_pixels_within_reach_and_keeps_uniform_areas() {
         assert!(feather_tiles(&s, bad).is_empty());
     }
 }
+
+#[test]
+fn outlines_are_closed_loops_around_the_half_covered_pixels() {
+    let r = shape(&rect(10.0, 20.0, 110.0, 70.0), false);
+    assert_eq!(
+        r.outline(),
+        vec![vec![[10, 20], [110, 20], [110, 70], [10, 70]]]
+    );
+    // Two shapes, two loops; a hole is a loop of its own.
+    let mut two = r.clone();
+    let mut t = two.combined_tiles(
+        &rasterize(&rect(300.0, 300.0, 320.0, 330.0), false, CANVAS),
+        SelectionOp::Add,
+    );
+    two.swap_tiles(&mut t);
+    assert_eq!(two.outline().len(), 2);
+    let mut holed = Selection::all(CANVAS);
+    let mut t = holed.combined_tiles(
+        &rasterize(&rect(100.0, 100.0, 200.0, 150.0), false, CANVAS),
+        SelectionOp::Subtract,
+    );
+    holed.swap_tiles(&mut t);
+    let loops = holed.outline();
+    assert_eq!(loops.len(), 2);
+    assert!(loops.contains(&vec![[0, 0], [700, 0], [700, 500], [0, 500]]));
+    // Pixels touching at a corner: separate loops.
+    let mut diag = shape(&rect(5.0, 5.0, 6.0, 6.0), false);
+    let mut t = diag.combined_tiles(
+        &rasterize(&rect(6.0, 6.0, 7.0, 7.0), false, CANVAS),
+        SelectionOp::Add,
+    );
+    diag.swap_tiles(&mut t);
+    assert_eq!(diag.outline().len(), 2);
+    // A feathered edge: the outline sits on the 50 % contour (the old edge).
+    let mut f = r.clone();
+    let mut t = feather_tiles(&r, 10.0);
+    f.swap_tiles(&mut t);
+    let loops = f.outline();
+    assert_eq!(loops.len(), 1);
+    assert!(loops[0].iter().any(|p| p[0] == 10) && loops[0].iter().any(|p| p[1] == 70));
+    // Every loop is closed and axis-aligned.
+    for l in holed.outline().iter().chain(&loops) {
+        for i in 0..l.len() {
+            let (a, b) = (l[i], l[(i + 1) % l.len()]);
+            assert!(a[0] == b[0] || a[1] == b[1]);
+        }
+    }
+}

@@ -44,5 +44,5 @@ pub use document::{
 pub use error::LayerError;
 pub use layer::{LayerId, LayerMask, RasterLayer};
 pub use pixels::LayerPixels;
-pub use selection::{MAX_FEATHER, Selection, SelectionOp, SelectionShape};
+pub use selection::{MAX_FEATHER, OUTLINE_THRESHOLD, Selection, SelectionOp, SelectionShape};
 pub use tela_color::{PixelDepth, StoragePixel};

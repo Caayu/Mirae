@@ -11,12 +11,14 @@
 //! alpha is multiplied by the coverage (S22–S26).
 
 mod feather;
+mod outline;
 mod raster;
 
 use tela_canvas::{IRect, TILE_SIZE, Tile, TileCoord, TileCoverage, TiledSurface};
 
 pub use self::feather::MAX_FEATHER;
 pub(crate) use self::feather::feather_tiles;
+pub use self::outline::OUTLINE_THRESHOLD;
 pub(crate) use self::raster::rasterize;
 
 /// How a new shape combines with the current selection (the reference's
