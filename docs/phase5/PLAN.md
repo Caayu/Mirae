@@ -11,7 +11,7 @@ nothing else is started.
 | 5C Selections | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5C-selection.md](../parity/5C-selection.md); [ADR 0024](../adr/0024-selections.md) |
 | 5D Transform | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5D-transform.md](../parity/5D-transform.md); [ADR 0025](../adr/0025-transform.md) |
 | 5E Fill | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5E-fill.md](../parity/5E-fill.md); [ADR 0026](../adr/0026-fill.md) |
-| 5F Gradients | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
+| 5F Gradients | **Approved 2026-10-17, in progress** | [parity/5F-gradients.md](../parity/5F-gradients.md) |
 | 5G Integration | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 
 ## 5A — Colour (approved brief, summarized)
