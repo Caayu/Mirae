@@ -23,7 +23,7 @@ pub struct PanelModel<'a> {
 }
 
 /// Requests the panels cannot fulfil by themselves.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PanelAction {
     None,
     SelectPreset(usize),
@@ -37,6 +37,8 @@ pub enum PanelAction {
     Document(crate::DocumentCommand),
     /// The answer to the unsaved-changes prompt.
     Prompt(crate::PromptChoice),
+    /// The answer to the merge-down mask question.
+    MergeMask(crate::MergeMaskChoice),
     /// A notice was dismissed.
     DismissNotice,
     /// From the colour panel.

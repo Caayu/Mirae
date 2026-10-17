@@ -32,7 +32,7 @@ use egui::{ClippedPrimitive, TexturesDelta, ViewportId};
 use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
 pub use history_bar::{HistoryButtons, HistoryCommand, history_bar};
 pub use layer_panel::{LayerAction, LayerRow, layer_panel};
-pub use prompt::{PromptChoice, notice, unsaved_prompt};
+pub use prompt::{MergeMaskChoice, PromptChoice, merge_mask_prompt, notice, unsaved_prompt};
 use tela_renderer::FrameOverlay;
 use winit::window::Window;
 

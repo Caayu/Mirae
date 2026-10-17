@@ -8,8 +8,8 @@ use tela_brush::{BrushEngine, BrushInput, BrushPreset, PixelAlpha};
 use tela_canvas::{DirtyTiles, Tile, TileCoord, ViewTransform};
 use tela_color::{Color, PixelDepth, PremulRgba, with_pixel_type};
 use tela_document::{
-    BlendMode, ComposeScratch, Document, HistoryAction, LayerId, LayerPart, Overlay, OverlayPaint,
-    Placement,
+    BlendMode, ComposeScratch, Document, HistoryAction, LayerId, LayerPart, LowerMask, Overlay,
+    OverlayPaint, Placement,
 };
 use tela_renderer::{Frame, Renderer};
 use tela_tablet::{DeviceKind, Phase, TabletEvent, TabletSample, TimestampNormalizer, clock};
@@ -27,7 +27,8 @@ use crate::tools::Tools;
 use files::{FileState, Pending};
 use tela_ui::{
     BrushPanel, ColorAction, ColorModel, ColorPanel, DocumentCommand, DocumentInfo, HistoryButtons,
-    HistoryCommand, LayerAction, LayerRow, PanelAction, PanelModel, PickSource, UiLayer, egui,
+    HistoryCommand, LayerAction, LayerRow, MergeMaskChoice, PanelAction, PanelModel, PickSource,
+    UiLayer, egui,
 };
 
 const DOCUMENT_SIZE: (u32, u32) = (4000, 3000);
@@ -96,6 +97,9 @@ pub struct App {
     last_title: String,
     /// The document's file, save point and the file commands' status.
     file: FileState,
+    /// A merge down waiting for the answer to the lower-mask question
+    /// (the layer to merge).
+    merging: Option<LayerId>,
 }
 
 /// What a stroke edits, captured when it begins so that nothing changed
@@ -157,6 +161,7 @@ impl App {
             pick_source: PickSource::Canvas,
             picked: None,
             last_title: String::new(),
+            merging: None,
         }
     }
 
@@ -473,7 +478,7 @@ impl App {
             return;
         }
         // While a question is open, keys belong to it.
-        if self.file.asking.is_some() || self.file.notice.is_some() {
+        if self.file.asking.is_some() || self.file.notice.is_some() || self.merging.is_some() {
             return;
         }
         let (ctrl, shift, alt) = (
@@ -507,6 +512,11 @@ impl App {
             let command = match event.physical_key {
                 PhysicalKey::Code(KeyCode::KeyN) if shift => {
                     self.apply_layer(LayerAction::Add);
+                    None
+                }
+                // The reference's "merge with layer below" (parity record 5B).
+                PhysicalKey::Code(KeyCode::KeyE) if !shift => {
+                    self.apply_layer(LayerAction::MergeDown);
                     None
                 }
                 PhysicalKey::Code(KeyCode::KeyZ) if shift => Some(HistoryCommand::Redo),
@@ -634,6 +644,8 @@ impl App {
         let active = doc.active_layer();
         let Some(target) = (match action {
             LayerAction::Select(key)
+            | LayerAction::Rename(key, _)
+            | LayerAction::MoveTo { key, .. }
             | LayerAction::SetVisible(key, _)
             | LayerAction::SetLocked(key, _) => doc.find_layer(key),
             _ => Some(active),
@@ -654,6 +666,29 @@ impl App {
                 Some(below) => doc.move_layer(active, Placement::Below(below)),
                 None => Ok(DirtyTiles::new()),
             },
+            // Drag and drop: placed relative to the row it was dropped on,
+            // by id; the document recomputes clipping groups (ADR 0023).
+            LayerAction::MoveTo {
+                target: on, above, ..
+            } => match doc.find_layer(on) {
+                Some(on) if above => doc.move_layer(target, Placement::Above(on)),
+                Some(on) => doc.move_layer(target, Placement::Below(on)),
+                None => Ok(DirtyTiles::new()),
+            },
+            LayerAction::Rename(_, name) => doc.set_name(target, name).map(|()| DirtyTiles::new()),
+            LayerAction::MergeDown => {
+                let lower_masked = doc
+                    .layer_below(active)
+                    .and_then(|below| doc.layer(below))
+                    .and_then(|l| l.mask())
+                    .is_some_and(|m| m.enabled());
+                if lower_masked {
+                    // The reference asks first (Apply / Keep / Cancel).
+                    self.merging = Some(active);
+                    return;
+                }
+                doc.merge_down(active, LowerMask::Apply)
+            }
             LayerAction::SetOpacity(o) => doc.set_opacity(active, o),
             LayerAction::SetBlendMode(i) => match BlendMode::ALL.get(i) {
                 Some(&mode) => doc.set_blend_mode(active, mode),
@@ -681,6 +716,22 @@ impl App {
         match result {
             Ok(dirty) => self.stale.extend(&dirty),
             Err(e) => log::info!("layer command refused: {e}"),
+        }
+    }
+
+    /// Finishes a merge down that waited for the lower-mask question.
+    fn answer_merge(&mut self, choice: MergeMaskChoice) {
+        let Some(id) = self.merging.take() else {
+            return;
+        };
+        let mask = match choice {
+            MergeMaskChoice::Apply => LowerMask::Apply,
+            MergeMaskChoice::Keep => LowerMask::Keep,
+            MergeMaskChoice::Cancel => return,
+        };
+        match self.document.merge_down(id, mask) {
+            Ok(dirty) => self.stale.extend(&dirty),
+            Err(e) => log::info!("merge down refused: {e}"),
         }
     }
 
@@ -802,9 +853,14 @@ impl App {
         let notice = self.file.notice.as_deref();
         let mut prompt = None;
         let mut dismissed = false;
+        let merging = self.merging.is_some();
+        let mut merge_answer = None;
         let repaint = gpu.ui.build(&gpu.window, |ui| {
+            // A fixed width: long names and markers are truncated, so the
+            // controls never move under the cursor (debt #17).
             let layers = egui::Panel::right("layer-panel")
-                .default_size(230.0)
+                .resizable(false)
+                .exact_size(270.0)
                 .show(ui, |ui| {
                     document_command = tela_ui::document_bar(ui, &info, export);
                     ui.separator();
@@ -831,7 +887,11 @@ impl App {
                 });
             let mut occupied = vec![r.response.rect, layers.response.rect];
             // Questions block the whole window (the pen goes to them too).
-            if let Some(doing) = asking {
+            if merging {
+                let (choice, area) = tela_ui::merge_mask_prompt(ui.ctx());
+                merge_answer = choice;
+                occupied.push(area);
+            } else if let Some(doing) = asking {
                 let (choice, area) = tela_ui::unsaved_prompt(ui.ctx(), &name, doing);
                 prompt = choice;
                 occupied.push(area);
@@ -851,6 +911,9 @@ impl App {
         }
         if let Some(choice) = prompt {
             return PanelAction::Prompt(choice);
+        }
+        if let Some(choice) = merge_answer {
+            return PanelAction::MergeMask(choice);
         }
         if dismissed {
             return PanelAction::DismissNotice;
@@ -901,6 +964,7 @@ impl App {
                 self.answer(choice);
                 self.update_title();
             }
+            PanelAction::MergeMask(choice) => self.answer_merge(choice),
             PanelAction::DismissNotice => self.file.notice = None,
             PanelAction::Color(a) => self.apply_color(a),
         }

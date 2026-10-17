@@ -1,4 +1,6 @@
-//! Modal questions the app asks: the unsaved-changes prompt (Save /
+//! Modal questions the app asks: the merge-down mask question (Apply /
+//! Keep / Cancel, as the reference asks, parity record 5B), the
+//! unsaved-changes prompt (Save /
 //! Don't Save / Cancel, Save the default, as in the reference's close
 //! prompt, parity record 4F F7) and notices (errors the user must see).
 //! They are drawn by egui rather than as native message boxes: a native
@@ -47,6 +49,50 @@ pub fn unsaved_prompt(ctx: &Context, name: &str, doing: &str) -> (Option<PromptC
     });
     if choice.is_none() && modal.should_close() {
         choice = Some(PromptChoice::Cancel);
+    }
+    (choice, modal.backdrop_response.rect)
+}
+
+/// The answer to the merge-down question about the lower layer's mask.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MergeMaskChoice {
+    /// Apply the mask, then merge (the picture does not change).
+    Apply,
+    /// Merge and keep the mask on the merged layer.
+    Keep,
+    /// Do not merge.
+    Cancel,
+}
+
+/// Asks what to do with the lower layer's mask before merging down, as
+/// the reference does (Apply / Keep / Cancel, Apply the default; parity
+/// record 5B). Returns the answer once given, and the screen area the
+/// question blocks. Enter answers Apply, Escape or a click beside it
+/// Cancel.
+pub fn merge_mask_prompt(ctx: &Context) -> (Option<MergeMaskChoice>, Rect) {
+    let mut choice = None;
+    let modal = Modal::new(Id::new("merge-mask-prompt")).show(ctx, |ui| {
+        ui.set_width(380.0);
+        ui.label(RichText::new("The layer below has a layer mask.").strong());
+        ui.label("Apply the mask before merging?");
+        ui.add_space(8.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui.button("Cancel").clicked() {
+                choice = Some(MergeMaskChoice::Cancel);
+            }
+            if ui.button("Keep").clicked() {
+                choice = Some(MergeMaskChoice::Keep);
+            }
+            if ui.button(RichText::new("Apply").strong()).clicked() {
+                choice = Some(MergeMaskChoice::Apply);
+            }
+        });
+        if ui.input(|i| i.key_pressed(Key::Enter)) {
+            choice = Some(MergeMaskChoice::Apply);
+        }
+    });
+    if choice.is_none() && modal.should_close() {
+        choice = Some(MergeMaskChoice::Cancel);
     }
     (choice, modal.backdrop_response.rect)
 }
