@@ -214,6 +214,8 @@ impl Document {
             active_part,
             next_id,
             history: History::default(),
+            selection: None,
+            selection_revision: 0,
         })
     }
 

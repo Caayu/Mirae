@@ -31,6 +31,9 @@ mod layer;
 mod pixels;
 #[cfg(test)]
 mod properties;
+mod selection;
+#[cfg(test)]
+mod selection_properties;
 
 pub use blend::BlendMode;
 pub use compose::{ComposeScratch, Overlay, OverlayPaint};
@@ -41,4 +44,5 @@ pub use document::{
 pub use error::LayerError;
 pub use layer::{LayerId, LayerMask, RasterLayer};
 pub use pixels::LayerPixels;
+pub use selection::{MAX_FEATHER, Selection, SelectionOp, SelectionShape};
 pub use tela_color::{PixelDepth, StoragePixel};

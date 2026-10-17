@@ -38,6 +38,13 @@ enum Edit {
     Convert(bool),
     /// Merge down; `true` keeps an enabled lower mask.
     Merge(usize, bool),
+    /// A shape (rectangle, ellipse, triangle by `kind`) combined by `op`
+    /// at a position, anti-aliased or not.
+    Select(u8, u8, u8, bool),
+    SelectAll,
+    Deselect,
+    Invert,
+    Feather(u8),
 }
 
 #[derive(Clone, Debug)]
@@ -68,6 +75,11 @@ fn hop() -> impl Strategy<Value = HOp> {
         1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Edit::AlphaLock(i, v)),
         1 => any::<bool>().prop_map(Edit::Convert),
         2 => (any::<usize>(), any::<bool>()).prop_map(|(i, k)| Edit::Merge(i, k)),
+        3 => (0u8..3, 0u8..4, any::<u8>(), any::<bool>()).prop_map(|(k, o, p, a)| Edit::Select(k, o, p, a)),
+        1 => Just(Edit::SelectAll),
+        1 => Just(Edit::Deselect),
+        1 => Just(Edit::Invert),
+        1 => (1u8..12).prop_map(Edit::Feather),
     ];
     prop_oneof![
         6 => edit.prop_map(HOp::Edit),
@@ -175,7 +187,57 @@ fn edit(d: &mut Document, removed: &mut Vec<LayerId>, e: &Edit) -> Result<(), La
             }
             r
         }
+        // Selection changes are steps when they change something (5C S28).
+        Edit::Select(kind, op, p, aa) => {
+            d.select(&selection_shape(kind, p), aa, selection_op(op));
+            Ok(())
+        }
+        Edit::SelectAll => {
+            d.select_all();
+            Ok(())
+        }
+        Edit::Deselect => {
+            d.deselect();
+            Ok(())
+        }
+        Edit::Invert => {
+            d.invert_selection();
+            Ok(())
+        }
+        Edit::Feather(px) => {
+            d.feather_selection(f32::from(px));
+            Ok(())
+        }
     }
+}
+
+/// A shape somewhere on the 1024 × 256 test document, partly off it at
+/// the extremes.
+pub(crate) fn selection_shape(kind: u8, p: u8) -> crate::SelectionShape {
+    let x = f32::from(p) * 4.3 - 60.0;
+    let y = f32::from(p % 64) * 3.7 - 20.0;
+    match kind {
+        0 => crate::SelectionShape::Rect([x, y], [x + 150.3, y + 90.6]),
+        1 => crate::SelectionShape::Ellipse {
+            center: [x, y + 60.0],
+            radii: [70.0 + f32::from(p % 7) * 9.0, 40.0],
+            rotation: f32::from(p) * 0.1,
+        },
+        _ => crate::SelectionShape::Polygon(vec![
+            [x, y],
+            [x + 200.0, y + 30.0],
+            [x + 40.0, y + 180.0],
+        ]),
+    }
+}
+
+pub(crate) fn selection_op(op: u8) -> crate::SelectionOp {
+    [
+        crate::SelectionOp::Replace,
+        crate::SelectionOp::Add,
+        crate::SelectionOp::Subtract,
+        crate::SelectionOp::Intersect,
+    ][usize::from(op % 4)]
 }
 
 /// A pixel value for stroke `v`: grey `60·(v + 1)`, plus a fraction of a

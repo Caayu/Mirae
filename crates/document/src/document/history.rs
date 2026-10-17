@@ -22,7 +22,7 @@ use tela_color::PixelDepth;
 use super::Document;
 use crate::layer::LayerMask;
 use crate::pixels::TileBackup;
-use crate::{BlendMode, LayerId, LayerPixels, RasterLayer};
+use crate::{BlendMode, LayerId, LayerPixels, RasterLayer, Selection};
 
 /// Bytes of one mask tile (8-bit).
 pub(super) const MASK_TILE_BYTES: usize = (TILE_SIZE * TILE_SIZE) as usize;
@@ -90,6 +90,14 @@ pub enum HistoryAction {
     ImportLayer,
     /// A layer merged into the one below ([`Document::merge_down`]).
     MergeDown,
+    /// A selection shape replaced or combined with the selection
+    /// ([`Document::select`]).
+    Select,
+    SelectAll,
+    Deselect,
+    InvertSelection,
+    /// The selection's border blurred ([`Document::feather_selection`]).
+    FeatherSelection,
 }
 
 impl HistoryAction {
@@ -173,6 +181,18 @@ pub(super) enum Change {
         layer: LayerId,
         tiles: Vec<(TileCoord, Option<Tile<u8>>)>,
     },
+    /// The whole selection in its other state (`None` = no selection):
+    /// replacing, selecting all, deselecting, intersecting.
+    SelectionSwap {
+        other: Option<Box<Selection>>,
+    },
+    /// The other state of some stored selection tiles (`None` = absent);
+    /// `flip`: applying also inverts the selection (add, subtract,
+    /// feather, invert).
+    SelectionTiles {
+        tiles: Vec<(TileCoord, Option<Tile<u8>>)>,
+        flip: bool,
+    },
     /// Every layer's pixels at the `other` depth (convert depth); masks
     /// are 8-bit at every depth and stay.
     Depth {
@@ -191,10 +211,12 @@ impl Change {
             Change::Presence { layer, .. } => layer.as_deref().map_or(0, layer_bytes),
             Change::Name { other, .. } => other.len(),
             Change::MaskTiles { tiles, .. } => {
-                tiles.len() * size_of::<(TileCoord, Option<Tile<u8>>)>()
+                std::mem::size_of_val(tiles.as_slice())
                     + tiles.iter().filter(|(_, t)| t.is_some()).count() * MASK_TILE_BYTES
             }
             Change::MaskPresence { mask, .. } => mask.as_deref().map_or(0, mask_bytes),
+            Change::SelectionSwap { other } => other.as_deref().map_or(0, Selection::bytes),
+            Change::SelectionTiles { tiles, .. } => selection_tiles_bytes(tiles),
             Change::Move { .. }
             | Change::Opacity { .. }
             | Change::Blend { .. }
@@ -223,6 +245,12 @@ pub(super) fn pixels_bytes(pixels: &LayerPixels) -> usize {
 /// Tile buffers of a mask.
 pub(super) fn mask_bytes(mask: &LayerMask) -> usize {
     mask.hidden.tile_count() * MASK_TILE_BYTES
+}
+
+/// Selection tiles held by a change, plus its entries.
+pub(super) fn selection_tiles_bytes(tiles: &[(TileCoord, Option<Tile<u8>>)]) -> usize {
+    std::mem::size_of_val(tiles)
+        + tiles.iter().filter(|(_, t)| t.is_some()).count() * MASK_TILE_BYTES
 }
 
 #[derive(Clone, Debug)]
@@ -572,6 +600,25 @@ impl Document {
                 }
                 std::mem::swap(&mut self.depth, other);
                 dirty
+            }
+            Change::SelectionSwap { other } => {
+                let current = self.selection.take().map(Box::new);
+                self.selection = other.take().map(|s| *s);
+                *other = current;
+                self.selection_revision += 1;
+                DirtyTiles::new()
+            }
+            Change::SelectionTiles { tiles, flip } => {
+                let selection = self
+                    .selection
+                    .as_mut()
+                    .expect("history replays on the state it recorded");
+                selection.swap_tiles(tiles);
+                if *flip {
+                    selection.invert();
+                }
+                self.selection_revision += 1;
+                DirtyTiles::new()
             }
             Change::MaskTiles { layer, tiles } => {
                 let layer = self.layer_mut_for_history(*layer);

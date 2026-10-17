@@ -1,6 +1,7 @@
 mod history;
 mod merge;
 mod parts;
+mod selecting;
 
 use std::num::NonZeroU32;
 
@@ -13,7 +14,7 @@ pub use self::merge::LowerMask;
 pub use self::parts::{DocumentParts, LayerParts, MAX_TILE_COORD, MaskParts, PartsError};
 use crate::layer::LayerMask;
 use crate::pixels::{TileBackup, tile_bytes};
-use crate::{BlendMode, LayerError, LayerId, LayerPixels, RasterLayer};
+use crate::{BlendMode, LayerError, LayerId, LayerPixels, RasterLayer, Selection};
 
 /// Prefix of the names the document gives new layers ("Layer 3").
 const DEFAULT_NAME: &str = "Layer";
@@ -75,6 +76,12 @@ pub struct Document {
     /// `None` once `u32::MAX` has been used.
     next_id: Option<NonZeroU32>,
     history: History,
+    /// The active selection (ADR 0024); never empty: an empty result is
+    /// no selection (reference 5C S17, S18). Not saved in files (S30).
+    selection: Option<Selection>,
+    /// Changes whenever the selection does (also by undo/redo), so views of
+    /// it (the outline) know when to rebuild. Not content.
+    selection_revision: u64,
 }
 
 impl Document {
@@ -97,6 +104,8 @@ impl Document {
             active_part: LayerPart::Pixels,
             next_id: NonZeroU32::MIN.checked_add(1),
             history: History::default(),
+            selection: None,
+            selection_revision: 0,
         }
     }
 
@@ -836,6 +845,19 @@ impl Document {
             depth: self.depth,
             active: self.active.get(),
             layers,
+            selection: self.selection.as_ref().map(|s| {
+                use std::hash::{DefaultHasher, Hash, Hasher};
+                let tiles = s
+                    .sorted_tiles()
+                    .into_iter()
+                    .map(|(c, t)| {
+                        let mut h = DefaultHasher::new();
+                        t.pixels().hash(&mut h);
+                        (c, h.finish())
+                    })
+                    .collect();
+                (s.is_inverted_storage(), tiles)
+            }),
         }
     }
 
@@ -869,6 +891,11 @@ impl Document {
                 || self.layers[self.active_index()].mask.is_some(),
             "the mask target needs a mask"
         );
+        if let Some(s) = &self.selection {
+            assert!(!s.is_empty(), "SEL: an empty selection is no selection");
+            assert_eq!(s.canvas(), self.bounds(), "SEL: clipped to this canvas");
+            s.check();
+        }
     }
 }
 
@@ -880,6 +907,8 @@ pub(crate) struct Digest {
     pub depth: PixelDepth,
     pub active: u32,
     pub layers: Vec<LayerDigest>,
+    /// The selection: inverted storage and stored tiles.
+    pub selection: Option<(bool, Vec<(TileCoord, u64)>)>,
 }
 
 #[cfg(test)]
