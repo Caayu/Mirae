@@ -982,6 +982,7 @@ fn history_label(action: HistoryAction) -> &'static str {
         HistoryAction::PaintMask => "paint mask",
         HistoryAction::ConvertDepth => "convert depth",
         HistoryAction::ImportLayer => "import image",
+        HistoryAction::MergeDown => "merge down",
     }
 }
 

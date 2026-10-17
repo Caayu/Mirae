@@ -88,6 +88,8 @@ pub enum HistoryAction {
     /// A layer added with pixels ([`Document::add_layer_with_pixels`],
     /// an imported image).
     ImportLayer,
+    /// A layer merged into the one below ([`Document::merge_down`]).
+    MergeDown,
 }
 
 impl HistoryAction {
@@ -97,7 +99,10 @@ impl HistoryAction {
     fn restores_active(self) -> bool {
         matches!(
             self,
-            HistoryAction::AddLayer | HistoryAction::RemoveLayer | HistoryAction::ImportLayer
+            HistoryAction::AddLayer
+                | HistoryAction::RemoveLayer
+                | HistoryAction::ImportLayer
+                | HistoryAction::MergeDown
         )
     }
 }
@@ -250,10 +255,11 @@ pub(super) struct History {
     limits: HistoryLimits,
     /// Sum of `cost` over both stacks.
     reserved: usize,
-    /// Layer whose opacity edits still merge into the newest step. Broken
-    /// by any other recorded step, undo, redo or a change of the active
-    /// layer (reference observations U14–U17).
-    pub(super) opacity_chain: Option<LayerId>,
+    /// The kind of edit (opacity or rename) and the layer whose further
+    /// edits of that kind still merge into the newest step. Broken by any
+    /// other recorded step, undo, redo or a change of the active layer
+    /// (reference observations U14–U17; renames: parity record 5B, RN4).
+    pub(super) chain: Option<(HistoryAction, LayerId)>,
     /// Last serial handed to a step.
     serial: u64,
     /// Serial of the newest step dropped from the undo end (0 if none):
@@ -284,7 +290,7 @@ impl History {
             };
             self.reserved -= dropped.cost;
             if self.undo.is_empty() {
-                self.opacity_chain = None;
+                self.chain = None;
             }
         }
     }
@@ -303,7 +309,7 @@ impl Document {
             self.active = step.active_before;
         }
         self.keep_target_valid();
-        self.history.opacity_chain = None;
+        self.history.chain = None;
         self.history.redo.push(step);
         Some(dirty)
     }
@@ -320,7 +326,7 @@ impl Document {
             self.active = step.active_after;
         }
         self.keep_target_valid();
-        self.history.opacity_chain = None;
+        self.history.chain = None;
         self.history.undo.push_back(step);
         Some(dirty)
     }
@@ -410,7 +416,7 @@ impl Document {
             active_after: self.active,
             cost,
         });
-        h.opacity_chain = None;
+        h.chain = None;
         h.enforce();
     }
 
@@ -443,14 +449,13 @@ impl Document {
         }
     }
 
-    /// Whether a new opacity value for `id` merges into the newest step.
-    pub(super) fn opacity_merges(&self, id: LayerId) -> bool {
+    /// Whether a new `action` edit (opacity or rename) of `id` merges into
+    /// the newest step.
+    pub(super) fn chain_merges(&self, action: HistoryAction, id: LayerId) -> bool {
         let h = &self.history;
-        h.opacity_chain == Some(id)
+        h.chain == Some((action, id))
             && h.redo.is_empty()
-            && h.undo
-                .back()
-                .is_some_and(|s| s.action == HistoryAction::Opacity)
+            && h.undo.back().is_some_and(|s| s.action == action)
     }
 
     /// Swaps a change's stored state with the document's. Returns the

@@ -36,6 +36,8 @@ enum Edit {
     AlphaLock(usize, bool),
     /// Convert to 16 bits (`true`) or 8 bits.
     Convert(bool),
+    /// Merge down; `true` keeps an enabled lower mask.
+    Merge(usize, bool),
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +67,7 @@ fn hop() -> impl Strategy<Value = HOp> {
         1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Edit::Clip(i, v)),
         1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Edit::AlphaLock(i, v)),
         1 => any::<bool>().prop_map(Edit::Convert),
+        2 => (any::<usize>(), any::<bool>()).prop_map(|(i, k)| Edit::Merge(i, k)),
     ];
     prop_oneof![
         6 => edit.prop_map(HOp::Edit),
@@ -155,6 +158,23 @@ fn edit(d: &mut Document, removed: &mut Vec<LayerId>, e: &Edit) -> Result<(), La
             });
             Ok(())
         }
+        Edit::Merge(i, keep) => {
+            let id = pick(d, removed, i);
+            let count = d.layer_count();
+            let mask = if keep {
+                crate::LowerMask::Keep
+            } else {
+                crate::LowerMask::Apply
+            };
+            let r = ok(d.merge_down(id, mask));
+            if r.is_ok() {
+                // MD2: exactly one layer fewer; the merged one is active.
+                assert_eq!(d.layer_count(), count - 1);
+                assert!(d.layer(id).is_none());
+                removed.push(id);
+            }
+            r
+        }
     }
 }
 
@@ -201,7 +221,7 @@ proptest! {
         let mut d = Document::new(1024, 256);
         let mut removed = Vec::new();
         let (mut past, mut future): (Vec<Entry>, Vec<Entry>) = (Vec::new(), Vec::new());
-        let mut chain: Option<u32> = None;
+        let mut chain: Option<(bool, u32)> = None;
         // Every moment seen: equal revisions must mean equal content (a
         // modified document never looks saved).
         let mut seen: Vec<(crate::Revision, Digest)> = vec![(d.revision(), d.digest())];
@@ -246,18 +266,21 @@ proptest! {
                             let id = pick(&d, &removed, *i).get();
                             set_visible_everywhere([&mut past, &mut future], id, *v);
                         }
-                        (Edit::Opacity(i, _), Ok(())) if changed => {
+                        // Consecutive opacity edits, and consecutive
+                        // renames, of one layer merge (4B U14–U17, 5B RN4).
+                        (Edit::Opacity(i, _) | Edit::Rename(i, _), Ok(())) if changed => {
                             let id = pick(&d, &removed, *i).get();
-                            if chain != Some(id) {
+                            let link = (matches!(e, Edit::Rename(..)), id);
+                            if chain != Some(link) {
                                 past.push(Entry { active_before: before.active, active_after: after.active, state: before, restores: false });
                                 future.clear();
                             }
-                            chain = Some(id);
+                            chain = Some(link);
                         }
                         // Paint is always a step (one call = one stroke);
                         // the rest only when they changed something.
                         (Edit::Paint(..) | Edit::PaintMask(..), Ok(())) | (_, Ok(())) if changed || matches!(e, Edit::Paint(..) | Edit::PaintMask(..)) => {
-                            let restores = matches!(e, Edit::Add(..) | Edit::Remove(_));
+                            let restores = matches!(e, Edit::Add(..) | Edit::Remove(_) | Edit::Merge(..));
                             past.push(Entry { active_before: before.active, active_after: after.active, state: before, restores });
                             future.clear();
                             chain = None;

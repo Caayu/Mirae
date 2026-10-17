@@ -320,6 +320,35 @@ fn opacity_edits_merge_until_something_interrupts_them() {
 }
 
 #[test]
+fn consecutive_renames_of_one_layer_are_one_step() {
+    // Reference (parity record 5B, RN4): renaming a layer twice in a row
+    // undoes in one step; a step in between separates them.
+    let mut d = Document::new(512, 512);
+    let l1 = d.active_layer();
+    let l2 = d.add_layer(Placement::Top).unwrap();
+    let base = d.history_len();
+    d.set_name(l2, "first").unwrap();
+    d.set_name(l2, "second").unwrap();
+    assert_eq!(d.history_len(), base + 1);
+    d.undo().unwrap();
+    assert_eq!(d.layer(l2).unwrap().name(), "Layer 2");
+    d.redo().unwrap();
+    assert_eq!(d.layer(l2).unwrap().name(), "second");
+    // Separated by another step: two steps.
+    d.set_name(l2, "third").unwrap();
+    d.set_locked(l2, true).unwrap();
+    d.set_name(l2, "fourth").unwrap();
+    assert_eq!(d.history_len(), base + 4);
+    d.undo().unwrap();
+    assert_eq!(d.layer(l2).unwrap().name(), "third");
+    // An opacity edit of the same layer does not join a rename chain, and
+    // renaming another layer is another step.
+    d.set_name(l1, "a").unwrap();
+    d.set_name(l2, "b").unwrap();
+    assert_eq!(d.history_len(), base + 5);
+}
+
+#[test]
 fn clearing_moves_the_surface_into_history() {
     let mut d = Document::new(1024, 1024);
     let l = d.active_layer();

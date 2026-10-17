@@ -37,6 +37,8 @@ enum Op {
     Target(bool),
     /// Convert to 16 bits (`true`) or 8 bits.
     Convert(bool),
+    /// Merge down; `true` keeps an enabled lower mask.
+    Merge(usize, bool),
 }
 
 fn op() -> impl Strategy<Value = Op> {
@@ -64,6 +66,7 @@ fn op() -> impl Strategy<Value = Op> {
         1 => (any::<usize>(), any::<bool>()).prop_map(|(i, v)| Op::AlphaLock(i, v)),
         1 => any::<bool>().prop_map(Op::Target),
         1 => any::<bool>().prop_map(Op::Convert),
+        2 => (any::<usize>(), any::<bool>()).prop_map(|(i, k)| Op::Merge(i, k)),
     ]
 }
 
@@ -375,6 +378,48 @@ fn step(
             let model = m.unlocked(id).map(|i| m.layers[i].alpha_locked = v);
             (d.set_alpha_locked(id, v), model)
         }
+        Op::Merge(i, keep) => {
+            let id = pick(d, removed, i);
+            let model = m.find(id).and_then(|ti| {
+                let bi = ti.checked_sub(1).ok_or(LayerError::NoLayerBelow(id))?;
+                for l in [&m.layers[ti], &m.layers[bi]] {
+                    let lid = d.find_layer(l.id).unwrap();
+                    if l.locked {
+                        return Err(LayerError::Locked(lid));
+                    }
+                    if !l.visible {
+                        return Err(LayerError::Hidden(lid));
+                    }
+                }
+                let top = m.layers.remove(ti);
+                let bottom = &mut m.layers[bi];
+                // The upper pixel lands unless its opacity is 0, its mask
+                // hides it (`PaintMask` hides exactly the painted pixel) or
+                // it is clipped to an empty base.
+                let lands = top.painted
+                    && top.opacity > 0.0
+                    && top.mask != Some((true, true))
+                    && !(top.clipped && !bottom.clipped && !bottom.painted);
+                bottom.painted |= lands;
+                bottom.opacity = 1.0;
+                if !keep && bottom.mask.is_some_and(|(enabled, _)| enabled) {
+                    bottom.mask = None;
+                }
+                m.active = bottom.id;
+                m.on_mask = false;
+                Ok(())
+            });
+            let mask = if keep {
+                crate::LowerMask::Keep
+            } else {
+                crate::LowerMask::Apply
+            };
+            let doc = ok(d.merge_down(id, mask));
+            if doc.is_ok() {
+                removed.push(id);
+            }
+            (doc, model)
+        }
         Op::Target(mask) => {
             let active = d.active_layer();
             let model = if !mask {
@@ -458,6 +503,7 @@ proptest! {
             }
             let touched = match *op {
                 Op::Paint(i, _) | Op::Clear(i) => Some(pick(&d, &removed, i)),
+                Op::Merge(..) => Some(d.active_layer()),
                 _ => None,
             };
             for (id, ptr) in buffers(&d) {

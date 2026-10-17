@@ -71,10 +71,10 @@ Added in phase 4B (ADR 0015). Unit tests in
 | H5 | Undo and redo copy no tile: buffers, surfaces and layers are swapped. | `undo_and_redo_swap_tiles_instead_of_copying_them`, `clearing_moves_the_surface_into_history`, `removed_layers_come_back_with_their_id_position_and_pixels` (buffer addresses) |
 | H6 | Every public mutation is recorded, except the documented non-historical `set_active_layer`, `set_active_part` and `set_visible`; no-ops and refused calls record nothing. | Privacy (history is a private submodule of `document`); `every_recorded_mutation_is_one_step_and_the_others_none` |
 | H7 | One `modify_tiles` call (one stroke) is one step. | `stroke_undo_redo_is_bit_exact_and_restores_absent_tiles`, property test |
-| H8 | Consecutive opacity edits of one layer form one step until something else is recorded, undone/redone, or the active layer changes (reference behaviour). | `opacity_edits_merge_until_something_interrupts_them`, property test |
+| H8 | Consecutive opacity edits of one layer form one step until something else is recorded, undone/redone, or the active layer changes (reference behaviour); since 5B consecutive renames of one layer do too (reference RN4, ADR 0023). | `opacity_edits_merge_until_something_interrupts_them`, `consecutive_renames_of_one_layer_are_one_step`, property test |
 | H9 | A tile absent before a step is absent again after undoing it. | `stroke_undo_redo_is_bit_exact_and_restores_absent_tiles`, property test (digests list tiles) |
 | H10 | A removed layer restored by undo has exactly its old `LayerId`, position, properties and pixels. | `removed_layers_come_back_with_their_id_position_and_pixels`, property test |
-| H11 | Undo/redo of add/remove steps restores the active layer recorded with the step; other undo/redo keep the current selection. | `active_layer_after_undo_follows_the_reference`, property test |
+| H11 | Undo/redo of add/remove (and, since 5B, merge-down) steps restores the active layer recorded with the step; other undo/redo keep the current selection. | `active_layer_after_undo_follows_the_reference`, property test |
 | H12 | `Document::revision` identifies the persistent content: equal revisions mean equal content; undo or redo back to a state returns its revision (serials are never reused; dropped steps move the base); merged opacity edits and non-recorded persistent changes (visibility) give new revisions; selecting a layer or the edit target does not (reference F2, F3). | `…::history::tests::undo_and_redo_return_to_the_saved_revision`, `…::merged_opacity_edits_are_new_revisions`, `…::visibility_is_a_modification_and_selection_is_not`, `…::dropped_steps_never_make_an_older_revision_reappear`, `history_matches_a_stack_of_snapshots` (equal revisions ⇒ equal content) |
 
 ## Storage and compositing
@@ -185,6 +185,23 @@ strokes × free and preserved alpha × Normal/Multiply × unclipped,
 clipped, on the base × 8 and 16 bits: 336 cases within 1/255). Colour
 state is not document state: nothing in COL1–COL8 touches the history
 (H6) or the file format (IO1).
+
+## Merge down and layer workflow (phase 5B, ADR 0023)
+
+Also checked by the layer-stack model test and the history property
+test, which include random merges (succeeding and refused).
+
+| # | Invariant | Protected by |
+|---|---|---|
+| MD1 | Merging composes the pair alone over transparency, as the reference does: the merged layer shows exactly what the two layers showed **alone** (within 1/255 after the single quantization); with the merged layer in the stack the picture is therefore unchanged where nothing visible lies under the pair's translucent pixels or both layers blend Normal, and changes exactly as in the reference where a non-Normal pair met layers below or the paper, a lower mask is kept, or a clipping base is merged down. | `merge_parity.rs` (22 measured scenarios, both depths), `…::merging_keeps_the_picture_where_the_reference_does` |
+| MD2 | A successful merge removes exactly one layer (the upper one, whose id is never reused) and leaves the lower one active. | `merge::tests::the_lower_layer_keeps_its_identity_and_the_upper_one_goes`, both property models (`Merge` ops) |
+| MD3 | A merge is one history step; undo restores both layers (ids, order, pixels, masks, properties) and the active layer bit for bit, redo the merged state. | `merge::tests::merging_is_one_step_and_undo_restores_both_layers_exactly`, `history_matches_a_stack_of_snapshots` |
+| MD4 | A refused merge (no layer below, a locked or hidden layer) changes nothing, history included. | `merge::tests::refusals_change_nothing`, both property models |
+| MD5 | Merging keeps the document's depth and quantizes once at it: 16-bit documents never pass through 8 bits. | `merge::tests::sixteen_bit_precision_survives_the_merge`, `merge_parity.rs` at 16 bits |
+| MD6 | The paper never enters a merged layer: pixels transparent in both layers stay transparent, and blend layers merge over transparency. | `merge::tests::the_paper_is_never_merged_in`, `merge_parity.rs` (`md_top_screen_op60_paper`) |
+| MD7 | A merge's history step holds the upper layer and only the lower tiles that changed. | `merge::tests::history_holds_only_the_changed_tiles_and_the_upper_layer` |
+| RN1 | Renaming changes only the name, is allowed on locked layers, and is recorded; refusing nothing else. | `document::tests::*`, `consecutive_renames_of_one_layer_are_one_step`, property models |
+| RN2 | Consecutive renames of one layer are one step (H8). | `consecutive_renames_of_one_layer_are_one_step`, `history_matches_a_stack_of_snapshots` |
 
 ## Integration (phase 4G)
 

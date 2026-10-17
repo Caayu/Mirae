@@ -15,8 +15,10 @@ pub enum LayerError {
     LastLayer,
     /// The layer is locked against this change.
     Locked(LayerId),
-    /// Hidden layers cannot be painted on.
+    /// Hidden layers cannot be painted on or merged.
     Hidden(LayerId),
+    /// The layer is the bottom one: there is nothing to merge it into.
+    NoLayerBelow(LayerId),
     /// Opacity must be a finite number.
     InvalidOpacity,
     /// Every layer id has been used once (ids are never reused).
@@ -45,6 +47,7 @@ impl fmt::Display for LayerError {
             LayerError::LastLayer => f.write_str("the last layer cannot be removed"),
             LayerError::Locked(id) => write!(f, "{id} is locked"),
             LayerError::Hidden(id) => write!(f, "{id} is hidden"),
+            LayerError::NoLayerBelow(id) => write!(f, "there is no layer below {id}"),
             LayerError::InvalidOpacity => f.write_str("opacity must be a finite number"),
             LayerError::IdsExhausted => f.write_str("no layer ids left in this document"),
             LayerError::NoMask(id) => write!(f, "{id} has no mask"),

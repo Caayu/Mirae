@@ -1,4 +1,5 @@
 mod history;
+mod merge;
 mod parts;
 
 use std::num::NonZeroU32;
@@ -8,6 +9,7 @@ use tela_color::{PixelDepth, Rgba, StoragePixel};
 
 use self::history::{Change, History, layer_bytes, mask_bytes, pixels_bytes};
 pub use self::history::{HistoryAction, HistoryLimits, Revision};
+pub use self::merge::LowerMask;
 pub use self::parts::{DocumentParts, LayerParts, MAX_TILE_COORD, MaskParts, PartsError};
 use crate::layer::LayerMask;
 use crate::pixels::{TileBackup, tile_bytes};
@@ -182,7 +184,7 @@ impl Document {
     pub fn set_active_layer(&mut self, id: LayerId) -> Result<(), LayerError> {
         self.require(id)?;
         if self.active != id {
-            self.history.opacity_chain = None;
+            self.history.chain = None;
         }
         self.active = id;
         self.active_part = LayerPart::Pixels;
@@ -355,7 +357,7 @@ impl Document {
             return Ok(DirtyTiles::new());
         }
         self.layers[i].opacity = opacity;
-        if self.opacity_merges(id) {
+        if self.chain_merges(HistoryAction::Opacity, id) {
             // The merged step now leads elsewhere (a new revision).
             self.renew_newest_step();
         } else {
@@ -364,7 +366,7 @@ impl Document {
                 other: old,
             };
             self.record(HistoryAction::Opacity, vec![change], self.active, 0);
-            self.history.opacity_chain = Some(id);
+            self.history.chain = Some((HistoryAction::Opacity, id));
         }
         Ok(self.layers[i].shown_tiles())
     }
@@ -389,7 +391,15 @@ impl Document {
         Ok(self.layers[i].shown_tiles())
     }
 
-    /// Renames a layer. Allowed on locked layers.
+    /// Renames a layer. Allowed on locked layers (reference, 4B U11 and
+    /// 5B RN6). The document stores any name it is given; the empty-name
+    /// and length rules of the rename field belong to the UI (5B RN3,
+    /// RN5).
+    ///
+    /// Consecutive renames of the same layer merge into one history step,
+    /// like opacity edits, until something else is recorded, undone or
+    /// redone, or the active layer changes (reference, parity record 5B,
+    /// RN4).
     pub fn set_name(&mut self, id: LayerId, name: impl Into<String>) -> Result<(), LayerError> {
         let i = self.require(id)?;
         let name = name.into();
@@ -398,11 +408,18 @@ impl Document {
         }
         let cost = name.len().max(self.layers[i].name.len());
         let old = std::mem::replace(&mut self.layers[i].name, name);
-        let change = Change::Name {
-            layer: id,
-            other: old,
-        };
-        self.record(HistoryAction::Rename, vec![change], self.active, cost);
+        if self.chain_merges(HistoryAction::Rename, id) {
+            // The merged step keeps the name from before the chain and now
+            // leads to a new state.
+            self.renew_newest_step();
+        } else {
+            let change = Change::Name {
+                layer: id,
+                other: old,
+            };
+            self.record(HistoryAction::Rename, vec![change], self.active, cost);
+            self.history.chain = Some((HistoryAction::Rename, id));
+        }
         Ok(())
     }
 

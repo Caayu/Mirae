@@ -7,3 +7,4 @@
 cc 8b5c7c5b1ba7958aea1cf366c95ae419f086f6dacc3b531e5029b0aafcd212bb # shrinks to ops = [Edit(Add(0, 0)), Edit(Add(1, 0)), Edit(Add(0, 0)), Edit(Activate(0)), Undo, Edit(Activate(14914386939016)), Redo, Undo]
 cc f35d19c3261f484d6b79a61ae79e778917bc1ef1c9f13e1f2cb68975a8275bfb # shrinks to ops = [Edit(Opacity(0, 0)), Redo, Edit(Opacity(0, 1))]
 cc c2bc06af3aca1cf3470193ecd3384948f5ab0f8fdd2c01cdef68069c9a99b205 # shrinks to ops = [Edit(Opacity(0, 0)), Edit(Opacity(0, 1))]
+cc 7010b4cc70662e59dba063f0711104071f2436e13a466c099515c6af1f151dab # shrinks to ops = [Edit(Rename(0, 0)), Edit(Rename(0, 1))]
