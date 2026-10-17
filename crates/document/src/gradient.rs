@@ -23,8 +23,8 @@
 //! shapes the reference lacks.
 
 use tela_canvas::{IRect, TILE_SIZE, TileCoord};
-use tela_color::gradient::{ColorRamp, GradientStops, Mixing};
-use tela_color::{PremulRgba, Rgba, StoragePixel};
+use tela_color::gradient::{ColorRamp, GradientStops, Mixing, RampTable};
+use tela_color::{PremulRgba, StoragePixel};
 
 #[cfg(test)]
 mod parity;
@@ -127,6 +127,8 @@ pub enum GradientPaint {
 pub struct Gradient {
     geometry: GradientGeometry,
     ramp: ColorRamp,
+    /// The ramp sampled for speed (within half a 16-bit level).
+    table: RampTable,
     extend: GradientExtend,
     dither: bool,
     /// Precomputed per shape (see `Gradient::position`).
@@ -183,9 +185,11 @@ impl Gradient {
                 width: 0.0,
             },
         };
+        let ramp = ColorRamp::new(stops, mixing);
         Self {
             geometry,
-            ramp: ColorRamp::new(stops, mixing),
+            table: RampTable::new(&ramp),
+            ramp,
             extend,
             dither,
             frame,
@@ -249,40 +253,88 @@ impl Gradient {
     /// ([`GradientExtend::Repeat`], the angular seam).
     pub fn sample(&self, x: i32, y: i32) -> PremulRgba {
         let (t, w) = self.position(f64::from(x) + 0.5, f64::from(y) + 0.5);
-        if !t.is_finite() {
-            return PremulRgba::TRANSPARENT;
-        }
-        let angular = self.geometry.shape == GradientShape::Angular;
-        match (self.extend, angular) {
-            (GradientExtend::Reflect, true) => self.at(1.0 - (2.0 * t - 1.0).abs()),
-            (GradientExtend::Reflect, false) => {
-                let r = t.rem_euclid(2.0);
-                self.at(if r > 1.0 { 2.0 - r } else { r })
-            }
-            (GradientExtend::Repeat, _) | (_, true) => self.wrapped(t, w),
-            (GradientExtend::Clamp, false) => self.at(t),
-            (GradientExtend::Empty, false) => {
-                // Area of the pixel's footprint `[t − w/2, t + w/2]` inside
-                // `[0, 1]` (GD14: a boundary through the centre covers ½).
-                let (lo, hi) = (t - w / 2.0, t + w / 2.0);
-                let inside = if w > 0.0 {
-                    ((hi.min(1.0) - lo.max(0.0)) / w).clamp(0.0, 1.0)
-                } else if (0.0..=1.0).contains(&t) {
-                    1.0
-                } else {
-                    0.0
-                };
-                if inside <= 0.0 {
-                    return PremulRgba::TRANSPARENT;
-                }
-                self.at(t).scale(inside as f32)
-            }
+        self.shade(t, w)
+    }
+
+    /// The paint at position `t` (before the extend rule) where `t` changes
+    /// by `w` over a pixel.
+    #[inline]
+    fn shade(&self, t: f64, w: f64) -> PremulRgba {
+        (self.shader())(self, t, w)
+    }
+
+    /// The extend rule as a function, chosen once per tile so that the
+    /// pixel loops are monomorphized ([`Gradient::render_tile`]) and
+    /// [`Gradient::sample`] runs exactly the same code.
+    fn shader(&self) -> Shader {
+        match (self.extend, self.geometry.shape == GradientShape::Angular) {
+            (GradientExtend::Reflect, true) => Gradient::shade_mirrored_turn,
+            (GradientExtend::Reflect, false) => Gradient::shade_reflect,
+            (GradientExtend::Repeat, _) | (_, true) => Gradient::shade_wrap,
+            (GradientExtend::Clamp, false) => Gradient::shade_clamp,
+            (GradientExtend::Empty, false) => Gradient::shade_empty,
         }
     }
 
+    #[inline]
+    fn shade_clamp(&self, t: f64, _w: f64) -> PremulRgba {
+        if !t.is_finite() {
+            return PremulRgba::TRANSPARENT;
+        }
+        self.at(t)
+    }
+
+    #[inline]
+    fn shade_reflect(&self, t: f64, _w: f64) -> PremulRgba {
+        if !t.is_finite() {
+            return PremulRgba::TRANSPARENT;
+        }
+        let r = t.rem_euclid(2.0);
+        self.at(if r > 1.0 { 2.0 - r } else { r })
+    }
+
+    /// An angular gradient mirrored around the turn (no seam).
+    #[inline]
+    fn shade_mirrored_turn(&self, t: f64, _w: f64) -> PremulRgba {
+        if !t.is_finite() {
+            return PremulRgba::TRANSPARENT;
+        }
+        self.at(1.0 - (2.0 * t - 1.0).abs())
+    }
+
+    #[inline]
+    fn shade_wrap(&self, t: f64, w: f64) -> PremulRgba {
+        if !t.is_finite() {
+            return PremulRgba::TRANSPARENT;
+        }
+        self.wrapped(t, w)
+    }
+
+    #[inline]
+    fn shade_empty(&self, t: f64, w: f64) -> PremulRgba {
+        if !t.is_finite() {
+            return PremulRgba::TRANSPARENT;
+        }
+        // Area of the pixel's footprint `[t − w/2, t + w/2]` inside
+        // `[0, 1]` (GD14: a boundary through the centre covers ½).
+        let (lo, hi) = (t - w / 2.0, t + w / 2.0);
+        let inside = if w > 0.0 {
+            ((hi.min(1.0) - lo.max(0.0)) / w).clamp(0.0, 1.0)
+        } else if (0.0..=1.0).contains(&t) {
+            1.0
+        } else {
+            0.0
+        };
+        if inside <= 0.0 {
+            return PremulRgba::TRANSPARENT;
+        }
+        self.at(t).scale(inside as f32)
+    }
+
     /// The ramp at `t` (clamped), premultiplied.
+    #[inline]
     fn at(&self, t: f64) -> PremulRgba {
-        premultiply(self.ramp.eval(t as f32))
+        self.table.premultiplied(t as f32)
     }
 
     /// The ramp at `t`'s fractional part; where the pixel's footprint
@@ -405,19 +457,59 @@ impl Gradient {
             return;
         }
         let (ox, oy) = c.origin();
-        for (i, o) in out.iter_mut().enumerate().take(N) {
-            let (x, y) = (
-                (i % TILE_SIZE as usize) as i32,
-                (i / TILE_SIZE as usize) as i32,
-            );
-            *o = self.sample(ox + x, oy + y);
+        let rows = out[..N].as_chunks_mut::<{ TILE_SIZE as usize }>().0;
+        match (self.extend, self.geometry.shape == GradientShape::Angular) {
+            (GradientExtend::Reflect, true) => {
+                self.fill_rows(rows, ox, oy, Gradient::shade_mirrored_turn)
+            }
+            (GradientExtend::Reflect, false) => {
+                self.fill_rows(rows, ox, oy, Gradient::shade_reflect)
+            }
+            (GradientExtend::Repeat, _) | (_, true) => {
+                self.fill_rows(rows, ox, oy, Gradient::shade_wrap)
+            }
+            (GradientExtend::Clamp, false) => self.fill_rows(rows, ox, oy, Gradient::shade_clamp),
+            (GradientExtend::Empty, false) => self.fill_rows(rows, ox, oy, Gradient::shade_empty),
+        }
+    }
+
+    /// Every pixel of a tile at `(ox, oy)` through `shade`, monomorphized
+    /// per extend rule; the same arithmetic as [`Gradient::sample`]
+    /// (bit-identical, tested), with a linear position's row part hoisted.
+    fn fill_rows<S: Fn(&Gradient, f64, f64) -> PremulRgba>(
+        &self,
+        rows: &mut [[PremulRgba; TILE_SIZE as usize]],
+        ox: i32,
+        oy: i32,
+        shade: S,
+    ) {
+        let f = self.frame;
+        match self.geometry.shape {
+            GradientShape::Linear | GradientShape::Reflected => {
+                let reflected = self.geometry.shape == GradientShape::Reflected;
+                for (j, row) in rows.iter_mut().enumerate() {
+                    let ky = (f64::from(oy + j as i32) + 0.5 - f.origin[1]) * f.k[1];
+                    for (i, o) in row.iter_mut().enumerate() {
+                        let t = (f64::from(ox + i as i32) + 0.5 - f.origin[0]) * f.k[0] + ky;
+                        *o = shade(self, if reflected { t.abs() } else { t }, f.width);
+                    }
+                }
+            }
+            _ => {
+                for (j, row) in rows.iter_mut().enumerate() {
+                    let y = f64::from(oy + j as i32) + 0.5;
+                    for (i, o) in row.iter_mut().enumerate() {
+                        let (t, w) = self.position(f64::from(ox + i as i32) + 0.5, y);
+                        *o = shade(self, t, w);
+                    }
+                }
+            }
         }
     }
 }
 
-fn premultiply(c: Rgba) -> PremulRgba {
-    PremulRgba::new(c.r * c.a, c.g * c.a, c.b * c.a, c.a)
-}
+/// An extend rule as a function of the position and its change per pixel.
+type Shader = fn(&Gradient, f64, f64) -> PremulRgba;
 
 /// How a gradient's paint `s` (premultiplied, edge coverage included)
 /// meets one pixel `d` whose selection coverage is `sel` (`0..=1`): the

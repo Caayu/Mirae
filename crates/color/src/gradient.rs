@@ -171,8 +171,14 @@ impl ColorRamp {
             return self.stop(i - 1);
         }
         let (p0, p1) = (self.positions[i - 1], self.positions[i]);
-        let e = ease((t - p0) / (p1 - p0));
-        let ((c0, a0), (c1, a1)) = (self.values[i - 1], self.values[i]);
+        self.segment(i - 1, (t - p0) / (p1 - p0))
+    }
+
+    /// The colour at `u` (`0..=1`) along segment `i` (from stop `i` to
+    /// stop `i + 1`), eased.
+    fn segment(&self, i: usize, u: f32) -> Rgba {
+        let e = ease(u);
+        let ((c0, a0), (c1, a1)) = (self.values[i], self.values[i + 1]);
         let alpha = a0 + (a1 - a0) * e;
         // A transparent stop has no colour: the other end's is used
         // (GD11, GD13).
@@ -195,6 +201,80 @@ impl ColorRamp {
         let (c, a) = self.values[i];
         let [r, g, b] = from_space(c, self.mixing);
         Rgba::new(r, g, b, a)
+    }
+}
+
+/// Cells per segment of a [`RampTable`].
+const CELLS: usize = 4096;
+
+/// A [`ColorRamp`] sampled for speed: each segment between two stops is
+/// evaluated exactly at `CELLS + 1` evenly spaced points (premultiplied),
+/// and positions in between are interpolated linearly. Cells never cross a
+/// stop, so equal positions stay a hard edge; within a segment the curve
+/// is smooth (except where an OKLab mix is clamped to the gamut) and the
+/// interpolation stays within half a 16-bit level of the exact value
+/// (tested: at most ~5 · 10⁻⁶ against 7.6 · 10⁻⁶).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RampTable {
+    /// Stop positions; segment `i` runs from `positions[i]` to
+    /// `positions[i + 1]`.
+    positions: Vec<f32>,
+    /// `1 / width` of each segment (0 for an empty one).
+    inverse: Vec<f32>,
+    /// `CELLS + 1` premultiplied samples per segment, in order.
+    samples: Vec<[f32; 4]>,
+    first: [f32; 4],
+    last: [f32; 4],
+}
+
+fn premul(c: Rgba) -> [f32; 4] {
+    [c.r * c.a, c.g * c.a, c.b * c.a, c.a]
+}
+
+impl RampTable {
+    pub fn new(ramp: &ColorRamp) -> Self {
+        let positions = ramp.positions.clone();
+        let mut inverse = Vec::with_capacity(positions.len());
+        let segments = positions.len() - 1;
+        let mut samples = Vec::with_capacity(segments * (CELLS + 1));
+        for i in 0..segments {
+            let width = positions[i + 1] - positions[i];
+            inverse.push(if width > 0.0 { 1.0 / width } else { 0.0 });
+            // The segment's own values: at its end, the colour just before
+            // the next stop (not the next segment's, if it starts anew).
+            for k in 0..=CELLS {
+                samples.push(premul(ramp.segment(i, k as f32 / CELLS as f32)));
+            }
+        }
+        Self {
+            first: premul(ramp.stop(0)),
+            last: premul(ramp.stop(positions.len() - 1)),
+            positions,
+            inverse,
+            samples,
+        }
+    }
+
+    /// The premultiplied colour at `t` (as [`ColorRamp::eval`], to within
+    /// the table's accuracy).
+    #[inline]
+    pub fn premultiplied(&self, t: f32) -> crate::PremulRgba {
+        let t = unit(t);
+        let i = self.positions.partition_point(|&p| p <= t);
+        let v = if i == 0 {
+            self.first
+        } else if i == self.positions.len() {
+            self.last
+        } else {
+            let s = i - 1;
+            let x = (t - self.positions[s]) * self.inverse[s] * CELLS as f32;
+            let k = (x as usize).min(CELLS - 1);
+            let f = x - k as f32;
+            let a = self.samples[s * (CELLS + 1) + k];
+            let b = self.samples[s * (CELLS + 1) + k + 1];
+            [0, 1, 2, 3].map(|c| a[c] + (b[c] - a[c]) * f)
+        };
+        crate::PremulRgba::new(v[0], v[1], v[2], v[3])
     }
 }
 
@@ -324,6 +404,67 @@ mod tests {
         assert!((mid(Mixing::Standard) - 0.5).abs() < 1e-6);
         assert!((mid(Mixing::Linear) - srgb::from_linear(0.5)).abs() < 1e-5);
         assert!((mid(Mixing::Perceptual) - srgb::from_linear(0.125)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_table_is_within_half_a_16_bit_level() {
+        // Dark ramps (where linear light bends most), saturated colours,
+        // a narrow segment, equal positions and transparent stops.
+        let sets = [
+            vec![(0.0, Color::BLACK, 1.0), (1.0, Color::WHITE, 1.0)],
+            vec![(0.0, Color::BLACK, 1.0), (1.0, grey(0.02), 1.0)],
+            vec![
+                (0.0, Color::new(1.0, 0.0, 0.0), 1.0),
+                (1.0, Color::new(0.0, 0.0, 1.0), 1.0),
+            ],
+            vec![
+                (0.0, Color::new(0.1, 0.9, 0.2), 0.3),
+                (0.31, Color::new(0.9, 0.1, 0.7), 1.0),
+                (0.33, grey(0.0), 0.0),
+                (0.6, grey(0.6), 1.0),
+                (0.6, Color::new(0.0, 0.2, 1.0), 0.8),
+                (1.0, Color::WHITE, 0.0),
+            ],
+        ];
+        for mixing in [Mixing::Standard, Mixing::Linear, Mixing::Perceptual] {
+            for set in &sets {
+                let stops =
+                    GradientStops::new(set.iter().map(|&(p, c, o)| GradientStop::new(p, c, o)))
+                        .unwrap();
+                let ramp = ColorRamp::new(&stops, mixing);
+                let table = RampTable::new(&ramp);
+                let mut worst = 0.0f32;
+                for i in 0..=200_000 {
+                    let t = i as f32 / 200_000.0;
+                    let exact = ramp.eval(t);
+                    let fast = table.premultiplied(t);
+                    let e = [
+                        exact.r * exact.a,
+                        exact.g * exact.a,
+                        exact.b * exact.a,
+                        exact.a,
+                    ];
+                    for (x, y) in e.iter().zip([fast.r, fast.g, fast.b, fast.a]) {
+                        worst = worst.max((x - y).abs());
+                    }
+                }
+                // Half a 16-bit level; the largest misses are where an OKLab mix
+                // leaves the gamut and a channel is clamped (a kink).
+                assert!(worst < 0.5 / 65535.0, "{mixing:?} {set:?}: {worst}");
+            }
+        }
+        // Hard edges stay hard.
+        let edge = GradientStops::new([
+            GradientStop::new(0.0, Color::BLACK, 1.0),
+            GradientStop::new(0.5, Color::BLACK, 1.0),
+            GradientStop::new(0.5, Color::WHITE, 1.0),
+            GradientStop::new(1.0, Color::WHITE, 1.0),
+        ])
+        .unwrap();
+        let table = RampTable::new(&ColorRamp::new(&edge, Mixing::Linear));
+        assert_eq!(table.premultiplied(0.499_99).r, 0.0);
+        assert!(table.premultiplied(0.5).r > 0.9999);
+        assert_eq!(table.premultiplied(f32::NAN).r, 0.0);
     }
 
     #[test]

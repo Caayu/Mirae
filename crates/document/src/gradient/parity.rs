@@ -35,10 +35,7 @@ fn png(name: &str) -> Vec<[u8; 4]> {
     let frame = reader.next_frame(&mut buf).unwrap();
     assert_eq!((frame.width, frame.height), (W, H));
     assert_eq!(frame.color_type, png::ColorType::Rgba);
-    buf[..frame.buffer_size()]
-        .as_chunks::<4>()
-        .0
-        .to_vec()
+    buf[..frame.buffer_size()].as_chunks::<4>().0.to_vec()
 }
 
 /// The position `u` whose eased value is `e` (bisection).
