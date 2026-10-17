@@ -49,8 +49,11 @@ showed which structure the data has.
    alpha `min(1, αs + αb)` with the colour of rule 3 (premultiplied by the
    additive alpha). Every other mode keeps the union `αo`.
 5. All rules equal the W3C formula over an opaque backdrop and show the
-   source over a transparent one. The code takes the pre-5B expression
-   exactly when `αb ≥ 1`, so every composite over the paper (every tile
+   source over a transparent one. Over the paper the compositor calls a
+   W3C-only loop (`composite_opaque`), and the general loop treats
+   `αb ≥ 1 − 2⁻²⁰` as opaque (the union alpha over the paper can round to
+   0.99999994; the two rules differ by under 10⁻⁶ there), so every
+   composite over the paper (every tile
    on screen that contains a blend layer, every export with the paper,
    `blend_parity`, `clip_parity`, the blend sheet and the session golden)
    is unchanged **bit for bit**.
@@ -77,8 +80,9 @@ showed which structure the data has.
 - The paper still takes part in blending on screen (ADR 0016, 3): a
   composite over transparency with the paper put under it afterwards is
   **not** the composite over the paper when a blend layer draws.
-- Cost: one comparison per pixel on the opaque path; the translucent path
-  is a few more multiplications (measured in `blend_bench`, 5B).
+- Cost: none over the paper (`blend_bench` equal to 5A within noise; a
+  first version with a per-pixel `αb == 1` test cost up to 12 %); the
+  translucent path is a few more multiplications.
 - At a backdrop alpha of 1/255 the reference's **Normal** mode drops the
   backdrop's colour and alpha contribution entirely (an integer-rounding
   effect: colour within 1/255 premultiplied, up to 14/255 straight at
