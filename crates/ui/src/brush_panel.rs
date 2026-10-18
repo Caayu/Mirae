@@ -141,43 +141,43 @@ impl BrushPanel {
         egui::CollapsingHeader::new("Stroke")
             .default_open(true)
             .show(ui, |ui| {
-            let mut stroke = p.stroke.resolve(m.stroke);
-            ui.add(Slider::new(&mut stroke.stabilization, 0.0..=100.0).text("stabilization"));
-            ComboBox::from_label("stabilizer")
-                .selected_text(stroke.stabilizer.name())
-                .show_ui(ui, |ui| {
-                    for k in StabilizerKind::ALL {
-                        ui.selectable_value(&mut stroke.stabilizer, k, k.name());
-                    }
+                let mut stroke = p.stroke.resolve(m.stroke);
+                ui.add(Slider::new(&mut stroke.stabilization, 0.0..=100.0).text("stabilization"));
+                ComboBox::from_label("stabilizer")
+                    .selected_text(stroke.stabilizer.name())
+                    .show_ui(ui, |ui| {
+                        for k in StabilizerKind::ALL {
+                            ui.selectable_value(&mut stroke.stabilizer, k, k.name());
+                        }
+                    });
+                ComboBox::from_label("interpolation")
+                    .selected_text(stroke.interpolation.name())
+                    .show_ui(ui, |ui| {
+                        for k in InterpolationKind::ALL {
+                            ui.selectable_value(&mut stroke.interpolation, k, k.name());
+                        }
+                    });
+                p.stroke.edit_resolved(m.stroke, |s| *s = stroke);
+                ui.add(Slider::new(&mut p.taper.start, 0.0..=300.0).text("taper start px"));
+                ui.add(Slider::new(&mut p.taper.end, 0.0..=300.0).text("taper end px"));
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut p.airbrush.enabled, "airbrush");
+                    ui.add_enabled(
+                        p.airbrush.enabled,
+                        Slider::new(&mut p.airbrush.rate, 1.0..=400.0).text("dabs/s"),
+                    );
                 });
-            ComboBox::from_label("interpolation")
-                .selected_text(stroke.interpolation.name())
-                .show_ui(ui, |ui| {
-                    for k in InterpolationKind::ALL {
-                        ui.selectable_value(&mut stroke.interpolation, k, k.name());
-                    }
-                });
-            p.stroke.edit_resolved(m.stroke, |s| *s = stroke);
-            ui.add(Slider::new(&mut p.taper.start, 0.0..=300.0).text("taper start px"));
-            ui.add(Slider::new(&mut p.taper.end, 0.0..=300.0).text("taper end px"));
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut p.airbrush.enabled, "airbrush");
-                ui.add_enabled(
-                    p.airbrush.enabled,
-                    Slider::new(&mut p.airbrush.rate, 1.0..=400.0).text("dabs/s"),
-                );
-            });
-            let mut erase = p.compositing.mode == PaintMode::Erase;
-            if ui.checkbox(&mut erase, "erase").changed() {
-                p.compositing.mode = if erase {
-                    PaintMode::Erase
-                } else {
-                    PaintMode::Paint
-                };
-            }
+                let mut erase = p.compositing.mode == PaintMode::Erase;
+                if ui.checkbox(&mut erase, "erase").changed() {
+                    p.compositing.mode = if erase {
+                        PaintMode::Erase
+                    } else {
+                        PaintMode::Paint
+                    };
+                }
             });
 
-            egui::CollapsingHeader::new("Tip, scatter, texture").show(ui, |ui| {
+        egui::CollapsingHeader::new("Tip, scatter, texture").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.checkbox(&mut p.tip.flip_x, "flip X");
                 ui.checkbox(&mut p.tip.flip_y, "flip Y");
@@ -229,14 +229,14 @@ impl BrushPanel {
                 ui.add(Slider::new(&mut t.contrast, 0.0..=4.0).text("contrast"));
                 ui.add(Slider::new(&mut t.brightness, -1.0..=1.0).text("brightness"));
             }
-            });
+        });
 
-            egui::CollapsingHeader::new("Pressure curve").show(ui, |ui| {
-                style::hint(ui, "Device calibration, for every brush");
-                curve_editor(ui, m.pressure_curve, true, "pressure-curve");
-            });
+        egui::CollapsingHeader::new("Pressure curve").show(ui, |ui| {
+            style::hint(ui, "Device calibration, for every brush");
+            curve_editor(ui, m.pressure_curve, true, "pressure-curve");
+        });
 
-            egui::CollapsingHeader::new("Effectors").show(ui, |ui| {
+        egui::CollapsingHeader::new("Effectors").show(ui, |ui| {
             ComboBox::from_label("property")
                 .selected_text(self.edit.name())
                 .show_ui(ui, |ui| {
@@ -245,7 +245,7 @@ impl BrushPanel {
                     }
                 });
             effectors_editor(ui, self.edit.get_mut(&mut p.properties), self.edit);
-            });
+        });
         action
     }
 }
@@ -303,7 +303,7 @@ fn effectors_editor(ui: &mut Ui, prop: &mut BrushProperty, param: Param) {
 /// `text` with its first letter in capitals (labels of the parameter rows).
 fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
-    chars.next().map_or_else(String::new, |c| {
-        c.to_uppercase().chain(chars).collect()
-    })
+    chars
+        .next()
+        .map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
 }

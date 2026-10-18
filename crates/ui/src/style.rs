@@ -166,7 +166,11 @@ pub fn row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
 
 /// Muted explanatory text.
 pub fn hint(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).size(text::SMALL).color(color::TEXT_MUTED));
+    ui.label(
+        RichText::new(text)
+            .size(text::SMALL)
+            .color(color::TEXT_MUTED),
+    );
 }
 
 /// One choice among a few, shown side by side; returns the one clicked.

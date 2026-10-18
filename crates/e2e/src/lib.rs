@@ -446,7 +446,11 @@ impl Session {
             } else {
                 w.rect[3] < size[1] as f32 / 2.0
             };
-            let notches = if hidden_above || w.rect[1] < 0.0 { 1 } else { -1 };
+            let notches = if hidden_above || w.rect[1] < 0.0 {
+                1
+            } else {
+                -1
+            };
             self.wheel([x, size[1] as f32 / 2.0], notches);
             self.settle();
         }
@@ -539,6 +543,89 @@ impl Session {
         let b = self.doc_to_client(to[0], to[1]);
         self.drag(a, b, steps);
         self.step(&format!("drag document {from:?} -> {to:?}"));
+    }
+
+    /// A left drag through document points (a lasso, a curved stroke).
+    pub fn drag_path_doc(&mut self, points: &[[f32; 2]], steps_per_segment: usize) {
+        let Some(&first) = points.first() else {
+            return;
+        };
+        let a = self.doc_to_client(first[0], first[1]);
+        self.move_to(a[0], a[1]);
+        self.press(Button::Left);
+        let mut from = a;
+        for p in &points[1..] {
+            let to = self.doc_to_client(p[0], p[1]);
+            self.drag_moves(from, to, steps_per_segment);
+            from = to;
+        }
+        self.release(Button::Left);
+        self.step(&format!("drag through {} document points", points.len()));
+    }
+
+    /// Clicks a widget twice quickly (renaming a layer).
+    pub fn double_click(&mut self, s: &Sel) {
+        let w = self.reveal(s).unwrap_or_else(|e| panic!("{e}"));
+        let c = w.center();
+        // egui counts clicks less than 0.3 s apart as one series wherever
+        // they land: a click on another widget just before would turn
+        // this double click into a triple click.
+        sleep(Duration::from_millis(600));
+        self.move_to(c[0], c[1]);
+        for _ in 0..2 {
+            self.press(Button::Left);
+            self.release(Button::Left);
+        }
+        self.step(&format!("double-click {}", s.describe()));
+        self.settle();
+    }
+
+    /// Types `text` into a field (a text field or a number field, which
+    /// becomes editable when clicked), replacing what it held, and presses
+    /// Enter.
+    pub fn type_into(&mut self, s: &Sel, text: &str) {
+        let w = self.reveal(s).unwrap_or_else(|e| panic!("{e}"));
+        let c = w.center();
+        self.click_at(c[0], c[1]);
+        self.settle();
+        self.key(&[vk::CONTROL], vk::letter('a'));
+        win::type_text(text);
+        self.key(&[], vk::ENTER);
+        self.step(&format!("type {text:?} into {}", s.describe()));
+        self.settle();
+    }
+
+    /// Chooses an item of a combo box or menu: opens it, clicks the item.
+    pub fn choose(&mut self, opener: &Sel, item: &str) {
+        self.click(opener);
+        self.click(&sel(item));
+    }
+
+    /// The layers as the state lists them, bottom first.
+    pub fn layers(&self) -> Vec<Value> {
+        self.state()["document"]["layers"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The active layer's entry.
+    pub fn active_layer(&self) -> Value {
+        self.layers()
+            .into_iter()
+            .find(|l| l["active"] == true)
+            .unwrap_or(Value::Null)
+    }
+
+    /// A new empty document of `bits` (8 or 16) through the top bar's New
+    /// menu; answers "Don't Save" if asked about unsaved changes.
+    pub fn new_document(&mut self, bits: u32) {
+        self.click(&sel("New").role("Button"));
+        self.click(&sel(&format!("New {bits}-bit document")));
+        if self.state()["prompt"] == "unsaved" {
+            self.click(&sel("Don't Save"));
+        }
+        self.settle();
     }
 
     /// A synthetic-pen stroke between document points.
@@ -669,10 +756,8 @@ impl Session {
         let p = self.doc_to_client(x, y);
         let size = self.client_size();
         let m = 4.0;
-        let inside = p[0] >= m
-            && p[1] >= m
-            && p[0] < size[0] as f32 - m
-            && p[1] < size[1] as f32 - m;
+        let inside =
+            p[0] >= m && p[1] >= m && p[0] < size[0] as f32 - m && p[1] < size[1] as f32 - m;
         let covered = st["panels"].as_array().is_some_and(|a| {
             a.iter().any(|r| {
                 let r: Vec<f32> = r
@@ -778,6 +863,14 @@ impl Session {
             assert!(Instant::now() < deadline, "the app did not close");
             sleep(Duration::from_millis(200));
         }
+    }
+
+    /// The app's native dialogs (file dialogs) open now.
+    pub fn dialogs(&self) -> Vec<win::TopLevel> {
+        win::windows_of(self.child.id())
+            .into_iter()
+            .filter(|w| w.class == "#32770")
+            .collect()
     }
 
     pub fn exited(&mut self) -> bool {

@@ -90,7 +90,11 @@ impl App {
     /// handled since it was last written (an event that needs no frame).
     pub(super) fn e2e_idle(&mut self) {
         self.e2e_poll();
-        if self.e2e.as_ref().is_some_and(|e| e.input_ms != e.written_ms) {
+        if self
+            .e2e
+            .as_ref()
+            .is_some_and(|e| e.input_ms != e.written_ms)
+        {
             self.e2e_write_state();
         }
     }

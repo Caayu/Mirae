@@ -20,8 +20,7 @@ use std::time::{Duration, Instant};
 use tela_canvas::{DirtyTiles, TileCoord};
 use tela_color::PremulRgba;
 use tela_document::{
-    ComposeScratch, Document, FillTarget, Gradient, GradientPaint, LayerPart, Overlay,
-    OverlayPaint,
+    ComposeScratch, Document, FillTarget, Gradient, GradientPaint, LayerPart, Overlay, OverlayPaint,
 };
 
 /// Tiles each worker composes between two uploads.
@@ -249,6 +248,10 @@ mod tests {
         workers.composed.insert(b, 5);
         let mut tiles = vec![a, b, c];
         workers.order(&mut tiles, &visible);
-        assert_eq!(tiles, [c, b, a], "visible first; never composed before older");
+        assert_eq!(
+            tiles,
+            [c, b, a],
+            "visible first; never composed before older"
+        );
     }
 }

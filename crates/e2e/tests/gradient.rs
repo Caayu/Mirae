@@ -39,7 +39,10 @@ fn drag_and_compare(s: &mut Session, label: &str, a: [f32; 2], b: [f32; 2]) -> D
     let mut oracle = Oracle::new(&state);
     oracle.draw(&settings(&state), da, db);
     let points = grid(&state, 6);
-    let expected: Vec<[u8; 4]> = points.iter().map(|p| oracle.composite(p[0], p[1])).collect();
+    let expected: Vec<[u8; 4]> = points
+        .iter()
+        .map(|p| oracle.composite(p[0], p[1]))
+        .collect();
 
     s.move_to(pa[0], pa[1]);
     s.press(Button::Left);
@@ -73,7 +76,10 @@ fn drag_and_compare(s: &mut Session, label: &str, a: [f32; 2], b: [f32; 2]) -> D
     s.release(Button::Left);
     let st = s.settle();
     assert_eq!(st["gradient"]["session"], false, "{label}: the drag ended");
-    assert_eq!(st["document"]["undo"], "gradient", "{label}: one gradient step");
+    assert_eq!(
+        st["document"]["undo"], "gradient",
+        "{label}: one gradient step"
+    );
     s.shot(&format!("{label}-committed"));
     let mut document_wrong = 0;
     let mut screen_wrong = 0;
@@ -81,7 +87,9 @@ fn drag_and_compare(s: &mut Session, label: &str, a: [f32; 2], b: [f32; 2]) -> D
         let (got, _) = s.pixel(p[0], p[1]);
         if diff(got, *e) > 2 {
             document_wrong += 1;
-            s.step(&format!("{label}: document {p:?} is {got:?}, expected {e:?}"));
+            s.step(&format!(
+                "{label}: document {p:?} is {got:?}, expected {e:?}"
+            ));
         }
         let (x, y) = (p[0] as f32 + 0.5, p[1] as f32 + 0.5);
         if !s.canvas_visible(x, y) {
@@ -132,7 +140,11 @@ fn g_cycles_fill_and_gradient_and_the_panel_shows_the_tool() {
     let bucket = || sel("Fill").role("Button");
     assert_eq!(s.expect(&tool_button()).toggled, Some(false));
     s.key(&[], vk::letter('g'));
-    assert_eq!(s.settle()["tool"], "gradient", "the first G is the gradient");
+    assert_eq!(
+        s.settle()["tool"],
+        "gradient",
+        "the first G is the gradient"
+    );
     assert_eq!(s.expect(&tool_button()).toggled, Some(true));
     s.key(&[], vk::letter('g'));
     assert_eq!(s.settle()["tool"], "fill");
@@ -141,7 +153,11 @@ fn g_cycles_fill_and_gradient_and_the_panel_shows_the_tool() {
     s.key(&[], vk::letter('b'));
     assert_eq!(s.settle()["tool"], "brush");
     s.key(&[], vk::letter('g'));
-    assert_eq!(s.settle()["tool"], "fill", "G returns to the last of the two");
+    assert_eq!(
+        s.settle()["tool"],
+        "fill",
+        "G returns to the last of the two"
+    );
     s.click(&tool_button());
     assert_eq!(s.settle()["tool"], "gradient");
     s.shot("gradient-tool");
@@ -172,16 +188,28 @@ fn every_shape_and_end_draws_what_the_engine_draws_preview_included() {
         let label = format!("{shape}-{end}").to_lowercase();
         let d = drag_and_compare(&mut s, &label, a, b);
         if d.document_wrong > 0 {
-            failures.push(format!("{label}: {} document pixels differ", d.document_wrong));
+            failures.push(format!(
+                "{label}: {} document pixels differ",
+                d.document_wrong
+            ));
         }
         if d.preview_ms > 1500 {
-            failures.push(format!("{label}: preview incomplete after 1.5 s ({} ms)", d.preview_ms));
+            failures.push(format!(
+                "{label}: preview incomplete after 1.5 s ({} ms)",
+                d.preview_ms
+            ));
         }
         if d.preview_wrong > d.points / 10 {
-            failures.push(format!("{label}: preview wrong at {} points", d.preview_wrong));
+            failures.push(format!(
+                "{label}: preview wrong at {} points",
+                d.preview_wrong
+            ));
         }
         if d.screen_wrong > d.points / 10 {
-            failures.push(format!("{label}: screen wrong at {} points", d.screen_wrong));
+            failures.push(format!(
+                "{label}: screen wrong at {} points",
+                d.screen_wrong
+            ));
         }
         s.key(&[vk::CONTROL], vk::letter('z'));
         s.settle();
@@ -287,7 +315,10 @@ fn stops_edited_in_the_panel_reach_the_drawing() {
     s.type_text("FF0000");
     s.key(&[], vk::ENTER);
     let st = s.settle();
-    assert_eq!(st["colors"]["main"], "#FF0000", "the hex field set the colour");
+    assert_eq!(
+        st["colors"]["main"], "#FF0000",
+        "the hex field set the colour"
+    );
     s.click(&sel("Fixed").after("Stop 2 of 3"));
     let st = s.settle();
     assert_eq!(st["gradient"]["stops"][1]["color"], "#FF0000");
@@ -334,15 +365,26 @@ fn zoomed_rotated_and_panned_views_map_the_drag() {
     let before = s.settle()["view"]["to_screen"].clone();
     tela_e2e::win::key(vk::SPACE, true);
     std::thread::sleep(Duration::from_millis(80));
-    s.drag([centre[0], centre[1]], [centre[0] - 150.0, centre[1] + 80.0], 10);
+    s.drag(
+        [centre[0], centre[1]],
+        [centre[0] - 150.0, centre[1] + 80.0],
+        10,
+    );
     tela_e2e::win::key(vk::SPACE, false);
     let st = s.settle();
     assert!(st["view"]["rotation"].as_f64().unwrap().abs() > 0.4);
     assert_ne!(st["view"]["to_screen"], before, "the space drag panned");
-    assert_eq!(st["document"]["undo"], serde_json::Value::Null, "and drew nothing");
+    assert_eq!(
+        st["document"]["undo"],
+        serde_json::Value::Null,
+        "and drew nothing"
+    );
     s.click(&sel("Radial").after("Shape"));
     let d = drag_and_compare(&mut s, "rotated-radial", [1900.0, 1450.0], [2100.0, 1500.0]);
-    assert_eq!(d.document_wrong, 0, "the drag maps through the rotated view");
+    assert_eq!(
+        d.document_wrong, 0,
+        "the drag maps through the rotated view"
+    );
     s.click(&sel("Linear").after("Shape"));
     let d = drag_and_compare(&mut s, "rotated-linear", [1800.0, 1400.0], [2200.0, 1600.0]);
     assert_eq!(d.document_wrong, 0);

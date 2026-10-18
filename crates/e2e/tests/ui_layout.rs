@@ -37,7 +37,10 @@ fn always() -> Vec<(&'static str, Sel)> {
         ("merge down", sel("Merge down")),
         ("clear layer", sel("Clear")),
         ("blend mode", role("ComboBox").after("Blend")),
-        ("layer opacity", role("Slider").after("Opacity")),
+        (
+            "layer opacity",
+            role("Slider").after("Layers").after("Opacity"),
+        ),
         ("add mask", sel("Add mask")),
         ("clip", sel("Clip")),
         ("lock alpha", sel("Lock alpha")),
@@ -55,14 +58,25 @@ fn per_tool() -> Vec<(&'static str, Vec<Sel>)> {
     vec![
         (
             "Brush",
-            vec![role("ComboBox").after("Preset"), role("Slider").after("Size")],
+            vec![
+                role("ComboBox").after("Preset"),
+                role("Slider").after("Size"),
+            ],
         ),
         ("Eraser", vec![role("Slider").after("Size")]),
         ("Select", vec![sel("Rectangle"), sel("Lasso"), sel("All")]),
-        ("Fill", vec![sel("Fill layer"), role("Slider").after("Tolerance")]),
+        (
+            "Fill",
+            vec![sel("Fill layer"), role("Slider").after("Tolerance")],
+        ),
         (
             "Gradient",
-            vec![sel("Radial"), sel("Add stop"), sel("Reverse"), sel("Main to clear")],
+            vec![
+                sel("Radial"),
+                sel("Add stop"),
+                sel("Reverse"),
+                sel("Main to clear"),
+            ],
         ),
         ("Move", vec![sel("Horizontal"), sel("Start transform")]),
     ]
@@ -257,9 +271,13 @@ fn the_active_tool_is_marked_in_the_interface() {
 fn a_click_on_a_panel_right_after_the_window_moved_never_paints() {
     let mut s = Session::start("ui-click-after-move");
     let mut problems = Vec::new();
-    for (i, (x, y, w, h)) in [(0, 0, 1920, 1080), (100, 100, 1024, 700), (300, 50, 900, 650)]
-        .into_iter()
-        .enumerate()
+    for (i, (x, y, w, h)) in [
+        (0, 0, 1920, 1080),
+        (100, 100, 1024, 700),
+        (300, 50, 900, 650),
+    ]
+    .into_iter()
+    .enumerate()
     {
         tela_e2e::win::maximize(s.window, false);
         tela_e2e::win::place(s.window, x, y, w, h);
@@ -275,6 +293,56 @@ fn a_click_on_a_panel_right_after_the_window_moved_never_paints() {
             ));
             s.key(&[vk::CONTROL], vk::letter('z'));
         }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// Fields never keep the keyboard from the canvas: after typing in a text
+/// or number field and then working on the canvas, the tool shortcuts
+/// act; Escape in a field leaves it.
+#[test]
+#[ignore = "desktop E2E: run scripts/e2e.ps1"]
+fn fields_give_the_keyboard_back() {
+    let mut s = Session::start("ui-focus");
+    s.maximize();
+    let fields = [
+        role("TextInput").after("Hex"),
+        role("SpinButton").after("Size"),
+        role("SpinButton").after("Layers").after("Opacity"),
+        role("SpinButton").after("R"),
+    ];
+    let mut problems = Vec::new();
+    for (i, f) in fields.iter().enumerate() {
+        // Click into the field and leave it by clicking the canvas.
+        let w = s.reveal(f).unwrap_or_else(|e| panic!("{e}"));
+        let c = w.center();
+        s.click_at(c[0], c[1]);
+        s.settle();
+        let canvas = s.doc_to_client(200.0 + 300.0 * i as f32, 2800.0);
+        s.click_at(canvas[0], canvas[1]);
+        let st = s.settle();
+        if st["ui_focus"] == true {
+            problems.push(format!("{f:?} kept the focus after a canvas click"));
+        }
+        s.key(&[], vk::letter('m'));
+        if s.settle()["tool"] != "selection" {
+            problems.push(format!("M did nothing after {f:?}"));
+        }
+        s.key(&[], vk::letter('b'));
+        // Escape inside a field.
+        s.click_at(c[0], c[1]);
+        s.key(&[], vk::ESCAPE);
+        if s.settle()["ui_focus"] == true {
+            problems.push(format!("Escape did not leave {f:?}"));
+        }
+        s.key(&[], vk::letter('g'));
+        if s.settle()["tool"] != "gradient" && s.state()["tool"] != "fill" {
+            problems.push(format!("G did nothing after Escape in {f:?}"));
+        }
+        s.key(&[], vk::letter('b'));
+    }
+    for p in &problems {
+        s.step(&format!("PROBLEM {p}"));
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }

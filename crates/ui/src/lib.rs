@@ -45,7 +45,6 @@ pub use gradient_panel::{
     StopColor, StopRow, gradient_guide, gradient_panel,
 };
 pub use history_bar::{HistoryButtons, HistoryCommand};
-pub use toolbar::{ToolChoice, tool_strip, top_bar};
 pub use layer_panel::{LayerAction, LayerRow, layer_panel};
 pub use prompt::{
     ApplyChoice, MergeMaskChoice, PromptChoice, apply_transform_prompt, merge_mask_prompt, notice,
@@ -56,6 +55,7 @@ pub use selection_panel::{
     selection_panel,
 };
 use tela_renderer::FrameOverlay;
+pub use toolbar::{ToolChoice, tool_strip, top_bar};
 pub use transform_panel::{
     HANDLE, TransformAction, TransformBox, TransformModel, transform_box, transform_panel,
 };

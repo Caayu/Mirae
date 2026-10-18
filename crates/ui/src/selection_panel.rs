@@ -56,8 +56,13 @@ impl SelectionMode {
         match self {
             SelectionMode::New => ("New", "Replace the selection"),
             SelectionMode::Add => ("Add", "Add to the selection (Shift at the press)"),
-            SelectionMode::Subtract => ("Subtract", "Subtract from the selection (Alt at the press)"),
-            SelectionMode::Intersect => ("Intersect", "Keep only the overlap (Shift+Alt at the press)"),
+            SelectionMode::Subtract => {
+                ("Subtract", "Subtract from the selection (Alt at the press)")
+            }
+            SelectionMode::Intersect => (
+                "Intersect",
+                "Keep only the overlap (Shift+Alt at the press)",
+            ),
         }
     }
 }

@@ -34,10 +34,9 @@ use windows_sys::Win32::UI::Input::Pointer::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, EnumWindows, GetClassNameW, GetClientRect, GetForegroundWindow,
-    GetWindowTextW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
-    GetWindowThreadProcessId, IsWindowVisible, PEN_FLAG_INVERTED, PEN_MASK_PRESSURE, PT_PEN,
-    PostMessageW, SW_MAXIMIZE, SW_RESTORE, SWP_NOZORDER, SetCursorPos, SetForegroundWindow,
-    SetWindowPos, ShowWindow, WM_CLOSE,
+    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PEN_FLAG_INVERTED,
+    PEN_MASK_PRESSURE, PT_PEN, PostMessageW, SW_MAXIMIZE, SW_RESTORE, SWP_NOZORDER, SetCursorPos,
+    SetForegroundWindow, SetWindowPos, ShowWindow, WM_CLOSE, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 use windows_sys::core::BOOL;
 

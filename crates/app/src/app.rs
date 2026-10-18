@@ -22,8 +22,8 @@ use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
 mod e2e;
-mod gradient_preview;
 mod files;
+mod gradient_preview;
 mod transform;
 
 use crate::colors::{ColorState, Slot};
@@ -1515,8 +1515,7 @@ impl App {
                 .exact_size(style::TOP_BAR_HEIGHT)
                 .frame(style::panel_frame(style::color::CHROME))
                 .show(ui, |ui| {
-                    (document_command, history_command) =
-                        tela_ui::top_bar(ui, &info, &history);
+                    (document_command, history_command) = tela_ui::top_bar(ui, &info, &history);
                 });
             let strip = egui::Panel::left("tool-strip")
                 .resizable(false)
@@ -1573,8 +1572,7 @@ impl App {
                                     fill_action = tela_ui::fill_panel(ui, &fill_model);
                                 }
                                 ToolChoice::Gradient => {
-                                    gradient_action =
-                                        tela_ui::gradient_panel(ui, &gradient_model);
+                                    gradient_action = tela_ui::gradient_panel(ui, &gradient_model);
                                 }
                                 ToolChoice::Move | ToolChoice::Transform => {
                                     transform_action =
@@ -1593,8 +1591,8 @@ impl App {
                     egui::CollapsingHeader::new("Document")
                         .default_open(true)
                         .show(ui, |ui| {
-                            document_command = document_command
-                                .or(tela_ui::document_panel(ui, &info, export));
+                            document_command =
+                                document_command.or(tela_ui::document_panel(ui, &info, export));
                         });
                     ui.separator();
                     ui.heading("Layers");
