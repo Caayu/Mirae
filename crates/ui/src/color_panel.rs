@@ -1,6 +1,6 @@
 //! The colour panel: main and sub colour, an HSV picker (hue bar and
-//! saturation/value square), RGB and HSV values, hex, the eyedropper
-//! toggle, recent colours and swatches (phase 5A).
+//! saturation/value square), RGB and HSV values, hex, where the eyedropper
+//! picks, recent colours and swatches (phase 5A).
 //!
 //! It owns no authoritative state: the app lends a [`ColorModel`] each
 //! frame and applies the [`ColorAction`] the panel returns. The panel
@@ -23,6 +23,8 @@ use egui::{
 };
 use tela_color::{Color, Hsv};
 
+use crate::style;
+
 /// Where the eyedropper reads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PickSource {
@@ -44,8 +46,6 @@ pub struct ColorModel<'a> {
     /// Newest first.
     pub recent: &'a [Color],
     pub swatches: &'a [Color],
-    /// The eyedropper tool is selected (left drag picks instead of painting).
-    pub picker: bool,
     pub pick_source: PickSource,
 }
 
@@ -74,7 +74,6 @@ pub enum ColorAction {
     Reset,
     AddSwatch,
     RemoveSwatch(usize),
-    SetPicker(bool),
     SetPickSource(PickSource),
 }
 
@@ -106,7 +105,6 @@ impl ColorPanel {
             self.shown = Some(active);
         }
         let mut action = None;
-        ui.heading("Colour");
         ui.horizontal(|ui| {
             for (main, color, label) in [(true, m.main, "Main"), (false, m.sub, "Sub")] {
                 let selected = main == m.main_active;
@@ -128,14 +126,14 @@ impl ColorPanel {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     if ui
-                        .small_button("Main/Sub")
+                        .button("Main/Sub")
                         .on_hover_text("Paint with the other colour (X)")
                         .clicked()
                     {
                         action = Some(ColorAction::Toggle);
                     }
                     if ui
-                        .small_button("Swap")
+                        .button("Swap")
                         .on_hover_text("Exchange main and sub colours")
                         .clicked()
                     {
@@ -143,7 +141,7 @@ impl ColorPanel {
                     }
                 });
                 if ui
-                    .small_button("Reset")
+                    .button("Reset")
                     .on_hover_text("Main black, sub white (D)")
                     .clicked()
                 {
@@ -247,35 +245,49 @@ impl ColorPanel {
             }
         }
 
-        ui.horizontal(|ui| {
-            if ui
-                .selectable_label(m.picker, "Eyedropper")
-                .on_hover_text("Pick with the left button; Alt+click or right-click picks the canvas with any tool")
-                .clicked()
-            {
-                action = Some(ColorAction::SetPicker(!m.picker));
-            }
-            for (source, label, tip) in [
-                (PickSource::Canvas, "Canvas", "Pick the colour shown (all layers over the paper)"),
-                (PickSource::Layer, "Layer", "Pick the active layer's own colour"),
-            ] {
-                if ui.radio(m.pick_source == source, label).on_hover_text(tip).clicked() {
-                    action = Some(ColorAction::SetPickSource(source));
-                }
+        style::row(ui, "Pick from", |ui| {
+            let options = [
+                (
+                    PickSource::Canvas,
+                    "Canvas",
+                    "The eyedropper picks the colour shown (all layers over the paper)",
+                ),
+                (
+                    PickSource::Layer,
+                    "Layer",
+                    "The eyedropper picks the active layer's own colour",
+                ),
+            ];
+            if let Some(source) = style::segmented(ui, m.pick_source, &options) {
+                action = Some(ColorAction::SetPickSource(source));
             }
         });
 
-        ui.label("Recent");
-        if m.recent.is_empty() {
-            ui.weak("(colours you paint with appear here)");
-        }
-        if let Some(i) = swatch_grid(ui, m.recent, "recent").0 {
-            action = Some(ColorAction::Set(m.recent[i]));
-        }
-        ui.horizontal(|ui| {
-            ui.label("Swatches");
+        // One row of the newest colours, always the same height, so
+        // painting (which adds a recent colour) never moves what is below.
+        style::row(ui, "Recent", |ui| {
+            let per_row = ((ui.available_width() + 2.0) / 20.0).floor().max(1.0) as usize;
+            let shown = &m.recent[..m.recent.len().min(per_row)];
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), style::CONTROL_HEIGHT),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_height(style::CONTROL_HEIGHT);
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    if shown.is_empty() {
+                        style::hint(ui, "colours you paint with");
+                    }
+                    for (i, &c) in shown.iter().enumerate() {
+                        if swatch(ui, c).clicked() {
+                            action = Some(ColorAction::Set(shown[i]));
+                        }
+                    }
+                },
+            );
+        });
+        style::row(ui, "Swatches", |ui| {
             if ui
-                .small_button("+")
+                .button("+")
                 .on_hover_text("Add the current colour (right-click a swatch to remove it)")
                 .clicked()
             {
@@ -330,15 +342,7 @@ fn swatch_grid(ui: &mut Ui, colors: &[Color], id: &str) -> (Option<usize>, Optio
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
             for (i, &c) in colors.iter().enumerate() {
-                let (rect, r) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
-                ui.painter().rect_filled(rect, 2.0, color32(c));
-                ui.painter().rect_stroke(
-                    rect,
-                    2.0,
-                    Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-                    StrokeKind::Inside,
-                );
-                let r = r.on_hover_text(c.to_hex());
+                let r = swatch(ui, c);
                 if r.clicked() {
                     clicked = Some(i);
                 }
@@ -349,4 +353,17 @@ fn swatch_grid(ui: &mut Ui, colors: &[Color], id: &str) -> (Option<usize>, Optio
         });
     });
     (clicked, removed)
+}
+
+/// One colour swatch (18 points), clickable, with its hex as tooltip.
+fn swatch(ui: &mut Ui, c: Color) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
+    ui.painter().rect_filled(rect, 2.0, color32(c));
+    ui.painter().rect_stroke(
+        rect,
+        2.0,
+        Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+        StrokeKind::Inside,
+    );
+    r.on_hover_text(c.to_hex())
 }

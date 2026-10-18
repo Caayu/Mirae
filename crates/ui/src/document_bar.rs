@@ -1,10 +1,12 @@
-//! Document controls: file commands (new, open, save, save as, PNG import
+//! Document controls: the file commands (new, open, save, save as, PNG import
 //! and export), the storage depth (bits per channel) and depth
 //! conversion. Like the other panels it never sees the document: the app
 //! lends a [`DocumentInfo`] and the [`ExportChoice`] it keeps, and applies
 //! the [`DocumentCommand`] returned.
 
-use egui::{Button, RichText, Ui};
+use egui::{Button, Ui};
+
+use crate::style;
 
 /// What the document bar shows this frame.
 #[derive(Clone, Copy, Debug)]
@@ -50,89 +52,25 @@ pub enum DocumentCommand {
     ExportPng,
 }
 
-/// Draws the document lines and their buttons.
-pub fn document_bar(
+/// The Document section of the right panel: the storage depth and its
+/// conversion, how PNGs are exported, and the last file command's outcome.
+/// The file commands themselves are in the top bar
+/// ([`crate::toolbar::top_bar`]).
+pub fn document_panel(
     ui: &mut Ui,
     info: &DocumentInfo,
     export: &mut ExportChoice,
 ) -> Option<DocumentCommand> {
     let mut command = None;
-    let marker = if info.modified { " *" } else { "" };
-    ui.label(RichText::new(format!("{}{marker}", info.name)).strong())
-        .on_hover_text(if info.modified {
-            "Changed since it was opened or saved"
-        } else {
-            "No unsaved changes"
-        });
-    ui.horizontal_wrapped(|ui| {
-        let mut button = |ui: &mut Ui, label: &str, hint: &str, c: DocumentCommand| {
-            if ui.button(label).on_hover_text(hint).clicked() {
-                command = Some(c);
-            }
-        };
-        button(
-            ui,
-            "Open…",
-            "Open a Mirae document (Ctrl+O)",
-            DocumentCommand::Open,
-        );
-        button(
-            ui,
-            "Save",
-            "Save the document (Ctrl+S)",
-            DocumentCommand::Save,
-        );
-        button(
-            ui,
-            "Save As…",
-            "Save to a new file (Ctrl+Shift+S, Shift+Alt+S)",
-            DocumentCommand::SaveAs,
-        );
+    style::row(ui, "Size", |ui| {
+        ui.label(format!("{} × {} px", info.width, info.height));
     });
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .button("Import PNG…")
-            .on_hover_text("Add an image as a new layer, centred (also: drop a .png on the window)")
-            .clicked()
-        {
-            command = Some(DocumentCommand::ImportPng);
-        }
-        if ui
-            .button("Export PNG…")
-            .on_hover_text("Write what the canvas shows as a PNG image")
-            .clicked()
-        {
-            command = Some(DocumentCommand::ExportPng);
-        }
-    });
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut export.transparent, "transparent")
-            .on_hover_text(
-                "Export without the paper. Not available yet for layers in blend modes \
-                 other than Normal (how they combine without paper is still being measured).",
-            );
-        ui.checkbox(&mut export.sixteen, "16-bit")
-            .on_hover_text("16 bits per channel (keeps a 16-bit document's precision)");
-    });
-    ui.label(format!(
-        "{} × {}, {}-bit",
-        info.width, info.height, info.bits
-    ))
-    .on_hover_text(
-        "Bits per channel of the layers' pixels. 16-bit keeps faint paint \
-         and smooth build-up that 8-bit rounds away; the screen shows 8 bits \
-         either way. Masks are 8-bit in every document.",
-    );
-    ui.horizontal(|ui| {
-        for bits in [8, 16] {
-            if ui
-                .button(format!("New {bits}-bit"))
-                .on_hover_text("Replace the document with an empty one (Ctrl+N: 8-bit)")
-                .clicked()
-            {
-                command = Some(DocumentCommand::New(bits));
-            }
-        }
+    style::row(ui, "Depth", |ui| {
+        ui.label(format!("{}-bit", info.bits)).on_hover_text(
+            "Bits per channel of the layers' pixels. 16-bit keeps faint paint \
+             and smooth build-up that 8-bit rounds away; the screen shows 8 bits \
+             either way. Masks are 8-bit in every document.",
+        );
         let other = if info.bits == 16 { 8 } else { 16 };
         let hint = if other == 8 {
             "Round every layer to 8 bits per channel (undoable)"
@@ -147,8 +85,14 @@ pub fn document_bar(
             command = Some(DocumentCommand::Convert(other));
         }
     });
+    style::row(ui, "Export", |ui| {
+        ui.checkbox(&mut export.transparent, "Transparent")
+            .on_hover_text("Export without the paper (layers keep their blend modes)");
+        ui.checkbox(&mut export.sixteen, "16-bit")
+            .on_hover_text("16 bits per channel (keeps a 16-bit document's precision)");
+    });
     if let Some(status) = info.status {
-        ui.label(RichText::new(status).small().weak());
+        style::hint(ui, status);
     }
     command
 }

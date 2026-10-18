@@ -82,7 +82,6 @@ impl GradientTool {
     pub fn apply(&mut self, action: GradientAction, active: Color) {
         let i = self.selected;
         match action {
-            GradientAction::Tool => {}
             GradientAction::Kind(k) => self.kind = k,
             GradientAction::Edge(e) => self.edge = e,
             GradientAction::Mixing(m) => self.mixing = m,

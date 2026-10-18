@@ -13,7 +13,9 @@
 //! the name being typed while a row is renamed, and egui's drag payload
 //! while a row is dragged.
 
-use egui::{Color32, CursorIcon, DragAndDrop, Id, Key, RichText, Sense, Slider, Stroke, Ui};
+use egui::{CursorIcon, DragAndDrop, Id, Key, RichText, Sense, Slider, Stroke, Ui};
+
+use crate::style;
 
 /// Longest layer name the rename field takes, as the reference's (64
 /// characters; parity record 5B, RN5).
@@ -58,6 +60,8 @@ pub enum LayerAction {
         target: u32,
         above: bool,
     },
+    /// Erase every pixel of the active layer (not its mask).
+    Clear,
     /// Merge the active layer into the one below.
     MergeDown,
     Select(u32),
@@ -113,8 +117,7 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow], blend_names: &[&str]) -> Opti
     let unlocked = active.is_some_and(|r| !r.locked);
     let index = rows.iter().position(|r| r.active);
 
-    ui.heading("Layers");
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui
             .button("New")
             .on_hover_text("New layer (Ctrl+Shift+N)")
@@ -152,32 +155,43 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow], blend_names: &[&str]) -> Opti
         {
             action = Some(LayerAction::MergeDown);
         }
+        if ui
+            .add_enabled(unlocked, egui::Button::new("Clear"))
+            .on_hover_text("Erase every pixel of the layer (C); its mask is kept")
+            .clicked()
+        {
+            action = Some(LayerAction::Clear);
+        }
     });
 
     if let Some(row) = active {
         // Blend mode and whole-percent opacity, like the reference; both
         // disabled while the layer is locked or hidden.
         let editable = !row.locked && row.visible;
-        ui.add_enabled_ui(editable, |ui| {
-            egui::ComboBox::from_id_salt("blend-mode")
-                .selected_text(blend_names.get(row.blend).copied().unwrap_or("?"))
-                .show_ui(ui, |ui| {
-                    for (i, name) in blend_names.iter().enumerate() {
-                        if ui.selectable_label(i == row.blend, *name).clicked() && i != row.blend {
-                            action = Some(LayerAction::SetBlendMode(i));
+        style::row(ui, "Blend", |ui| {
+            ui.add_enabled_ui(editable, |ui| {
+                egui::ComboBox::from_id_salt("blend-mode")
+                    .selected_text(blend_names.get(row.blend).copied().unwrap_or("?"))
+                    .show_ui(ui, |ui| {
+                        for (i, name) in blend_names.iter().enumerate() {
+                            if ui.selectable_label(i == row.blend, *name).clicked()
+                                && i != row.blend
+                            {
+                                action = Some(LayerAction::SetBlendMode(i));
+                            }
                         }
-                    }
-                });
+                    });
+            });
         });
-        let mut percent = (row.opacity * 100.0).round() as i32;
-        let slider = Slider::new(&mut percent, 0..=100)
-            .suffix(" %")
-            .text("opacity");
-        if ui.add_enabled(editable, slider).changed() {
-            action = Some(LayerAction::SetOpacity(percent as f32 / 100.0));
-        }
+        style::row(ui, "Opacity", |ui| {
+            let mut percent = (row.opacity * 100.0).round() as i32;
+            let slider = Slider::new(&mut percent, 0..=100).suffix(" %");
+            if ui.add_enabled(editable, slider).changed() {
+                action = Some(LayerAction::SetOpacity(percent as f32 / 100.0));
+            }
+        });
         // Clipping and transparency lock: refused on locked layers.
-        ui.horizontal(|ui| {
+        style::row(ui, "", |ui| {
             let toggle = |ui: &mut Ui, on: bool, text: &str, tip: &str| {
                 ui.add_enabled(!row.locked, egui::Button::selectable(on, text))
                     .on_hover_text(tip)
@@ -197,7 +211,7 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow], blend_names: &[&str]) -> Opti
         });
         // The mask: add/delete (refused on locked layers), enable (allowed
         // there, like the reference), and which part strokes edit.
-        ui.horizontal(|ui| match row.mask {
+        style::row(ui, "Mask", |ui| match row.mask {
             None => {
                 if ui
                     .add_enabled(!row.locked, egui::Button::new("Add mask"))
@@ -208,23 +222,9 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow], blend_names: &[&str]) -> Opti
                 }
             }
             Some(enabled) => {
-                if ui
-                    .selectable_label(!row.editing_mask, "Pixels")
-                    .on_hover_text("Strokes paint the layer")
-                    .clicked()
-                {
-                    action = Some(LayerAction::EditMask(false));
-                }
-                if ui
-                    .selectable_label(row.editing_mask, "Mask")
-                    .on_hover_text("Strokes paint the mask: paint reveals, erase hides")
-                    .clicked()
-                {
-                    action = Some(LayerAction::EditMask(true));
-                }
                 let mut on = enabled;
                 if ui
-                    .checkbox(&mut on, "on")
+                    .checkbox(&mut on, "On")
                     .on_hover_text("Apply the mask")
                     .changed()
                 {
@@ -238,14 +238,31 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow], blend_names: &[&str]) -> Opti
                 }
             }
         });
-        // Which part strokes edit, said once and plainly (the row keeps
-        // only a short marker, so the panel width does not change).
-        let target = if row.editing_mask {
-            "Strokes edit: mask"
+        // Which part tools edit: a choice, shown in the warning colour
+        // while it is the mask (a stroke there changes no pixel).
+        if row.mask.is_some() {
+            style::row(ui, "Edit", |ui| {
+                let options = [
+                    (false, "Pixels", "Tools paint the layer's pixels"),
+                    (
+                        true,
+                        "Mask",
+                        "Tools paint the mask: paint reveals, erase hides",
+                    ),
+                ];
+                if let Some(mask) = style::segmented(ui, row.editing_mask, &options) {
+                    action = Some(LayerAction::EditMask(mask));
+                }
+            });
+        }
+        let (target, colour) = if row.editing_mask {
+            ("Tools edit the mask", style::color::WARNING)
         } else {
-            "Strokes edit: pixels"
+            ("Tools edit the pixels", style::color::TEXT_MUTED)
         };
-        ui.label(RichText::new(target).small().weak());
+        style::row(ui, "", |ui| {
+            ui.label(RichText::new(target).size(style::text::SMALL).color(colour));
+        });
     }
     ui.separator();
 
@@ -345,7 +362,7 @@ pub fn layer_panel(ui: &mut Ui, rows: &[LayerRow], blend_names: &[&str]) -> Opti
                     ui.painter().hline(
                         rect.x_range(),
                         y,
-                        Stroke::new(2.0, Color32::from_rgb(230, 60, 60)),
+                        Stroke::new(2.0, style::color::ACCENT_HOVER),
                     );
                 }
             }

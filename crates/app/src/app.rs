@@ -37,7 +37,7 @@ use tela_ui::{
     BrushPanel, ColorAction, ColorModel, ColorPanel, DocumentCommand, DocumentInfo, FillAction,
     FillModel, GradientAction, GradientModel, HistoryButtons, HistoryCommand, LayerAction,
     LayerRow, MergeMaskChoice, PanelAction, PanelModel, PickSource, SelectionAction,
-    SelectionModel, TransformModel, UiLayer, egui,
+    SelectionModel, ToolChoice, TransformModel, UiLayer, egui, style,
 };
 use transform::AfterTransform;
 
@@ -246,28 +246,10 @@ impl App {
     fn fit_view(&mut self) {
         if let Some(gpu) = &self.gpu {
             let doc = Vec2::new(self.document.width() as f32, self.document.height() as f32);
-            // Fit into the area the side panels leave free.
-            let size = gpu.renderer.size();
-            // Side panels only: a modal question covers the whole window.
-            let occupied: Vec<[f32; 4]> = gpu
-                .ui
-                .occupied()
-                .iter()
-                .copied()
-                .filter(|r| r[2] - r[0] < size.x * 0.5)
-                .collect();
-            let left = occupied
-                .iter()
-                .filter(|r| r[0] <= 1.0)
-                .map(|r| r[2])
-                .fold(0.0f32, f32::max);
-            let right = occupied
-                .iter()
-                .filter(|r| r[2] >= size.x - 1.0)
-                .map(|r| r[0])
-                .fold(size.x, f32::min);
-            self.view = ViewTransform::fit(doc, Vec2::new((right - left).max(1.0), size.y));
-            self.view.pan.x += left;
+            // Fit into the area the panels leave free.
+            let (lo, hi) = canvas_area(gpu.renderer.size(), gpu.ui.occupied());
+            self.view = ViewTransform::fit(doc, (hi - lo).max(Vec2::ONE));
+            self.view.pan += lo;
         }
     }
 
@@ -627,20 +609,50 @@ impl App {
 
     /// Gradient panel requests.
     fn apply_gradient_action(&mut self, action: GradientAction) {
-        if action == GradientAction::Tool {
-            self.tool = CanvasTool::Gradient;
-            self.fill_or_gradient = CanvasTool::Gradient;
-        }
         self.gradient_tool.apply(action, self.colors.active());
+    }
+
+    /// The tool strip: the canvas tool (and eraser mode), or a transform.
+    fn choose_tool(&mut self, choice: ToolChoice) {
+        let (tool, eraser) = match choice {
+            ToolChoice::Brush => (CanvasTool::Brush, false),
+            ToolChoice::Eraser => (CanvasTool::Brush, true),
+            ToolChoice::Eyedropper => (CanvasTool::Eyedropper, self.tools.eraser_mode),
+            ToolChoice::Select => (CanvasTool::Selection, self.tools.eraser_mode),
+            ToolChoice::Move => (CanvasTool::Move, self.tools.eraser_mode),
+            ToolChoice::Fill => (CanvasTool::Fill, self.tools.eraser_mode),
+            ToolChoice::Gradient => (CanvasTool::Gradient, self.tools.eraser_mode),
+            ToolChoice::Transform => {
+                self.begin_transform();
+                return;
+            }
+        };
+        self.tool = tool;
+        self.tools.eraser_mode = eraser;
+        if matches!(tool, CanvasTool::Fill | CanvasTool::Gradient) {
+            self.fill_or_gradient = tool;
+        }
+    }
+
+    /// Which tool the strip shows as active.
+    fn tool_choice(&self) -> ToolChoice {
+        if self.transform.is_some() {
+            return ToolChoice::Transform;
+        }
+        match self.tool {
+            CanvasTool::Brush if self.tools.eraser_mode => ToolChoice::Eraser,
+            CanvasTool::Brush => ToolChoice::Brush,
+            CanvasTool::Eyedropper => ToolChoice::Eyedropper,
+            CanvasTool::Selection => ToolChoice::Select,
+            CanvasTool::Move => ToolChoice::Move,
+            CanvasTool::Fill => ToolChoice::Fill,
+            CanvasTool::Gradient => ToolChoice::Gradient,
+        }
     }
 
     /// Fill panel requests. Filling waits for a stroke or a drag to end.
     fn apply_fill(&mut self, action: FillAction) {
         match action {
-            FillAction::Tool => {
-                self.tool = CanvasTool::Fill;
-                self.fill_or_gradient = CanvasTool::Fill;
-            }
             FillAction::Canvas(canvas) => {
                 self.fill_tool.reference = if canvas {
                     FillReference::Composite
@@ -729,7 +741,6 @@ impl App {
         let busy = self.engine.is_stroking() || self.drag == Drag::Select;
         let doc = &mut self.document;
         match action {
-            SelectionAction::Brush => self.tool = CanvasTool::Brush,
             SelectionAction::Tool(kind) => {
                 self.tool = CanvasTool::Selection;
                 self.selection.kind = kind;
@@ -1193,6 +1204,7 @@ impl App {
             LayerAction::SetAlphaLocked(v) => {
                 doc.set_alpha_locked(active, v).map(|()| DirtyTiles::new())
             }
+            LayerAction::Clear => doc.clear_layer(active),
             LayerAction::AddMask => doc.add_mask(active),
             LayerAction::RemoveMask => doc.remove_mask(active),
             LayerAction::SetMaskEnabled(v) => doc.set_mask_enabled(active, v),
@@ -1390,7 +1402,6 @@ impl App {
             let p = self.transform.as_ref().map(TransformSession::params);
             TransformModel {
                 active: self.transform.is_some(),
-                moving: self.tool == CanvasTool::Move,
                 width: p.map_or(100.0, |p| p.scale[0] * 100.0),
                 height: p.map_or(100.0, |p| p.scale[1] * 100.0),
                 angle: p.map_or(0.0, |p| p.rotation.to_degrees()),
@@ -1403,7 +1414,6 @@ impl App {
         let mut apply_answer = None;
         let phase = self.ants_epoch.elapsed().as_secs_f32() * ANTS_SPEED;
         let selection_model = SelectionModel {
-            active: self.tool == CanvasTool::Selection,
             kind: self.selection.kind,
             mode: self.selection.mode,
             anti_alias: self.selection.anti_alias(),
@@ -1412,7 +1422,6 @@ impl App {
         };
         let mut selection_action = None;
         let fill_model = FillModel {
-            active: self.tool == CanvasTool::Fill,
             canvas: self.fill_tool.reference == FillReference::Composite,
             tolerance: self.fill_tool.tolerance.percent(),
             anti_alias: self.fill_tool.anti_alias,
@@ -1420,7 +1429,6 @@ impl App {
         };
         let mut fill_action = None;
         let gradient_model = GradientModel {
-            active: self.tool == CanvasTool::Gradient,
             kind: self.gradient_tool.kind,
             edge: self.gradient_tool.edge,
             mixing: self.gradient_tool.mixing,
@@ -1432,6 +1440,8 @@ impl App {
         };
         let mut gradient_action = None;
         let gradient_guide = self.gradient.as_ref().map(|g| g.guide(&self.view, ppp));
+        let active_tool = self.tool_choice();
+        let mut tool_choice = None;
         let Some(gpu) = &mut self.gpu else {
             return PanelAction::None;
         };
@@ -1487,7 +1497,6 @@ impl App {
             main_active: self.colors.active_slot() == Slot::Main,
             recent: self.colors.recent(),
             swatches: self.colors.swatches(),
-            picker: self.tool == CanvasTool::Eyedropper,
             pick_source: self.pick_source,
         };
         let color_panel = &mut self.color_panel;
@@ -1508,44 +1517,107 @@ impl App {
             if let Some(g) = &gradient_guide {
                 tela_ui::gradient_guide(ui.ctx(), g);
             }
+            // The layout (docs/architecture/ui.md): the top bar, the tool
+            // strip and the active tool's options at the left, documents
+            // and layers at the right. Fixed widths, so nothing moves under
+            // the cursor; every panel scrolls, so every control can be
+            // reached in a small window.
+            let top = egui::Panel::top("top-bar")
+                .resizable(false)
+                .exact_size(style::TOP_BAR_HEIGHT)
+                .frame(style::panel_frame(style::color::CHROME))
+                .show(ui, |ui| {
+                    (document_command, history_command) =
+                        tela_ui::top_bar(ui, &info, &history);
+                });
+            let strip = egui::Panel::left("tool-strip")
+                .resizable(false)
+                .exact_size(style::TOOL_STRIP_WIDTH)
+                .frame(style::panel_frame(style::color::CHROME))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("tool-strip-scroll")
+                        .show(ui, |ui| {
+                            tool_choice = tela_ui::tool_strip(ui, active_tool);
+                        });
+                });
+            let options = egui::Panel::left("tool-options")
+                .resizable(false)
+                .exact_size(style::OPTIONS_WIDTH)
+                .frame(style::panel_frame(style::color::PANEL))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("tool-options-scroll")
+                        .auto_shrink(false)
+                        .show(ui, |ui| {
+                            egui::CollapsingHeader::new("Colour")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    color_action = color_panel.show(ui, &color_model);
+                                });
+                            ui.separator();
+                            ui.heading(active_tool.label());
+                            match active_tool {
+                                ToolChoice::Brush | ToolChoice::Eraser => {
+                                    action = panel.show(
+                                        ui,
+                                        PanelModel {
+                                            preset_names: &names,
+                                            selected,
+                                            eraser_mode,
+                                            preset: tools.active_mut(),
+                                            stroke: &mut engine.stroke_defaults,
+                                            pressure_curve: &mut engine.pressure_curve,
+                                        },
+                                    );
+                                }
+                                ToolChoice::Eyedropper => style::hint(
+                                    ui,
+                                    "Click or drag on the canvas to pick a colour. \
+                                     Right-click or Alt picks with any tool. \
+                                     Where it reads: Pick from, above.",
+                                ),
+                                ToolChoice::Select => {
+                                    selection_action =
+                                        tela_ui::selection_panel(ui, &selection_model);
+                                }
+                                ToolChoice::Fill => {
+                                    fill_action = tela_ui::fill_panel(ui, &fill_model);
+                                }
+                                ToolChoice::Gradient => {
+                                    gradient_action =
+                                        tela_ui::gradient_panel(ui, &gradient_model);
+                                }
+                                ToolChoice::Move | ToolChoice::Transform => {
+                                    transform_action =
+                                        tela_ui::transform_panel(ui, &transform_model);
+                                }
+                            }
+                        });
+                });
             // A fixed width: long names and markers are truncated, so the
             // controls never move under the cursor (debt #17).
             let layers = egui::Panel::right("layer-panel")
                 .resizable(false)
-                .exact_size(270.0)
+                .exact_size(style::LAYERS_WIDTH)
+                .frame(style::panel_frame(style::color::PANEL))
                 .show(ui, |ui| {
-                    document_command = tela_ui::document_bar(ui, &info, export);
+                    egui::CollapsingHeader::new("Document")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            document_command = document_command
+                                .or(tela_ui::document_panel(ui, &info, export));
+                        });
                     ui.separator();
-                    history_command = tela_ui::history_bar(ui, &history);
-                    ui.separator();
+                    ui.heading("Layers");
                     layer_action = tela_ui::layer_panel(ui, &rows, &BLEND_LABELS);
                 });
-            let r = egui::Panel::left("brush-panel")
-                .default_size(290.0)
-                .show(ui, |ui| {
-                    color_action = color_panel.show(ui, &color_model);
-                    ui.separator();
-                    selection_action = tela_ui::selection_panel(ui, &selection_model);
-                    ui.separator();
-                    fill_action = tela_ui::fill_panel(ui, &fill_model);
-                    ui.separator();
-                    gradient_action = tela_ui::gradient_panel(ui, &gradient_model);
-                    ui.separator();
-                    transform_action = tela_ui::transform_panel(ui, &transform_model);
-                    ui.separator();
-                    action = panel.show(
-                        ui,
-                        PanelModel {
-                            preset_names: &names,
-                            selected,
-                            eraser_mode,
-                            preset: tools.active_mut(),
-                            stroke: &mut engine.stroke_defaults,
-                            pressure_curve: &mut engine.pressure_curve,
-                        },
-                    );
-                });
-            let mut occupied = vec![r.response.rect, layers.response.rect];
+            let mut occupied = vec![
+                top.response.rect,
+                strip.response.rect,
+                options.response.rect,
+                layers.response.rect,
+            ];
             // Questions block the whole window (the pen goes to them too).
             if asking_apply {
                 let (choice, area) = tela_ui::apply_transform_prompt(ui.ctx());
@@ -1584,6 +1656,9 @@ impl App {
         }
         if let Some(a) = transform_action {
             return PanelAction::Transform(a);
+        }
+        if let Some(t) = tool_choice {
+            return PanelAction::Tool(t);
         }
         if dismissed {
             return PanelAction::DismissNotice;
@@ -1625,13 +1700,6 @@ impl App {
                 c.add_swatch();
             }
             ColorAction::RemoveSwatch(i) => c.remove_swatch(i),
-            ColorAction::SetPicker(on) => {
-                self.tool = if on {
-                    CanvasTool::Eyedropper
-                } else {
-                    CanvasTool::Brush
-                };
-            }
             ColorAction::SetPickSource(s) => self.pick_source = s,
         }
     }
@@ -1652,14 +1720,11 @@ impl App {
                 self.tools.select(i);
                 self.tool = CanvasTool::Brush;
             }
-            PanelAction::ToggleEraser => {
-                self.tools.eraser_mode = !self.tools.eraser_mode;
-                self.tool = CanvasTool::Brush;
-            }
+            PanelAction::Tool(choice) => self.choose_tool(choice),
             PanelAction::Selection(a) => self.apply_selection(a),
             PanelAction::Fill(a) => self.apply_fill(a),
             PanelAction::Gradient(a) => self.apply_gradient_action(a),
-            PanelAction::ClearLayer => self.clear_canvas(),
+
             PanelAction::Layer(a) => self.apply_layer(a),
             PanelAction::History(c) => self.apply_history(c),
             PanelAction::Document(c) => self.apply_document(c),
@@ -1723,6 +1788,33 @@ impl App {
         }
         self.e2e_frame();
     }
+}
+
+/// The part of a window of `size` the panels in `occupied` leave to the
+/// canvas, as its top-left and bottom-right corners (physical pixels).
+/// Side panels are the tall rectangles at either side, the top bar the wide
+/// one at the top; a modal question (as tall and wide as the window) is
+/// not a panel.
+fn canvas_area(size: Vec2, occupied: &[[f32; 4]]) -> (Vec2, Vec2) {
+    let (mut lo, mut hi) = (Vec2::ZERO, size);
+    for r in occupied {
+        let (w, h) = (r[2] - r[0], r[3] - r[1]);
+        let tall = h >= size.y * 0.5;
+        let wide = w >= size.x * 0.5;
+        if tall && wide {
+            continue;
+        }
+        if tall && r[0] < size.x * 0.5 {
+            lo.x = lo.x.max(r[2]);
+        } else if tall {
+            hi.x = hi.x.min(r[0]);
+        } else if wide && r[1] <= 1.0 {
+            lo.y = lo.y.max(r[3]);
+        } else if wide {
+            hi.y = hi.y.min(r[1]);
+        }
+    }
+    (lo, hi.max(lo + Vec2::ONE))
 }
 
 /// Blend-mode labels in `BlendMode::ALL` order.
@@ -1931,7 +2023,15 @@ impl ApplicationHandler<AppEvent> for App {
             }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
+                    // The canvas keeps its place in the middle of the area
+                    // the panels leave: half of the change in that area's
+                    // size (the panels have fixed widths).
+                    let before = gpu.renderer.size();
                     gpu.renderer.resize(size.width, size.height);
+                    let after = gpu.renderer.size();
+                    if before.x > 0.0 && before.y > 0.0 {
+                        self.view.pan += (after - before) * 0.5;
+                    }
                 }
                 self.request_redraw();
             }

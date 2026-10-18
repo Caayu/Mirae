@@ -10,7 +10,7 @@
 use glam::Vec2;
 
 use tela_document::LayerError;
-use tela_ui::{ApplyChoice, PanelAction, TransformAction, TransformBox, egui};
+use tela_ui::{ApplyChoice, PanelAction, ToolChoice, TransformAction, TransformBox, egui};
 use winit::window::CursorIcon;
 
 use super::{App, Drag};
@@ -157,11 +157,6 @@ impl App {
             TransformAction::Start => {
                 self.begin_transform();
             }
-            TransformAction::MoveTool => {
-                if self.transform.is_none() {
-                    self.tool = CanvasTool::Move;
-                }
-            }
             TransformAction::FlipHorizontal | TransformAction::FlipVertical => {
                 // The reference opens a session with the flip applied (T15).
                 if self.begin_transform() {
@@ -201,9 +196,9 @@ impl App {
                     | PanelAction::Selection(_)
                     | PanelAction::Fill(_)
                     | PanelAction::SelectPreset(_)
-                    | PanelAction::ToggleEraser
-                    | PanelAction::ClearLayer
             )
+            || self.transform.is_some()
+                && matches!(action, PanelAction::Tool(t) if *t != ToolChoice::Transform)
     }
 
     /// The answer to "Apply the transform?".

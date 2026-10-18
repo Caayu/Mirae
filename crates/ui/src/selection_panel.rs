@@ -6,6 +6,8 @@
 
 use egui::{Color32, Pos2, Shape, Stroke, Ui};
 
+use crate::style;
+
 /// The selection shape a drag makes (the reference's sub-tools).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SelectionKind {
@@ -54,8 +56,8 @@ impl SelectionMode {
         match self {
             SelectionMode::New => ("New", "Replace the selection"),
             SelectionMode::Add => ("Add", "Add to the selection (Shift at the press)"),
-            SelectionMode::Subtract => ("Sub", "Subtract from the selection (Alt at the press)"),
-            SelectionMode::Intersect => ("Int", "Keep only the overlap (Shift+Alt at the press)"),
+            SelectionMode::Subtract => ("Subtract", "Subtract from the selection (Alt at the press)"),
+            SelectionMode::Intersect => ("Intersect", "Keep only the overlap (Shift+Alt at the press)"),
         }
     }
 }
@@ -63,8 +65,6 @@ impl SelectionMode {
 /// What the panel shows this frame.
 #[derive(Clone, Copy, Debug)]
 pub struct SelectionModel {
-    /// The selection tool is the canvas tool (not the brush or eyedropper).
-    pub active: bool,
     pub kind: SelectionKind,
     pub mode: SelectionMode,
     /// Anti-aliasing of the current kind.
@@ -79,8 +79,6 @@ pub struct SelectionModel {
 /// What the user asked for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SelectionAction {
-    /// Use the brush on the canvas again.
-    Brush,
     /// Use the selection tool with this shape.
     Tool(SelectionKind),
     Mode(SelectionMode),
@@ -94,49 +92,41 @@ pub enum SelectionAction {
     FeatherStrength(f32),
 }
 
-/// Draws the selection panel.
+/// Draws the selection tool's options and the selection commands.
 pub fn selection_panel(ui: &mut Ui, m: &SelectionModel) -> Option<SelectionAction> {
     let mut action = None;
-    ui.label("Selection");
-    ui.horizontal(|ui| {
-        if ui
-            .selectable_label(!m.active, "Brush")
-            .on_hover_text("Paint with the brush (B)")
-            .clicked()
-        {
-            action = Some(SelectionAction::Brush);
-        }
-        for kind in SelectionKind::ALL {
-            if ui
-                .selectable_label(m.active && m.kind == kind, kind.label())
-                .on_hover_text("Selection tool (M)")
-                .clicked()
-            {
-                action = Some(SelectionAction::Tool(kind));
-            }
+    style::row(ui, "Shape", |ui| {
+        let options: Vec<(SelectionKind, &str, &str)> = SelectionKind::ALL
+            .iter()
+            .map(|&k| (k, k.label(), "The shape a drag selects"))
+            .collect();
+        if let Some(kind) = style::segmented(ui, m.kind, &options) {
+            action = Some(SelectionAction::Tool(kind));
         }
     });
-    ui.horizontal(|ui| {
-        for mode in SelectionMode::ALL {
-            let (label, tip) = mode.label();
-            if ui
-                .selectable_label(m.mode == mode, label)
-                .on_hover_text(tip)
-                .clicked()
-            {
-                action = Some(SelectionAction::Mode(mode));
-            }
+    style::row(ui, "Mode", |ui| {
+        let options: Vec<(SelectionMode, &str, &str)> = SelectionMode::ALL
+            .iter()
+            .map(|&mode| {
+                let (label, tip) = mode.label();
+                (mode, label, tip)
+            })
+            .collect();
+        if let Some(mode) = style::segmented(ui, m.mode, &options) {
+            action = Some(SelectionAction::Mode(mode));
         }
+    });
+    style::row(ui, "Edges", |ui| {
         let mut aa = m.anti_alias;
         if ui
-            .checkbox(&mut aa, "AA")
+            .checkbox(&mut aa, "Anti-aliased")
             .on_hover_text("Anti-aliased edges for this shape")
             .changed()
         {
             action = Some(SelectionAction::AntiAlias(aa));
         }
     });
-    ui.horizontal(|ui| {
+    style::row(ui, "Select", |ui| {
         if ui
             .button("All")
             .on_hover_text("Select all (Ctrl+A)")
@@ -159,23 +149,25 @@ pub fn selection_panel(ui: &mut Ui, m: &SelectionModel) -> Option<SelectionActio
             action = Some(SelectionAction::Invert);
         }
     });
-    ui.horizontal(|ui| {
+    style::row(ui, "Feather", |ui| {
         let mut px = m.feather;
         if ui
             .add(
                 egui::DragValue::new(&mut px)
                     .range(0.1..=1000.0)
                     .speed(0.2)
-                    .fixed_decimals(2)
+                    .fixed_decimals(1)
                     .suffix(" px"),
             )
+            .on_hover_text("How far the border is blurred")
             .changed()
         {
             action = Some(SelectionAction::FeatherStrength(px));
         }
         if ui
-            .add_enabled(m.has_selection, egui::Button::new("Feather"))
+            .add_enabled(m.has_selection, egui::Button::new("Apply"))
             .on_hover_text("Blur the selection's border by this many pixels")
+            .on_disabled_hover_text("Needs a selection")
             .clicked()
         {
             action = Some(SelectionAction::Feather(px));

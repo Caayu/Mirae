@@ -6,13 +6,13 @@
 
 use egui::{Color32, Pos2, Shape, Stroke, Ui, Vec2};
 
+use crate::style;
+
 /// What the panel shows this frame.
 #[derive(Clone, Copy, Debug)]
 pub struct TransformModel {
     /// A transform session is open.
     pub active: bool,
-    /// The Move tool is the canvas tool.
-    pub moving: bool,
     /// Width and height in percent (negative: flipped), angle in degrees
     /// (clockwise), of the open session.
     pub width: f64,
@@ -28,8 +28,6 @@ pub struct TransformModel {
 pub enum TransformAction {
     /// Open a transform session (Ctrl+T).
     Start,
-    /// Use the Move tool on the canvas (K).
-    MoveTool,
     /// Flip the content horizontally / vertically (opens a session when
     /// none is open, as the reference does).
     FlipHorizontal,
@@ -46,86 +44,62 @@ pub enum TransformAction {
     Cancel,
 }
 
-/// Draws the transform panel.
+/// Draws the transform options (for the Move tool and an open transform).
 pub fn transform_panel(ui: &mut Ui, m: &TransformModel) -> Option<TransformAction> {
     let mut action = None;
-    ui.label("Transform");
-    ui.horizontal(|ui| {
+    style::row(ui, "Flip", |ui| {
         if ui
-            .add_enabled(!m.active, egui::Button::new("Transform"))
-            .on_hover_text("Scale, rotate and move the layer or the selection (Ctrl+T)")
-            .clicked()
-        {
-            action = Some(TransformAction::Start);
-        }
-        if ui
-            .selectable_label(m.moving, "Move")
-            .on_hover_text("Drag to move the layer or the selection (K)")
-            .clicked()
-        {
-            action = Some(TransformAction::MoveTool);
-        }
-        if ui
-            .button("Flip H")
-            .on_hover_text("Flip horizontally")
+            .button("Horizontal")
+            .on_hover_text("Flip horizontally (opens a transform)")
             .clicked()
         {
             action = Some(TransformAction::FlipHorizontal);
         }
         if ui
-            .button("Flip V")
-            .on_hover_text("Flip vertically")
+            .button("Vertical")
+            .on_hover_text("Flip vertically (opens a transform)")
             .clicked()
         {
             action = Some(TransformAction::FlipVertical);
         }
     });
     if !m.active {
+        style::row(ui, "", |ui| {
+            if ui
+                .button("Start transform")
+                .on_hover_text("Scale, rotate and move the layer or the selection (Ctrl+T)")
+                .clicked()
+            {
+                action = Some(TransformAction::Start);
+            }
+        });
         return action;
     }
-    ui.horizontal(|ui| {
-        let mut w = m.width;
-        ui.label("W");
-        if ui
+    let field = |ui: &mut Ui, value: f64, range: std::ops::RangeInclusive<f64>, suffix: &str| {
+        let mut v = value;
+        let changed = ui
             .add(
-                egui::DragValue::new(&mut w)
-                    .range(-10_000.0..=10_000.0)
+                egui::DragValue::new(&mut v)
+                    .range(range)
                     .speed(0.5)
                     .max_decimals(2)
-                    .suffix(" %"),
+                    .suffix(suffix),
             )
-            .changed()
-        {
+            .changed();
+        changed.then_some(v)
+    };
+    style::row(ui, "Size", |ui| {
+        ui.label("W");
+        if let Some(w) = field(ui, m.width, -10_000.0..=10_000.0, " %") {
             action = Some(TransformAction::Width(w));
         }
-        let mut h = m.height;
         ui.label("H");
-        if ui
-            .add(
-                egui::DragValue::new(&mut h)
-                    .range(-10_000.0..=10_000.0)
-                    .speed(0.5)
-                    .max_decimals(2)
-                    .suffix(" %"),
-            )
-            .changed()
-        {
+        if let Some(h) = field(ui, m.height, -10_000.0..=10_000.0, " %") {
             action = Some(TransformAction::Height(h));
         }
     });
-    ui.horizontal(|ui| {
-        let mut a = m.angle;
-        ui.label("Angle");
-        if ui
-            .add(
-                egui::DragValue::new(&mut a)
-                    .range(-360.0..=360.0)
-                    .speed(0.5)
-                    .max_decimals(2)
-                    .suffix("°"),
-            )
-            .changed()
-        {
+    style::row(ui, "Angle", |ui| {
+        if let Some(a) = field(ui, m.angle, -360.0..=360.0, "°") {
             action = Some(TransformAction::Angle(a));
         }
         let mut keep = m.keep_aspect;
@@ -137,28 +111,22 @@ pub fn transform_panel(ui: &mut Ui, m: &TransformModel) -> Option<TransformActio
             action = Some(TransformAction::KeepAspect(keep));
         }
     });
-    ui.horizontal(|ui| {
-        if ui
-            .selectable_label(!m.nearest, "Bicubic")
-            .on_hover_text("Smooth, sharp edges (the reference's default)")
-            .clicked()
-        {
-            action = Some(TransformAction::Nearest(false));
-        }
-        if ui
-            .selectable_label(m.nearest, "Nearest")
-            .on_hover_text("Hard pixels, for pixel art")
-            .clicked()
-        {
-            action = Some(TransformAction::Nearest(true));
-        }
-        if ui.button("Reset").clicked() {
-            action = Some(TransformAction::Reset);
+    style::row(ui, "Resample", |ui| {
+        let options = [
+            (
+                false,
+                "Bicubic",
+                "Smooth, sharp edges (the reference's default)",
+            ),
+            (true, "Nearest", "Hard pixels, for pixel art"),
+        ];
+        if let Some(nearest) = style::segmented(ui, m.nearest, &options) {
+            action = Some(TransformAction::Nearest(nearest));
         }
     });
-    ui.horizontal(|ui| {
+    style::row(ui, "", |ui| {
         if ui
-            .button(egui::RichText::new("OK").strong())
+            .button(egui::RichText::new("Apply").strong())
             .on_hover_text("Apply the transform (Enter)")
             .clicked()
         {
@@ -170,6 +138,13 @@ pub fn transform_panel(ui: &mut Ui, m: &TransformModel) -> Option<TransformActio
             .clicked()
         {
             action = Some(TransformAction::Cancel);
+        }
+        if ui
+            .button("Reset")
+            .on_hover_text("Back to no change")
+            .clicked()
+        {
+            action = Some(TransformAction::Reset);
         }
     });
     action

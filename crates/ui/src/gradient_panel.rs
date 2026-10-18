@@ -1,5 +1,5 @@
-//! The gradient panel (phase 5F): the gradient tool, its shape, what it
-//! draws beyond its ends, how colours mix, dithering, two presets and a
+//! The gradient panel (phase 5F): the gradient tool's options — its shape,
+//! what it draws beyond its ends, how colours mix, dithering, two presets and a
 //! small stop editor (a bar showing the gradient with a marker per stop:
 //! click to select, drag to move; the selected stop's colour, opacity and
 //! position). Like the other panels it edits nothing: it shows what the
@@ -9,6 +9,8 @@
 use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
 use tela_color::Color;
 use tela_color::gradient::{ColorRamp, GradientStop, GradientStops, Mixing};
+
+use crate::style::{self, space};
 
 /// How a pixel's position follows from the drag (the app maps it to the
 /// document's shape).
@@ -40,6 +42,16 @@ impl GradientKind {
             GradientKind::Reflected => "Reflected",
         }
     }
+
+    pub fn hint(self) -> &'static str {
+        match self {
+            GradientKind::Linear => "Along the drag",
+            GradientKind::Radial => "Circles around the press; the drag is the radius",
+            GradientKind::Elliptical => "An ellipse around the press; the drag sets its radii",
+            GradientKind::Angular => "Around the press, starting along the drag",
+            GradientKind::Reflected => "Along the drag, mirrored at the press",
+        }
+    }
 }
 
 /// What is drawn beyond the ends.
@@ -66,6 +78,15 @@ impl GradientEdge {
             GradientEdge::Repeat => "Repeat",
             GradientEdge::Reflect => "Mirror",
             GradientEdge::Empty => "None",
+        }
+    }
+
+    pub fn hint(self) -> &'static str {
+        match self {
+            GradientEdge::Clamp => "The end colours continue",
+            GradientEdge::Repeat => "Start again every length",
+            GradientEdge::Reflect => "Run back and forth",
+            GradientEdge::Empty => "Draw nothing beyond the ends",
         }
     }
 }
@@ -111,8 +132,6 @@ pub enum GradientPreset {
 /// What the panel shows this frame.
 #[derive(Clone, Copy, Debug)]
 pub struct GradientModel<'a> {
-    /// The gradient tool is the canvas tool.
-    pub active: bool,
     pub kind: GradientKind,
     pub edge: GradientEdge,
     pub mixing: Mixing,
@@ -129,8 +148,6 @@ pub struct GradientModel<'a> {
 /// What the user asked for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GradientAction {
-    /// Use the gradient tool on the canvas.
-    Tool,
     Kind(GradientKind),
     Edge(GradientEdge),
     Mixing(Mixing),
@@ -171,18 +188,11 @@ fn color32(c: tela_color::Rgba) -> Color32 {
     Color32::from_rgba_unmultiplied(q(c.r), q(c.g), q(c.b), q(c.a))
 }
 
-/// Draws the gradient panel.
+/// Draws the gradient tool's options (the tool itself is chosen in the
+/// tool strip).
 pub fn gradient_panel(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
     let mut action = None;
-    ui.horizontal(|ui| {
-        ui.label("Gradient");
-        if ui
-            .selectable_label(m.active, "Tool")
-            .on_hover_text("Drag on the canvas to draw a gradient (G toggles fill and gradient); Esc cancels; Shift snaps to 45°")
-            .clicked()
-        {
-            action = Some(GradientAction::Tool);
-        }
+    style::row(ui, "Preset", |ui| {
         if ui
             .button("Main to Sub")
             .on_hover_text("From the main colour to the sub colour")
@@ -198,46 +208,39 @@ pub fn gradient_panel(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> 
             action = Some(GradientAction::Preset(GradientPreset::MainToTransparent));
         }
     });
-    ui.horizontal_wrapped(|ui| {
-        for k in GradientKind::ALL {
-            if ui.selectable_label(m.kind == k, k.label()).clicked() {
-                action = Some(GradientAction::Kind(k));
-            }
+    style::row(ui, "Shape", |ui| {
+        let options: Vec<(GradientKind, &str, &str)> = GradientKind::ALL
+            .iter()
+            .map(|&k| (k, k.label(), k.hint()))
+            .collect();
+        if let Some(k) = style::segmented(ui, m.kind, &options) {
+            action = Some(GradientAction::Kind(k));
         }
     });
-    ui.horizontal(|ui| {
-        ui.label("Ends");
-        for e in GradientEdge::ALL {
-            let hint = match e {
-                GradientEdge::Clamp => "The end colours continue",
-                GradientEdge::Repeat => "Start again every length",
-                GradientEdge::Reflect => "Run back and forth",
-                GradientEdge::Empty => "Draw nothing beyond the ends",
-            };
-            if ui
-                .selectable_label(m.edge == e, e.label())
-                .on_hover_text(hint)
-                .clicked()
-            {
-                action = Some(GradientAction::Edge(e));
-            }
+    style::row(ui, "Ends", |ui| {
+        let options: Vec<(GradientEdge, &str, &str)> = GradientEdge::ALL
+            .iter()
+            .map(|&e| (e, e.label(), e.hint()))
+            .collect();
+        if let Some(e) = style::segmented(ui, m.edge, &options) {
+            action = Some(GradientAction::Edge(e));
         }
     });
-    ui.horizontal(|ui| {
-        ui.label("Mix");
-        for (mixing, label, hint) in [
+    style::row(ui, "Mix", |ui| {
+        let options = [
             (Mixing::Perceptual, "Perceptual", "OKLab: even lightness"),
             (Mixing::Standard, "sRGB", "The stored (sRGB-encoded) values"),
-            (Mixing::Linear, "Linear", "Linear light"),
-        ] {
-            if ui
-                .selectable_label(m.mixing == mixing, label)
-                .on_hover_text(hint)
-                .clicked()
-            {
-                action = Some(GradientAction::Mixing(mixing));
-            }
+            (
+                Mixing::Linear,
+                "Linear light",
+                "Linear light (physical mixing)",
+            ),
+        ];
+        if let Some(mixing) = style::segmented(ui, m.mixing, &options) {
+            action = Some(GradientAction::Mixing(mixing));
         }
+    });
+    style::row(ui, "", |ui| {
         let mut dither = m.dither;
         if ui
             .checkbox(&mut dither, "Dither")
@@ -247,6 +250,7 @@ pub fn gradient_panel(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> 
             action = Some(GradientAction::Dither(dither));
         }
     });
+    ui.add_space(space::S);
     if let Some(a) = stop_bar(ui, m) {
         action = Some(a);
     }
@@ -257,14 +261,20 @@ pub fn gradient_panel(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> 
 }
 
 /// The bar with the gradient over a checkerboard and a marker per stop.
+/// It is inset by a marker's half width on both sides, so the markers of
+/// the end stops are whole.
 fn stop_bar(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
     let mut action = None;
-    let width = ui.available_width().max(60.0);
+    let full = ui.available_width().max(60.0);
     let (rect, _) = ui.allocate_exact_size(
-        Vec2::new(width, BAR_HEIGHT + 2.0 * MARKER + 2.0),
+        Vec2::new(full, BAR_HEIGHT + 2.0 * MARKER + 2.0),
         Sense::hover(),
     );
-    let bar = Rect::from_min_size(rect.min, Vec2::new(width, BAR_HEIGHT));
+    let width = full - 2.0 * MARKER - 2.0;
+    let bar = Rect::from_min_size(
+        Pos2::new(rect.left() + MARKER + 1.0, rect.top()),
+        Vec2::new(width, BAR_HEIGHT),
+    );
     let painter = ui.painter_at(rect);
     // Checkerboard, so transparency shows.
     let cell = BAR_HEIGHT / 2.0;
@@ -303,7 +313,7 @@ fn stop_bar(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
     painter.rect_stroke(
         bar,
         0.0,
-        Stroke::new(1.0, Color32::DARK_GRAY),
+        Stroke::new(1.0, style::color::BORDER),
         egui::StrokeKind::Inside,
     );
     for (i, s) in m.stops.iter().enumerate() {
@@ -312,7 +322,7 @@ fn stop_bar(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
         let fill = color32(s.color.resolve(m.main, m.sub).opaque());
         let selected = i == m.selected;
         let outline = if selected {
-            Stroke::new(2.0, Color32::from_rgb(80, 160, 255))
+            Stroke::new(2.0, style::color::ACCENT_HOVER)
         } else {
             Stroke::new(1.0, Color32::BLACK)
         };
@@ -329,11 +339,13 @@ fn stop_bar(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
             Pos2::new(x, tip.y + MARKER),
             Vec2::new(2.0 * MARKER + 2.0, 2.0 * MARKER + 2.0),
         );
-        let response = ui.interact(
-            hit,
-            ui.id().with(("gradient-stop", i)),
-            Sense::click_and_drag(),
-        );
+        let response = ui
+            .interact(
+                hit,
+                ui.id().with(("gradient-stop", i)),
+                Sense::click_and_drag(),
+            )
+            .on_hover_text("Click to select this stop; drag to move it");
         if response.clicked() || response.drag_started() {
             action = Some(GradientAction::Select(i));
         }
@@ -354,25 +366,27 @@ fn stop_bar(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
 fn stop_editor(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
     let mut action = None;
     let s = m.stops.get(m.selected).copied()?;
-    ui.horizontal(|ui| {
-        ui.label(format!("Stop {}", m.selected + 1));
-        for (choice, label) in [(StopColor::Main, "Main"), (StopColor::Sub, "Sub")] {
-            if ui.selectable_label(s.color == choice, label).clicked() {
-                action = Some(GradientAction::Color(choice));
-            }
-        }
-        let custom = matches!(s.color, StopColor::Custom(_));
-        if ui
-            .selectable_label(custom, "Set")
-            .on_hover_text("Fix this stop to the active colour")
-            .clicked()
-        {
-            action = Some(GradientAction::UseActiveColor);
+    let title = format!("Stop {} of {}", m.selected + 1, m.stops.len());
+    style::row(ui, &title, |ui| {
+        let current = match s.color {
+            StopColor::Main => 0,
+            StopColor::Sub => 1,
+            StopColor::Custom(_) => 2,
+        };
+        let options = [
+            (0, "Main", "The main colour when the drag begins"),
+            (1, "Sub", "The sub colour when the drag begins"),
+            (2, "Fixed", "Fix this stop to the active colour now"),
+        ];
+        match style::segmented(ui, current, &options) {
+            Some(0) => action = Some(GradientAction::Color(StopColor::Main)),
+            Some(1) => action = Some(GradientAction::Color(StopColor::Sub)),
+            Some(_) => action = Some(GradientAction::UseActiveColor),
+            None => {}
         }
     });
-    ui.horizontal(|ui| {
+    style::row(ui, "Opacity", |ui| {
         let mut opacity = s.opacity * 100.0;
-        ui.label("Opacity");
         if ui
             .add(
                 egui::Slider::new(&mut opacity, 0.0..=100.0)
@@ -384,9 +398,8 @@ fn stop_editor(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
             action = Some(GradientAction::Opacity(opacity / 100.0));
         }
     });
-    ui.horizontal(|ui| {
+    style::row(ui, "Position", |ui| {
         let mut position = s.position * 100.0;
-        ui.label("Position");
         if ui
             .add(
                 egui::Slider::new(&mut position, 0.0..=100.0)
@@ -398,17 +411,26 @@ fn stop_editor(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
             action = Some(GradientAction::Position(position / 100.0));
         }
     });
-    ui.horizontal(|ui| {
-        if ui.button("Add stop").clicked() {
+    style::row(ui, "", |ui| {
+        if ui
+            .button("Add stop")
+            .on_hover_text("A stop halfway along the selected stop's segment")
+            .clicked()
+        {
             action = Some(GradientAction::Add);
         }
         if ui
             .add_enabled(m.stops.len() > 1, egui::Button::new("Remove"))
+            .on_hover_text("Remove the selected stop")
             .clicked()
         {
             action = Some(GradientAction::Remove);
         }
-        if ui.button("Reverse").clicked() {
+        if ui
+            .button("Reverse")
+            .on_hover_text("Reverse the order of the stops")
+            .clicked()
+        {
             action = Some(GradientAction::Reverse);
         }
     });

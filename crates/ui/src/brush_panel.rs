@@ -11,6 +11,7 @@ use tela_brush::texture::{TextureMode, TexturePattern, TextureSettings};
 use tela_brush::{BrushPreset, StrokeSettings};
 
 use crate::curve_editor::curve_editor;
+use crate::style;
 
 /// What the panel edits for one frame.
 pub struct PanelModel<'a> {
@@ -27,8 +28,8 @@ pub struct PanelModel<'a> {
 pub enum PanelAction {
     None,
     SelectPreset(usize),
-    ToggleEraser,
-    ClearLayer,
+    /// From the tool strip.
+    Tool(crate::ToolChoice),
     /// From the layer panel.
     Layer(crate::LayerAction),
     /// From the undo/redo buttons.
@@ -109,8 +110,7 @@ impl BrushPanel {
     /// Draws the panel contents. Returns the action requested, if any.
     pub fn show(&mut self, ui: &mut Ui, m: PanelModel) -> PanelAction {
         let mut action = PanelAction::None;
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.heading("Brush");
+        style::row(ui, if m.eraser_mode { "Eraser" } else { "Preset" }, |ui| {
             ComboBox::from_id_salt("preset")
                 .selected_text(m.preset_names.get(m.selected).map_or("?", |s| s.as_str()))
                 .show_ui(ui, |ui| {
@@ -120,33 +120,27 @@ impl BrushPanel {
                         }
                     }
                 });
-            ui.horizontal(|ui| {
-                if ui.selectable_label(m.eraser_mode, "Eraser (E)").clicked() {
-                    action = PanelAction::ToggleEraser;
-                }
-                if ui.button("Clear layer").clicked() {
-                    action = PanelAction::ClearLayer;
-                }
-            });
-            ui.separator();
-
-            let p = m.preset;
-            for param in Param::ALL {
-                let (lo, hi) = param.range();
-                let prop = param.get_mut(&mut p.properties);
-                let slider = Slider::new(&mut prop.base, lo..=hi).text(param.name());
+        });
+        let p = m.preset;
+        for param in Param::ALL {
+            let (lo, hi) = param.range();
+            let prop = param.get_mut(&mut p.properties);
+            style::row(ui, &capitalized(param.name()), |ui| {
+                let slider = Slider::new(&mut prop.base, lo..=hi);
                 let slider = if param == Param::Size || param == Param::Spacing {
                     slider.logarithmic(true)
                 } else {
                     slider
                 };
                 ui.add(slider);
-            }
-            ui.separator();
+            });
+        }
 
-            // Stroke settings are shown as the preset resolves them; edits go
-            // through `edit_resolved`, which owns the override rule.
-            ui.label("Stroke");
+        // Stroke settings are shown as the preset resolves them; edits go
+        // through `edit_resolved`, which owns the override rule.
+        egui::CollapsingHeader::new("Stroke")
+            .default_open(true)
+            .show(ui, |ui| {
             let mut stroke = p.stroke.resolve(m.stroke);
             ui.add(Slider::new(&mut stroke.stabilization, 0.0..=100.0).text("stabilization"));
             ComboBox::from_label("stabilizer")
@@ -181,9 +175,9 @@ impl BrushPanel {
                     PaintMode::Paint
                 };
             }
-            ui.separator();
+            });
 
-            ui.label("Tip, scatter, texture");
+            egui::CollapsingHeader::new("Tip, scatter, texture").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.checkbox(&mut p.tip.flip_x, "flip X");
                 ui.checkbox(&mut p.tip.flip_y, "flip Y");
@@ -235,13 +229,14 @@ impl BrushPanel {
                 ui.add(Slider::new(&mut t.contrast, 0.0..=4.0).text("contrast"));
                 ui.add(Slider::new(&mut t.brightness, -1.0..=1.0).text("brightness"));
             }
-            ui.separator();
+            });
 
-            ui.label("Pressure curve (device calibration)");
-            curve_editor(ui, m.pressure_curve, true, "pressure-curve");
-            ui.separator();
+            egui::CollapsingHeader::new("Pressure curve").show(ui, |ui| {
+                style::hint(ui, "Device calibration, for every brush");
+                curve_editor(ui, m.pressure_curve, true, "pressure-curve");
+            });
 
-            ui.label("Effectors");
+            egui::CollapsingHeader::new("Effectors").show(ui, |ui| {
             ComboBox::from_label("property")
                 .selected_text(self.edit.name())
                 .show_ui(ui, |ui| {
@@ -250,7 +245,7 @@ impl BrushPanel {
                     }
                 });
             effectors_editor(ui, self.edit.get_mut(&mut p.properties), self.edit);
-        });
+            });
         action
     }
 }
@@ -303,4 +298,12 @@ fn effectors_editor(ui: &mut Ui, prop: &mut BrushProperty, param: Param) {
         prop.effectors
             .push(Effector::new(DynamicsSource::Pressure, Curve::linear()));
     }
+}
+
+/// `text` with its first letter in capitals (labels of the parameter rows).
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |c| {
+        c.to_uppercase().chain(chars).collect()
+    })
 }

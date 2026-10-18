@@ -29,11 +29,13 @@ pub mod history_bar;
 pub mod layer_panel;
 pub mod prompt;
 pub mod selection_panel;
+pub mod style;
+pub mod toolbar;
 pub mod transform_panel;
 
 pub use brush_panel::{BrushPanel, PanelAction, PanelModel};
 pub use color_panel::{ColorAction, ColorModel, ColorPanel, PickSource};
-pub use document_bar::{DocumentCommand, DocumentInfo, ExportChoice, document_bar};
+pub use document_bar::{DocumentCommand, DocumentInfo, ExportChoice, document_panel};
 pub use egui;
 use egui::{ClippedPrimitive, TexturesDelta, ViewportId};
 use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
@@ -42,7 +44,8 @@ pub use gradient_panel::{
     GradientAction, GradientEdge, GradientGuide, GradientKind, GradientModel, GradientPreset,
     StopColor, StopRow, gradient_guide, gradient_panel,
 };
-pub use history_bar::{HistoryButtons, HistoryCommand, history_bar};
+pub use history_bar::{HistoryButtons, HistoryCommand};
+pub use toolbar::{ToolChoice, tool_strip, top_bar};
 pub use layer_panel::{LayerAction, LayerRow, layer_panel};
 pub use prompt::{
     ApplyChoice, MergeMaskChoice, PromptChoice, apply_transform_prompt, merge_mask_prompt, notice,
@@ -80,6 +83,9 @@ pub struct WidgetInfo {
     pub number: Option<f64>,
     /// `[x0, y0, x1, y1]`, physical pixels.
     pub rect: [f32; 4],
+    /// The part of `rect` that is shown (clipped by its panel or scroll
+    /// area); empty when the widget is scrolled out of sight.
+    pub visible: [f32; 4],
     pub enabled: bool,
     /// Selected (a selectable label) or checked (a checkbox), if it has
     /// such a state.
@@ -104,6 +110,7 @@ pub struct UiLayer {
 impl UiLayer {
     pub fn new(window: &Window, device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let ctx = egui::Context::default();
+        style::apply(&ctx);
         let state = egui_winit::State::new(
             ctx.clone(),
             ViewportId::ROOT,
@@ -191,7 +198,7 @@ impl UiLayer {
         if self.inspect
             && let Some(update) = output.platform_output.accesskit_update.take()
         {
-            self.widgets = describe(&update, ppp);
+            self.widgets = describe(&self.ctx, &update, ppp);
         }
         self.state
             .handle_platform_output(window, output.platform_output);
@@ -219,10 +226,29 @@ impl UiLayer {
     }
 }
 
+/// The egui widget id an AccessKit node id stands for (egui makes each node
+/// id from its widget id's value), if it is one.
+#[allow(unsafe_code)]
+fn widget_id(node: u64) -> Option<egui::Id> {
+    if node == 0 {
+        return None;
+    }
+    // SAFETY: `from_high_entropy_bits` is `unsafe` only because a low-
+    // entropy value would make egui's id maps slow; there is no memory
+    // safety requirement. The value is non-zero (checked above) and is
+    // an id egui itself produced (`Id::accesskit_id` is `Id::value`), so
+    // it is high-entropy. It is used only to look the widget up.
+    Some(unsafe { egui::Id::from_high_entropy_bits(node) })
+}
+
 /// The widgets of an AccessKit tree in layout order (depth first from the
 /// root), with their bounds scaled from points to physical pixels.
 /// Containers and unlabelled custom areas are left out.
-fn describe(update: &egui::accesskit::TreeUpdate, ppp: f32) -> Vec<WidgetInfo> {
+fn describe(
+    ctx: &egui::Context,
+    update: &egui::accesskit::TreeUpdate,
+    ppp: f32,
+) -> Vec<WidgetInfo> {
     use egui::accesskit::{NodeId, Role, Toggled};
     let nodes: std::collections::HashMap<NodeId, &egui::accesskit::Node> =
         update.nodes.iter().map(|(id, n)| (*id, n)).collect();
@@ -252,17 +278,32 @@ fn describe(update: &egui::accesskit::TreeUpdate, ppp: f32) -> Vec<WidgetInfo> {
         if !keep {
             continue;
         }
+        let rect = [
+            b.x0 as f32 * ppp,
+            b.y0 as f32 * ppp,
+            b.x1 as f32 * ppp,
+            b.y1 as f32 * ppp,
+        ];
+        // What is shown of it: egui's interaction rectangle is the widget
+        // clipped by its panel and scroll area. Text runs and other nodes
+        // that are not widgets have none; their bounds are what is shown.
+        let visible = widget_id(id.0)
+            .and_then(|w| ctx.read_response(w))
+            .map_or(rect, |r| {
+                let c = r.interact_rect;
+                if c.is_positive() {
+                    [c.min.x * ppp, c.min.y * ppp, c.max.x * ppp, c.max.y * ppp]
+                } else {
+                    [0.0; 4]
+                }
+            });
         out.push(WidgetInfo {
             role: format!("{role:?}"),
             label,
             value,
             number: node.numeric_value(),
-            rect: [
-                b.x0 as f32 * ppp,
-                b.y0 as f32 * ppp,
-                b.x1 as f32 * ppp,
-                b.y1 as f32 * ppp,
-            ],
+            rect,
+            visible,
             enabled: !node.is_disabled(),
             toggled: match node.toggled() {
                 Some(Toggled::True) => Some(true),
