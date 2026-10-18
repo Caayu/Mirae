@@ -317,6 +317,36 @@ pub fn capture(x: i32, y: i32, width: i32, height: i32) -> Vec<u8> {
     bgra
 }
 
+/// CPU time (user + kernel) process `pid` has used so far.
+pub fn cpu_time(pid: u32) -> Option<Duration> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: a query-only handle to a process we started, closed below;
+    // the out-parameters live on the stack.
+    let ok = unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let ok = GetProcessTimes(h, &mut created, &mut exited, &mut kernel, &mut user);
+        CloseHandle(h);
+        ok
+    };
+    if ok == 0 {
+        return None;
+    }
+    let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
+    // FILETIME counts 100 ns ticks.
+    Some(Duration::from_nanos((ticks(kernel) + ticks(user)) * 100))
+}
+
 /// A small window of the test process itself that takes the focus away
 /// from the app (as another program would), without touching any other
 /// program. Destroyed when dropped.

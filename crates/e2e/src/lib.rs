@@ -430,7 +430,14 @@ impl Session {
         for _ in 0..80 {
             let w = self.widget(s)?;
             if w.inside(size) {
-                return Ok(w);
+                // Scrolling is animated: only a widget that stays put can
+                // be clicked where it is reported.
+                self.settle();
+                let again = self.widget(s)?;
+                if again.rect == w.rect {
+                    return Ok(again);
+                }
+                continue;
             }
             if last_rect == Some(w.rect) {
                 return Err(format!(
@@ -863,6 +870,17 @@ impl Session {
             assert!(Instant::now() < deadline, "the app did not close");
             sleep(Duration::from_millis(200));
         }
+    }
+
+    /// CPU time the app has used so far.
+    pub fn cpu_time(&self) -> Duration {
+        win::cpu_time(self.child.id()).unwrap_or_default()
+    }
+
+    /// Appends a line to the report without timing it (a table row).
+    pub fn note(&mut self, text: &str) {
+        eprintln!("[{}] {text}", self.name);
+        let _ = writeln!(self.report, "{text}");
     }
 
     /// The app's native dialogs (file dialogs) open now.
