@@ -1964,7 +1964,7 @@ impl ApplicationHandler<AppEvent> for App {
 
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
         if let StartCause::ResumeTimeReached { .. } = cause {
-            self.e2e_poll();
+            self.e2e_idle();
             if self.document.has_selection() || self.selection_drag.is_some() {
                 self.request_redraw();
             }
@@ -1973,11 +1973,30 @@ impl ApplicationHandler<AppEvent> for App {
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
-            AppEvent::Tablet => self.drain_tablet(),
+            AppEvent::Tablet => {
+                if let Some(e2e) = &mut self.e2e {
+                    e2e.input();
+                }
+                self.drain_tablet();
+            }
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let Some(e2e) = &mut self.e2e
+            && matches!(
+                event,
+                WindowEvent::MouseInput { .. }
+                    | WindowEvent::KeyboardInput { .. }
+                    | WindowEvent::CursorMoved { .. }
+                    | WindowEvent::MouseWheel { .. }
+                    | WindowEvent::ModifiersChanged(_)
+                    | WindowEvent::Focused(_)
+                    | WindowEvent::Resized(_)
+            )
+        {
+            e2e.input();
+        }
         if let Some(gpu) = &mut self.gpu {
             let response = gpu.ui.on_window_event(&gpu.window, &event);
             if response.repaint {

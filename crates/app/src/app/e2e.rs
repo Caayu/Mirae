@@ -33,6 +33,11 @@ pub(super) struct E2e {
     /// The last request answered (its id), so it is answered once.
     answered: Option<u64>,
     pub due: Instant,
+    /// When the app last handled an input event (milliseconds since the
+    /// Unix epoch), and whether the state written last shows it: the
+    /// tests wait for their input to be handled before they look.
+    input_ms: u64,
+    written_ms: u64,
 }
 
 impl E2e {
@@ -49,7 +54,14 @@ impl E2e {
             frame: 0,
             answered: None,
             due: Instant::now(),
+            input_ms: 0,
+            written_ms: 0,
         })
+    }
+
+    /// An input event was handled now.
+    pub fn input(&mut self) {
+        self.input_ms = now_ms();
     }
 
     /// Replaces `name` atomically (a reader never sees half a file).
@@ -71,9 +83,23 @@ impl App {
             return;
         };
         e2e.frame += 1;
+        self.e2e_write_state();
+    }
+
+    /// Between frames: writes the state again if an input event was
+    /// handled since it was last written (an event that needs no frame).
+    pub(super) fn e2e_idle(&mut self) {
+        self.e2e_poll();
+        if self.e2e.as_ref().is_some_and(|e| e.input_ms != e.written_ms) {
+            self.e2e_write_state();
+        }
+    }
+
+    fn e2e_write_state(&mut self) {
         let state = self.e2e_state();
-        if let Some(e2e) = &self.e2e {
+        if let Some(e2e) = &mut self.e2e {
             e2e.write("state.json", &state);
+            e2e.written_ms = e2e.input_ms;
         }
     }
 
@@ -128,6 +154,7 @@ impl App {
         let mut j = String::with_capacity(16 * 1024);
         let doc = &self.document;
         let frame = self.e2e.as_ref().map_or(0, |e| e.frame);
+        let input_ms = self.e2e.as_ref().map_or(0, |e| e.input_ms);
         let (size, ppp, focused_ui) = self.gpu.as_ref().map_or(([0, 0], 1.0, false), |g| {
             let s = g.window.inner_size();
             (
@@ -138,7 +165,7 @@ impl App {
         });
         let _ = write!(
             j,
-            "{{\"frame\":{frame},\"window\":[{},{}],\"scale\":{ppp},\"ui_focus\":{focused_ui},",
+            "{{\"frame\":{frame},\"input_ms\":{input_ms},\"window\":[{},{}],\"scale\":{ppp},\"ui_focus\":{focused_ui},",
             size[0], size[1]
         );
         let tool = match self.tool {
@@ -282,12 +309,27 @@ impl App {
                 ""
             })
         );
-        j.push_str("\"widgets\":[");
+        // The areas the UI covers (physical pixels): the canvas shows
+        // elsewhere.
+        j.push_str("\"panels\":[");
+        let panels: &[[f32; 4]] = self.gpu.as_ref().map_or(&[], |g| g.ui.occupied());
+        for (i, r) in panels.iter().enumerate() {
+            let _ = write!(
+                j,
+                "{}[{},{},{},{}]",
+                if i > 0 { "," } else { "" },
+                r[0],
+                r[1],
+                r[2],
+                r[3]
+            );
+        }
+        j.push_str("],\"widgets\":[");
         let widgets: &[WidgetInfo] = self.gpu.as_ref().map_or(&[], |g| g.ui.widgets());
         for (i, w) in widgets.iter().enumerate() {
             let _ = write!(
                 j,
-                "{}{{\"role\":{},\"label\":{},\"value\":{},\"number\":{},\"rect\":[{},{},{},{}],\"enabled\":{},\"toggled\":{},\"focused\":{}}}",
+                "{}{{\"role\":{},\"label\":{},\"value\":{},\"number\":{},\"rect\":[{},{},{},{}],\"visible\":[{},{},{},{}],\"enabled\":{},\"toggled\":{},\"focused\":{}}}",
                 if i > 0 { "," } else { "" },
                 string(&w.role),
                 string(&w.label),
@@ -299,6 +341,10 @@ impl App {
                 w.rect[1],
                 w.rect[2],
                 w.rect[3],
+                w.visible[0],
+                w.visible[1],
+                w.visible[2],
+                w.visible[3],
                 w.enabled,
                 w.toggled.map_or("null".into(), |t| t.to_string()),
                 w.focused
@@ -386,6 +432,14 @@ fn rgba8(p: PremulRgba) -> String {
     let c = p.unpremultiply();
     let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     format!("[{},{},{},{}]", q(c.r), q(c.g), q(c.b), q(c.a))
+}
+
+/// Wall-clock milliseconds since the Unix epoch (the tests use the same
+/// clock to know their input was handled).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 fn error(text: &str) -> String {

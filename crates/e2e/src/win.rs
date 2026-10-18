@@ -33,7 +33,8 @@ use windows_sys::Win32::UI::Input::Pointer::{
     POINTER_FLAG_PRIMARY, POINTER_FLAG_UP, POINTER_FLAG_UPDATE, POINTER_PEN_INFO,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetClientRect, GetForegroundWindow, GetWindowTextW,
+    CreateWindowExW, DestroyWindow, EnumWindows, GetClassNameW, GetClientRect, GetForegroundWindow,
+    GetWindowTextW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
     GetWindowThreadProcessId, IsWindowVisible, PEN_FLAG_INVERTED, PEN_MASK_PRESSURE, PT_PEN,
     PostMessageW, SW_MAXIMIZE, SW_RESTORE, SWP_NOZORDER, SetCursorPos, SetForegroundWindow,
     SetWindowPos, ShowWindow, WM_CLOSE,
@@ -315,6 +316,60 @@ pub fn capture(x: i32, y: i32, width: i32, height: i32) -> Vec<u8> {
         p[3] = 255;
     }
     bgra
+}
+
+/// A small window of the test process itself that takes the focus away
+/// from the app (as another program would), without touching any other
+/// program. Destroyed when dropped.
+pub struct FocusThief {
+    window: Window,
+}
+
+impl FocusThief {
+    pub fn new() -> Self {
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        let title: Vec<u16> = "Mirae E2E focus\0".encode_utf16().collect();
+        // SAFETY: the class and title are NUL-terminated and outlive the
+        // call; the system class STATIC needs no registration; no parent,
+        // menu, instance or creation data.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class.as_ptr(),
+                title.as_ptr(),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                40,
+                40,
+                320,
+                120,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            )
+        };
+        let window = Window(hwnd as isize);
+        bring_to_front(window);
+        Self { window }
+    }
+
+    pub fn window(&self) -> Window {
+        self.window
+    }
+}
+
+impl Default for FocusThief {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for FocusThief {
+    fn drop(&mut self) {
+        // SAFETY: destroying the window this value created, on the thread
+        // that created it.
+        unsafe { DestroyWindow(self.window.hwnd()) };
+    }
 }
 
 /// A synthetic Windows Ink pen (the real `WM_POINTER` path, as

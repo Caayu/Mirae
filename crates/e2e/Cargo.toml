@@ -25,3 +25,9 @@ windows-sys = { workspace = true, features = [
 
 [lints]
 workspace = true
+
+# The engine as an oracle: a test computes what the app should have drawn
+# for the geometry it dragged and compares the app's pixels with it.
+[dev-dependencies]
+tela-color.workspace = true
+tela-document.workspace = true

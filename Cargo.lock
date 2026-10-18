@@ -2766,6 +2766,8 @@ version = "0.1.0"
 dependencies = [
  "png",
  "serde_json",
+ "tela-color",
+ "tela-document",
  "windows-sys 0.61.2",
 ]
 

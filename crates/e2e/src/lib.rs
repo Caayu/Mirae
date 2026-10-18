@@ -69,26 +69,34 @@ pub struct Widget {
     pub number: Option<f64>,
     /// `[x0, y0, x1, y1]`, client pixels.
     pub rect: [f32; 4],
+    /// The part of `rect` that is shown (clipped by its panel or scroll
+    /// area); empty when scrolled out of sight.
+    pub visible: [f32; 4],
     pub enabled: bool,
     pub toggled: Option<bool>,
     pub focused: bool,
 }
 
+fn rect4(v: &Value) -> Option<[f32; 4]> {
+    let r = v.as_array()?;
+    let f = |i: usize| r.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+    Some([f(0), f(1), f(2), f(3)])
+}
+
+fn area(r: [f32; 4]) -> f32 {
+    (r[2] - r[0]).max(0.0) * (r[3] - r[1]).max(0.0)
+}
+
 impl Widget {
     fn from_json(v: &Value) -> Self {
-        let rect = v["rect"]
-            .as_array()
-            .map(|r| {
-                let f = |i: usize| r.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32;
-                [f(0), f(1), f(2), f(3)]
-            })
-            .unwrap_or_default();
+        let rect = rect4(&v["rect"]).unwrap_or_default();
         Self {
             role: v["role"].as_str().unwrap_or_default().to_owned(),
             label: v["label"].as_str().unwrap_or_default().to_owned(),
             value: v["value"].as_str().map(str::to_owned),
             number: v["number"].as_f64(),
             rect,
+            visible: rect4(&v["visible"]).unwrap_or(rect),
             enabled: v["enabled"].as_bool().unwrap_or(false),
             toggled: v["toggled"].as_bool(),
             focused: v["focused"].as_bool().unwrap_or(false),
@@ -104,19 +112,26 @@ impl Widget {
         }
     }
 
+    /// The centre of what is shown of it.
     pub fn center(&self) -> [f32; 2] {
-        [
-            (self.rect[0] + self.rect[2]) / 2.0,
-            (self.rect[1] + self.rect[3]) / 2.0,
-        ]
+        let r = if area(self.visible) > 0.0 {
+            self.visible
+        } else {
+            self.rect
+        };
+        [(r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0]
     }
 
-    /// Whether the whole widget lies inside a client area of `size`.
+    /// Whether a user can see and reach it: shown (almost) whole, inside a
+    /// client area of `size`.
     pub fn inside(&self, size: [i32; 2]) -> bool {
-        self.rect[0] >= -0.5
-            && self.rect[1] >= -0.5
-            && self.rect[2] <= size[0] as f32 + 0.5
-            && self.rect[3] <= size[1] as f32 + 0.5
+        let v = self.visible;
+        let shown = area(self.rect) <= 0.0 || area(v) >= 0.9 * area(self.rect);
+        shown
+            && v[0] >= -0.5
+            && v[1] >= -0.5
+            && v[2] <= size[0] as f32 + 0.5
+            && v[3] <= size[1] as f32 + 0.5
     }
 }
 
@@ -212,6 +227,10 @@ pub struct Session {
     report: String,
     shots: usize,
     request: u64,
+    /// When the last input meant for the app was sent (ms since the Unix
+    /// epoch): `settle` waits until the app reports having handled it.
+    fence: u64,
+    cursor: [i32; 2],
     started: Instant,
     _desktop: MutexGuard<'static, ()>,
 }
@@ -256,6 +275,8 @@ impl Session {
             report: String::new(),
             shots: 0,
             request: 0,
+            fence: 0,
+            cursor: [i32::MIN; 2],
             started: Instant::now(),
             _desktop: desktop,
         };
@@ -332,10 +353,15 @@ impl Session {
         panic!("cannot read the app's state");
     }
 
-    /// Waits until the app is idle: no tile left to compose, no drag, and
-    /// the same state (apart from the frame counter) for 150 ms.
+    /// Waits until the app is idle: it has handled the last input sent to
+    /// it, has no tile left to compose, and its state (apart from the frame
+    /// counter) stays the same for 150 ms.
     pub fn settle(&mut self) -> Value {
         let deadline = Instant::now() + Duration::from_secs(20);
+        // Input the app never receives (it went to a dialog, or the cursor
+        // did not move) must not hang the test: after 3 s it is reported.
+        let fence_deadline = Instant::now() + Duration::from_secs(3);
+        let mut fence_reported = false;
         let mut last = String::new();
         let mut since = Instant::now();
         loop {
@@ -343,7 +369,12 @@ impl Session {
             let mut v = self.state();
             v["frame"] = Value::Null;
             let text = v.to_string();
-            let idle = v["pending_tiles"].as_u64() == Some(0);
+            let handled = v["input_ms"].as_u64().unwrap_or(0) >= self.fence;
+            if !handled && Instant::now() >= fence_deadline && !fence_reported {
+                fence_reported = true;
+                self.step("(the app did not report the last input within 3 s)");
+            }
+            let idle = v["pending_tiles"].as_u64() == Some(0) && (handled || fence_reported);
             if text != last {
                 last = text;
                 since = Instant::now();
@@ -390,17 +421,43 @@ impl Session {
         self.widget(s).unwrap_or_else(|e| panic!("{e}"))
     }
 
-    /// Clicks a widget by what it says. It must lie entirely inside the
-    /// window and be enabled: a control a user cannot reach fails the test.
-    pub fn click(&mut self, s: &Sel) -> Widget {
-        let w = self.expect(s);
+    /// The widget, brought into the window the way a user would: if it is
+    /// above or below the window, the wheel scrolls the panel it is in.
+    /// Fails if it cannot be brought in (a control nobody can reach).
+    pub fn reveal(&mut self, s: &Sel) -> Result<Widget, String> {
         let size = self.client_size();
-        assert!(
-            w.inside(size),
-            "{} is outside the window ({:?} in {size:?})",
-            s.describe(),
-            w.rect
-        );
+        let mut last_rect = None;
+        for _ in 0..80 {
+            let w = self.widget(s)?;
+            if w.inside(size) {
+                return Ok(w);
+            }
+            if last_rect == Some(w.rect) {
+                return Err(format!(
+                    "{} is outside the window ({:?} in {size:?}) and scrolling does not bring it in",
+                    s.describe(),
+                    w.rect
+                ));
+            }
+            last_rect = Some(w.rect);
+            let x = w.center()[0].clamp(2.0, size[0] as f32 - 2.0);
+            let hidden_above = if area(w.visible) > 0.0 {
+                w.visible[1] - w.rect[1] > w.rect[3] - w.visible[3]
+            } else {
+                w.rect[3] < size[1] as f32 / 2.0
+            };
+            let notches = if hidden_above || w.rect[1] < 0.0 { 1 } else { -1 };
+            self.wheel([x, size[1] as f32 / 2.0], notches);
+            self.settle();
+        }
+        Err(format!("{} could not be scrolled into view", s.describe()))
+    }
+
+    /// Clicks a widget by what it says. It must be reachable inside the
+    /// window (scrolling its panel if needed) and enabled: a control a user
+    /// cannot reach fails the test.
+    pub fn click(&mut self, s: &Sel) -> Widget {
+        let w = self.reveal(s).unwrap_or_else(|e| panic!("{e}"));
         assert!(w.enabled, "{} is disabled", s.describe());
         let c = w.center();
         self.click_at(c[0], c[1]);
@@ -417,17 +474,23 @@ impl Session {
     /// Moves the mouse to client pixel `(x, y)`.
     pub fn move_to(&mut self, x: f32, y: f32) {
         let p = self.to_screen(x, y);
+        if p != self.cursor {
+            self.fence = now_ms();
+            self.cursor = p;
+        }
         win::move_cursor(p[0], p[1]);
         sleep(Duration::from_millis(12));
     }
 
     pub fn press(&mut self, b: Button) {
         self.front();
+        self.fence = now_ms();
         win::button(b, true);
         sleep(Duration::from_millis(30));
     }
 
     pub fn release(&mut self, b: Button) {
+        self.fence = now_ms();
         win::button(b, false);
         sleep(Duration::from_millis(30));
     }
@@ -503,6 +566,7 @@ impl Session {
                 self.to_screen(p[0], p[1])
             })
             .collect();
+        self.fence = now_ms();
         pen.stroke(&points, pressure, eraser);
         self.step(&format!(
             "pen{} document {from:?} -> {to:?}",
@@ -516,6 +580,7 @@ impl Session {
         for &m in mods {
             win::key(m, true);
         }
+        self.fence = now_ms();
         win::key(key, true);
         sleep(Duration::from_millis(20));
         win::key(key, false);
@@ -531,6 +596,7 @@ impl Session {
 
     pub fn wheel(&mut self, at: [f32; 2], notches: i32) {
         self.move_to(at[0], at[1]);
+        self.fence = now_ms();
         win::wheel(notches);
         sleep(Duration::from_millis(40));
     }
@@ -594,6 +660,33 @@ impl Session {
         let p = self.to_screen(x, y);
         let c = win::capture(p[0], p[1], 1, 1);
         [c[0], c[1], c[2]]
+    }
+
+    /// Whether document point `(x, y)` is on screen and not under a panel
+    /// (only there does the screen show the canvas), with a margin.
+    pub fn canvas_visible(&self, x: f32, y: f32) -> bool {
+        let st = self.state();
+        let p = self.doc_to_client(x, y);
+        let size = self.client_size();
+        let m = 4.0;
+        let inside = p[0] >= m
+            && p[1] >= m
+            && p[0] < size[0] as f32 - m
+            && p[1] < size[1] as f32 - m;
+        let covered = st["panels"].as_array().is_some_and(|a| {
+            a.iter().any(|r| {
+                let r: Vec<f32> = r
+                    .as_array()
+                    .map(|v| v.iter().map(|n| n.as_f64().unwrap_or(0.0) as f32).collect())
+                    .unwrap_or_default();
+                r.len() == 4
+                    && p[0] >= r[0] - m
+                    && p[0] < r[2] + m
+                    && p[1] >= r[1] - m
+                    && p[1] < r[3] + m
+            })
+        });
+        inside && !covered
     }
 
     /// The colour shown on screen at document point `(x, y)`.
@@ -714,6 +807,14 @@ impl Drop for Session {
     }
 }
 
+/// Wall-clock milliseconds since the Unix epoch (the app reports when it
+/// handled input on the same clock).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
 /// Writes straight RGBA8 pixels as a PNG.
 pub fn write_png(path: &Path, rgba: &[u8], width: u32, height: u32) {
     let file = std::fs::File::create(path).expect("create a screenshot");
@@ -771,6 +872,7 @@ mod tests {
             value: None,
             number: None,
             rect: [0.0; 4],
+            visible: [0.0; 4],
             enabled: true,
             toggled: None,
             focused: false,
