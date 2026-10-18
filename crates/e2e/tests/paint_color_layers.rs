@@ -330,8 +330,7 @@ fn lock_of_active_row(s: &Session) -> tela_e2e::Sel {
     let widgets = s.widgets();
     let row = widgets
         .iter()
-        .filter(|w| w.role == "Button" && w.toggled == Some(true) && w.rect[0] > 1000.0)
-        .last()
+        .rfind(|w| w.role == "Button" && w.toggled == Some(true) && w.rect[0] > 1000.0)
         .expect("the active row")
         .rect;
     let n = widgets
