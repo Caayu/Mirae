@@ -106,7 +106,7 @@ before any new development. Done on the branch
 ## Desktop E2E
 
 Last full run of `scripts\e2e.ps1` on this machine (2560×1440 at 100 %,
-mouse, keyboard and the synthetic pen): every suite passed when run on its own during the gate; a final full run was still in progress when the session ended — its result is **not recorded** (run `scriptse2e.ps1` again).
+mouse, keyboard and the synthetic pen): **36 passed, 0 failed** (2026-10-17, the final code of the branch, ~8.5 min).
 
 ## Phase 5F outcome
 
