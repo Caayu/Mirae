@@ -484,7 +484,7 @@ impl App {
 
     /// A bucket fill at screen point `pos` into the edit target (the active
     /// layer's pixels or mask), with the active colour captured now, or
-    /// clearing with the stylus eraser end or eraser mode (the reference's
+    /// clearing with the stylus eraser end or the tool's Erase mode (the reference's
     /// transparent colour erases, 5E BK24; Mirae has no transparent colour,
     /// debt #36). One history step; hidden and locked targets do nothing
     /// (BK31).
@@ -495,7 +495,7 @@ impl App {
             part: t.part,
         };
         let colour = self.colors.active();
-        let paint = if self.tools.eraser_mode || device == DeviceKind::Eraser {
+        let paint = if self.fill_tool.erase || device == DeviceKind::Eraser {
             FillPaint::Erase
         } else {
             FillPaint::Color(colour)
@@ -521,8 +521,8 @@ impl App {
 
     /// Begins a gradient at screen point `pos` into the edit target (the
     /// active layer's pixels or mask), with the tool's settings and the
-    /// main and sub colours captured now; the stylus eraser end or eraser
-    /// mode erases by it. Hidden and locked targets take nothing (as
+    /// main and sub colours captured now; the stylus eraser end or the
+    /// tool's Erase mode erases by it. Hidden and locked targets take nothing (as
     /// strokes and fills).
     fn begin_gradient(&mut self, pos: Vec2, device: DeviceKind) {
         let t = StrokeTarget::active(&self.document);
@@ -530,7 +530,7 @@ impl App {
             log::info!(target: "tela::gradient", "not drawing: {e}");
             return;
         }
-        let paint = if self.tools.eraser_mode || device == DeviceKind::Eraser {
+        let paint = if self.gradient_tool.erase || device == DeviceKind::Eraser {
             GradientPaint::Erase
         } else {
             GradientPaint::Draw
@@ -667,6 +667,7 @@ impl App {
             }
             FillAction::Tolerance(t) => self.fill_tool.tolerance = Tolerance::from_percent(t),
             FillAction::AntiAlias(on) => self.fill_tool.anti_alias = on,
+            FillAction::Erase(on) => self.fill_tool.erase = on,
             FillAction::FillSelection => {
                 if self.engine.is_stroking() || self.drag != Drag::None {
                     return;
@@ -676,7 +677,7 @@ impl App {
                     layer: t.layer,
                     part: t.part,
                 };
-                let paint = if self.tools.eraser_mode {
+                let paint = if self.fill_tool.erase {
                     FillPaint::Erase
                 } else {
                     FillPaint::Color(self.colors.active())
@@ -1413,6 +1414,7 @@ impl App {
             canvas: self.fill_tool.reference == FillReference::Composite,
             tolerance: self.fill_tool.tolerance.percent(),
             anti_alias: self.fill_tool.anti_alias,
+            erase: self.fill_tool.erase,
             has_selection: self.document.has_selection(),
         };
         let mut fill_action = None;
@@ -1421,6 +1423,7 @@ impl App {
             edge: self.gradient_tool.edge,
             mixing: self.gradient_tool.mixing,
             dither: self.gradient_tool.dither,
+            erase: self.gradient_tool.erase,
             stops: self.gradient_tool.stops(),
             selected: self.gradient_tool.selected(),
             main: self.colors.main(),

@@ -213,10 +213,10 @@ fn fill_bucket_tolerance_reference_selection_lock_and_mask() {
         "transparent stays transparent"
     );
     s.click(&sel("Lock alpha"));
-    // On a mask, the bucket with the eraser end hides (here: E then fill).
+    // On a mask, the bucket in Erase mode hides.
     s.click(&sel("Add mask"));
-    s.key(&[], vk::letter('e'));
     s.click(&sel("Fill").role("Button"));
+    s.click(&sel("Erase").after("Mode"));
     s.click_at(p[0], p[1]);
     let (shown, _) = s.pixel(2000, 1500);
     assert_ne!(

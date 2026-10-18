@@ -15,6 +15,8 @@ pub struct FillModel {
     /// Tolerance in percent, `0..=100`, one decimal.
     pub tolerance: f32,
     pub anti_alias: bool,
+    /// The tool erases (its Mode is Erase).
+    pub erase: bool,
     /// The document has a selection (Fill then fills it, else the canvas).
     pub has_selection: bool,
 }
@@ -26,6 +28,8 @@ pub enum FillAction {
     Canvas(bool),
     Tolerance(f32),
     AntiAlias(bool),
+    /// Erase (`true`) or fill with the colour.
+    Erase(bool),
     /// Fill the selection, or the whole layer without one, now.
     FillSelection,
 }
@@ -33,6 +37,9 @@ pub enum FillAction {
 /// Draws the fill tool's options.
 pub fn fill_panel(ui: &mut Ui, m: &FillModel) -> Option<FillAction> {
     let mut action = None;
+    if let Some(erase) = style::draw_or_erase(ui, m.erase, "the bucket and Fill") {
+        action = Some(FillAction::Erase(erase));
+    }
     style::row(ui, "Refer to", |ui| {
         let options = [
             (false, "Layer", "Find the area on the edited layer only"),
@@ -72,14 +79,17 @@ pub fn fill_panel(ui: &mut Ui, m: &FillModel) -> Option<FillAction> {
         }
     });
     style::row(ui, "", |ui| {
-        let label = if m.has_selection {
-            "Fill selection"
-        } else {
-            "Fill layer"
+        let label = match (m.erase, m.has_selection) {
+            (true, true) => "Erase selection",
+            (true, false) => "Erase layer",
+            (false, true) => "Fill selection",
+            (false, false) => "Fill layer",
         };
         if ui
             .button(label)
-            .on_hover_text("Fill the selection, or the whole layer, with the colour (Alt+Delete)")
+            .on_hover_text(
+                "Fill the selection, or the whole layer, with the colour; erase it in Erase mode (Alt+Delete)",
+            )
             .clicked()
         {
             action = Some(FillAction::FillSelection);

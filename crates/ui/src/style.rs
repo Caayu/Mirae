@@ -24,7 +24,7 @@ pub const LABEL_WIDTH: f32 = 76.0;
 /// The tool strip at the far left.
 pub const TOOL_STRIP_WIDTH: f32 = 100.0;
 /// The tool options panel beside it.
-pub const OPTIONS_WIDTH: f32 = 292.0;
+pub const OPTIONS_WIDTH: f32 = 316.0;
 /// The layers and document panel on the right.
 pub const LAYERS_WIDTH: f32 = 288.0;
 /// The bar at the top (file, history, document).
@@ -193,6 +193,29 @@ pub fn segmented<T: Copy + PartialEq>(
             }
         }
     });
+    chosen
+}
+
+/// The Draw / Erase choice of a tool (gradient, fill). Erase is shown in
+/// the warning colour with a hint while it is on, so a tool that removes
+/// paint never looks like one that adds it. Returns the new choice.
+pub fn draw_or_erase(ui: &mut Ui, erase: bool, what: &str) -> Option<bool> {
+    let chosen = row(ui, "Mode", |ui| {
+        let options = [
+            (false, "Draw", "Paint with the colours"),
+            (true, "Erase", "Remove paint (as the eraser does)"),
+        ];
+        segmented(ui, erase, &options)
+    });
+    if erase {
+        row(ui, "", |ui| {
+            ui.label(
+                RichText::new(format!("Erasing: {what} removes paint"))
+                    .size(text::SMALL)
+                    .color(color::WARNING),
+            );
+        });
+    }
     chosen
 }
 

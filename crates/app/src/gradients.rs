@@ -23,6 +23,10 @@ pub struct GradientTool {
     pub edge: GradientEdge,
     pub mixing: Mixing,
     pub dither: bool,
+    /// The tool erases by the gradient's alpha (Mode: Erase) instead of
+    /// drawing. Its own setting, shown in its options: the brush's eraser
+    /// mode does not carry over (it did, invisibly; UI_AUDIT Q-05).
+    pub erase: bool,
     /// Ordered by position; never empty.
     stops: Vec<StopRow>,
     selected: usize,
@@ -35,6 +39,7 @@ impl Default for GradientTool {
             edge: GradientEdge::Clamp,
             mixing: Mixing::Perceptual,
             dither: true,
+            erase: false,
             stops: Vec::new(),
             selected: 0,
         };
@@ -86,6 +91,7 @@ impl GradientTool {
             GradientAction::Edge(e) => self.edge = e,
             GradientAction::Mixing(m) => self.mixing = m,
             GradientAction::Dither(on) => self.dither = on,
+            GradientAction::Erase(on) => self.erase = on,
             GradientAction::Preset(p) => self.preset(p),
             GradientAction::Select(k) => self.selected = k.min(self.stops.len() - 1),
             GradientAction::Position(p) => {

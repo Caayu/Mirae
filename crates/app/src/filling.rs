@@ -15,6 +15,10 @@ pub struct FillTool {
     pub reference: FillReference,
     pub tolerance: Tolerance,
     pub anti_alias: bool,
+    /// The tool erases (Mode: Erase) instead of filling with the colour.
+    /// Its own setting, shown in its options: the brush's eraser mode does
+    /// not carry over (it did, invisibly; docs/quality/UI_AUDIT.md Q-05).
+    pub erase: bool,
 }
 
 impl Default for FillTool {
@@ -23,6 +27,7 @@ impl Default for FillTool {
             reference: FillReference::Composite,
             tolerance: Tolerance::DEFAULT,
             anti_alias: true,
+            erase: false,
         }
     }
 }

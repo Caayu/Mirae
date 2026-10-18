@@ -270,14 +270,22 @@ impl App {
             }),
             c.recent().len()
         );
+        let _ = write!(
+            j,
+            "\"fill\":{{\"erase\":{},\"canvas\":{}}},\"eraser_mode\":{},",
+            self.fill_tool.erase,
+            self.fill_tool.reference == tela_document::FillReference::Composite,
+            self.tools.eraser_mode
+        );
         let g = &self.gradient_tool;
         let _ = write!(
             j,
-            "\"gradient\":{{\"kind\":{},\"edge\":{},\"mixing\":{},\"dither\":{},\"selected\":{},\"session\":{},\"stops\":[",
+            "\"gradient\":{{\"kind\":{},\"edge\":{},\"mixing\":{},\"dither\":{},\"erase\":{},\"selected\":{},\"session\":{},\"stops\":[",
             string(&format!("{:?}", g.kind)),
             string(&format!("{:?}", g.edge)),
             string(&format!("{:?}", g.mixing)),
             g.dither,
+            g.erase,
             g.selected(),
             self.gradient.is_some()
         );

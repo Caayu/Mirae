@@ -136,6 +136,8 @@ pub struct GradientModel<'a> {
     pub edge: GradientEdge,
     pub mixing: Mixing,
     pub dither: bool,
+    /// The tool erases (its Mode is Erase).
+    pub erase: bool,
     /// In order of position.
     pub stops: &'a [StopRow],
     /// Index into `stops`.
@@ -152,6 +154,8 @@ pub enum GradientAction {
     Edge(GradientEdge),
     Mixing(Mixing),
     Dither(bool),
+    /// Erase (`true`) or draw.
+    Erase(bool),
     Preset(GradientPreset),
     /// Select stop `i`.
     Select(usize),
@@ -192,6 +196,9 @@ fn color32(c: tela_color::Rgba) -> Color32 {
 /// tool strip).
 pub fn gradient_panel(ui: &mut Ui, m: &GradientModel) -> Option<GradientAction> {
     let mut action = None;
+    if let Some(erase) = style::draw_or_erase(ui, m.erase, "the gradient") {
+        action = Some(GradientAction::Erase(erase));
+    }
     style::row(ui, "Preset", |ui| {
         if ui
             .button("Main to Sub")

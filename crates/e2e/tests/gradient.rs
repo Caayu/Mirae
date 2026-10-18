@@ -407,3 +407,60 @@ fn sixteen_bit_documents_draw_the_same_gradient() {
     let d = drag_and_compare(&mut s, "16bit-radial", [2000.0, 1500.0], [2600.0, 1500.0]);
     assert_eq!(d.document_wrong, 0);
 }
+
+/// Regression (Q-05 in docs/quality/UI_AUDIT.md): after the eraser (E or
+/// the strip), the gradient and the bucket used to erase without saying
+/// so — a gradient "did nothing" on an empty layer and wiped a drawn one.
+/// Now each has its own visible Draw / Erase mode, Draw by default.
+#[test]
+#[ignore = "desktop E2E: run scripts/e2e.ps1"]
+fn the_eraser_does_not_turn_gradients_and_fills_into_erasers() {
+    let mut s = Session::start("gradient-after-eraser");
+    s.maximize();
+    s.click(&sel("Brush").role("Button"));
+    s.drag_doc([1000.0, 1000.0], [3000.0, 1000.0], 20);
+    let drawn = s.digest();
+    // The eraser, then the gradient by its key (as a user would).
+    s.key(&[], vk::letter('e'));
+    assert_eq!(s.settle()["tool"], "eraser");
+    gradient_tool(&mut s);
+    let st = s.settle();
+    assert_eq!(
+        st["gradient"]["erase"], false,
+        "the gradient draws by default"
+    );
+    assert_eq!(s.expect(&sel("Draw").after("Mode")).toggled, Some(true));
+    let a = s.doc_to_client(500.0, 2000.0);
+    let b = s.doc_to_client(3500.0, 2000.0);
+    s.drag(a, b, 16);
+    s.settle();
+    let (p, _) = s.pixel(2000, 1000);
+    assert_eq!(p[3], 255, "the drawing is still there");
+    assert_ne!(s.digest(), drawn, "the gradient drew");
+    s.key(&[vk::CONTROL], vk::letter('z'));
+    // Erase mode is a visible choice and does erase.
+    s.click(&sel("Erase").after("Mode"));
+    assert_eq!(s.settle()["gradient"]["erase"], true);
+    assert!(
+        s.widget(&sel("Erasing: the gradient removes paint"))
+            .is_ok(),
+        "a warning shows"
+    );
+    s.shot("erase-mode");
+    s.drag(a, b, 16);
+    let (_, layer) = s.pixel(2000, 1000);
+    assert_eq!(layer.unwrap()[3], 0, "Erase mode erased");
+    s.key(&[vk::CONTROL], vk::letter('z'));
+    // The bucket after the eraser fills, too.
+    s.key(&[], vk::letter('e'));
+    s.click(&sel("Fill").role("Button"));
+    assert_eq!(s.settle()["fill"]["erase"], false);
+    let c = s.doc_to_client(2000.0, 2500.0);
+    s.click_at(c[0], c[1]);
+    assert_eq!(s.settle()["document"]["undo"], "fill");
+    assert_eq!(
+        s.pixel(2000, 1000).0[3],
+        255,
+        "the bucket filled, it did not erase"
+    );
+}
