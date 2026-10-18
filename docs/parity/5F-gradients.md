@@ -187,3 +187,19 @@ A 4000 × 3000 document, the release build, `RUST_LOG=tela::gradient=debug`.
 | D-5F-8 | **History of a no-op**: a drag without length records nothing in both (GD24); a gradient that changes no pixel records nothing in Mirae (rule H6), not observed in the reference. | Behaviour | As 5E (D-5E-4) |
 | D-5F-9 | **16-bit**: the reference has no 16-bit documents; Mirae's 16-bit gradients pass the same parity tests as 8-bit ones (identical tolerances). | Coverage | Accepted |
 | D-5F-10 | **Not observed**: rotated and mirrored views in the reference, the reference's speed and memory, a real pen. | Coverage | Open |
+
+## After the gate: approval revoked, quality gate (2026-10-17)
+
+The owner revoked the approval of 5F. The E2E/UI audit
+([../quality/UI_AUDIT.md](../quality/UI_AUDIT.md)) found the gradient's
+problems in the application around the engine, not in the measured rules
+above: the brush's eraser mode silently made the gradient erase (Q-05),
+the whole-canvas preview lagged and starved tiles (Q-02), a ghost preview
+stayed after a focus loss (Q-03), the stop buttons were out of reach at
+the default window (Q-01). They are fixed; the desktop E2E suite compares
+the running app's gradients with the engine applied to the same geometry
+on every shape and end, preview included. Changes to the description
+above: the gradient has its own **Draw / Erase** mode (Draw by default);
+"eraser mode (E)" in the app session (step 10) is now that Erase mode;
+the eraser end still erases. Nothing measured above changed.
+**Status: implementation present, owner approval pending.**

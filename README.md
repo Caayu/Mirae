@@ -30,69 +30,63 @@ powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # full local gate
 ## Controls
 
 Pen (Windows Ink: pressure, tilt, rotation, eraser end) and mouse share one
-input path. The colour panel at the top left holds the main and sub
-colours (the framed one paints), an HSV square and hue bar, RGB (0–255),
-HSV and hex values, the eyedropper (canvas or active layer), the recent
-colours (newest first) and swatches (click to use, right-click to remove,
-+ to add the current colour). Colours are session state: they are not
-saved in documents and not part of undo. Below it, the brush
-panel edits the active preset, its effectors
-and the pressure curve; the layer panel on the right creates, selects,
-hides, locks, renames (double-click), reorders (Up/Down or drag and
-drop), merges down and deletes layers, sets their opacity and blend
-mode, clips a layer to the one below, locks transparent pixels, and adds,
-enables, edits (Pixels / Mask) and deletes layer masks. Above it, the
-document lines show the file name (`*` while modified), Open, Save,
-Save As, Import PNG (a new centred layer) and Export PNG (with the paper
-or transparent, 8 or 16 bits), the storage depth with New 8-bit, New
-16-bit and conversion to the other depth (undoable). Documents are saved
-as `.mirae` files (docs/formats/mirae-v1.md); dropping a `.mirae` on the
-window opens it, dropping a `.png` imports it. Before anything replaces
-or closes a modified document, Mirae asks Save / Don't Save / Cancel.
-Under the colours, the selection panel picks the canvas tool (Brush,
-Rectangle, Ellipse, Lasso), the selection mode (New, Add, Sub, Int),
-anti-aliasing per shape, and holds All, None, Invert and Feather (a
-strength in pixels). A selection limits every stroke (paint, erase, mask)
-until it is removed; it is shown with marching ants, is part of undo and
-is not saved in documents. The fill panel below it picks the bucket
-(G: a click fills the connected area of similar colour with the colour;
-the pen's eraser end or eraser mode clears it), what decides the area
-(the edited layer, or the visible canvas without the paper), the
-tolerance and anti-aliasing, and fills the whole selection, or the layer
-(Fill selection, Alt+Delete); a fill is one undo step. The gradient panel
-picks the gradient tool (G again: a drag draws a gradient, previewed live;
-Shift snaps to 45°, Escape cancels, the eraser end erases), its shape
-(linear, radial, ellipse, angular, reflected), what is drawn beyond the
-ends, how colours mix (Perceptual, sRGB, Linear), dithering, presets
-(main to sub, main to transparent) and the stops (a bar with draggable
-markers; colour from main, sub or the active colour; opacity, position);
-a gradient is one undo step. The transform
-panel below it starts a
-transform of the active layer, or of the selected part of it, with its
-mask (Transform, Ctrl+T), the Move tool, and flips; during a transform
-a box with handles appears: drag inside to move, outside or the round
-handle to rotate, a corner or a side to scale (Keep aspect, or Shift),
-the centre cross to move the pivot; W, H and Angle fields, Bicubic or
-Nearest; Enter or OK applies it as one undo step, Escape or Cancel
-discards it. The pen works on the panels too.
+input path; the pen works on the panels too. The window is laid out around
+the canvas (docs/architecture/ui.md):
+
+- **Top bar**: the document's name (an orange dot while it has unsaved
+  changes), New (8- or 16-bit), Open, Save, Save As, Import PNG (a new
+  centred layer), Export PNG, Undo, Redo. Documents are `.mirae` files
+  (docs/formats/mirae-v1.md); dropping a `.mirae` on the window opens it,
+  a `.png` imports it. Before anything replaces or closes a modified
+  document, Mirae asks Save / Don't Save / Cancel.
+- **Tool strip** (left): Brush, Eraser, Eyedropper, Select, Move, Fill,
+  Gradient, Transform; the active tool is filled in blue.
+- **Tool options** (beside it, scrolling): the colour section — main and
+  sub colour (the framed one paints), HSV square and hue bar, RGB, HSV,
+  hex, where the eyedropper picks (canvas or layer), recent colours,
+  swatches (click to use, right-click to remove, + to add) — then only the
+  active tool's options: the brush's preset and parameters (stroke,
+  tip/scatter/texture, pressure curve and effectors fold away); the
+  selection's shape, mode, anti-aliasing, All/None/Invert and feather;
+  the bucket's Draw/Erase mode, reference (layer or visible canvas),
+  tolerance, anti-aliasing and Fill layer/selection; the gradient's
+  Draw/Erase mode, presets, shape, ends, mixing, dithering and stops (a
+  bar with draggable markers, colour from main, sub or fixed, opacity,
+  position); the transform's flips, size, angle, resampling and Apply /
+  Cancel. Colours and tool settings are session state: not saved in
+  documents, not part of undo.
+- **Right panel**: the Document section (size, depth with conversion,
+  export options: transparent, 16-bit) and the layers: New, Delete,
+  Up/Down, Merge down, Clear; blend mode, opacity, clipping, lock
+  transparent pixels, the mask (add, on/off, delete; which part tools
+  edit, shown in orange while it is the mask); rows to select, hide, lock,
+  rename (double-click) and reorder (drag).
+
+A selection limits every stroke, fill and gradient until it is removed;
+it is shown with marching ants, is part of undo and is not saved. A
+transform shows a box with handles: drag inside to move, outside or the
+round handle to rotate, a corner or a side to scale (Keep aspect, or
+Shift), the centre cross to move the pivot; Enter or Apply commits one
+undo step, Escape or Cancel discards it. Gradients preview live; Shift
+snaps to 45°, Escape cancels.
 
 | Input | Action |
 |---|---|
 | Left drag / pen | Paint (pen eraser end erases); picks the colour when the eyedropper is on; draws a selection with the selection tool; fills with the fill tool; draws a gradient with the gradient tool |
-| M / B | Selection tool / brush |
+| M / B | Selection tool / brush (B also leaves eraser mode) |
 | Shift, Alt, Shift+Alt at the press (selection tool) | Add, subtract, intersect; Shift during the drag: square |
 | Ctrl+A, Ctrl+D, Ctrl+Shift+I | Select all, deselect, invert the selection |
 | Esc | Cancel the selection being drawn; discard a transform |
 | Ctrl+T, Enter | Transform the layer (or the selection); apply it |
 | K | Move tool (drag moves the layer or the selection) |
 | G | Gradient tool, then fill tool (G cycles them): a drag draws a gradient; a click with the bucket fills the connected area under it |
-| Alt+Delete | Fill the selection, or the whole layer without one |
+| Alt+Delete | Fill the selection, or the whole layer without one (erase it in the fill tool's Erase mode) |
 | Ctrl+Z, Ctrl+Y during a transform | Undo, redo its last edit |
 | Right-click, or Alt + click / pen (not with the selection tool) | Pick the colour shown under the cursor |
 | X | Paint with the other colour (main ↔ sub) |
 | D | Main colour black, sub white |
 | 1–8 | Presets: ink pen, pencil, soft round, marker, airbrush, chalk, calligraphy, eraser |
-| E | Toggle eraser mode |
+| E | Toggle the brush's eraser (gradient and fill have their own Draw / Erase mode) |
 | Middle drag, or Space + drag | Pan |
 | Wheel | Zoom at cursor |
 | Shift + wheel | Rotate 15° at cursor |
@@ -102,7 +96,7 @@ discards it. The pen works on the panels too.
 | I | Cycle interpolation (linear, Catmull–Rom, Bézier) |
 | T | Toggle start/end tapers |
 | O | Toggle pressure → opacity |
-| C | Clear the active layer |
+| C | Clear the active layer's pixels |
 | Ctrl+N | New document (8-bit, same size) |
 | Ctrl+O | Open a document |
 | Ctrl+S | Save |

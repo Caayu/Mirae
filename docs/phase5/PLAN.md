@@ -11,8 +11,8 @@ nothing else is started.
 | 5C Selections | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5C-selection.md](../parity/5C-selection.md); [ADR 0024](../adr/0024-selections.md) |
 | 5D Transform | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5D-transform.md](../parity/5D-transform.md); [ADR 0025](../adr/0025-transform.md) |
 | 5E Fill | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5E-fill.md](../parity/5E-fill.md); [ADR 0026](../adr/0026-fill.md) |
-| 5F Gradients | **Approved 2026-10-17, complete** (parity gate recorded) | below; [parity/5F-gradients.md](../parity/5F-gradients.md); [ADR 0027](../adr/0027-gradients.md) |
-| 5G Integration | Proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
+| 5F Gradients | Implemented, parity gate recorded; **approval revoked by the owner 2026-10-17**; quality gate done on branch `fix/ux-e2e-quality-gate`, **owner approval pending** | below; [parity/5F-gradients.md](../parity/5F-gradients.md); [ADR 0027](../adr/0027-gradients.md) |
+| 5G Integration | **Blocked** until the owner accepts 5F after the quality gate; proposed, not approved | [PROPOSAL.md](PROPOSAL.md) |
 
 ## 5A — Colour (approved brief, summarized)
 
@@ -258,3 +258,22 @@ depths, circles/ellipse/repeat/reverse within ~1 px, alpha, transparent
 stops, alpha lock, selections and masks within 1.5–2 levels; a 2048²
 preview frame ~100 ms, commit ~80 ms. Remaining differences: D-5F-1…10.
 5G not started.
+
+## Quality gate after 5F (2026-10-17)
+
+The owner revoked the approval of 5F (functional problems with gradients,
+serious interface problems) and asked for an E2E and UI audit before any
+new development, with four layers of validation from now on (unit,
+integration, desktop E2E, UX/UI acceptance). Done on the branch
+`fix/ux-e2e-quality-gate`, not merged:
+
+- The audit: [../quality/UI_AUDIT.md](../quality/UI_AUDIT.md) (Q-01–Q-18:
+  causes, fixes, regression tests, screenshots before and after).
+- The permanent gate: [../quality/QUALITY_GATE.md](../quality/QUALITY_GATE.md);
+  coverage: [../quality/E2E_MATRIX.md](../quality/E2E_MATRIX.md).
+- Decisions: ADR 0028 (the desktop E2E test mode), ADR 0029 (interface
+  layout, design system, explicit Draw / Erase modes).
+
+**5F: implementation present, owner approval pending after the E2E/UI
+review. 5G: blocked. Phase 5 is not complete.** Every later subphase
+passes the quality gate before it is offered for approval.

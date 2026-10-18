@@ -1,7 +1,54 @@
 # UI boundary
 
-The UI is deliberately minimal and functional (it is not designed yet).
-What matters is where it sits in the architecture.
+The interface is organised around the canvas with a small design system
+(ADR 0029; the audit that led to it: [../quality/UI_AUDIT.md](../quality/UI_AUDIT.md)).
+What matters most is still where it sits in the architecture.
+
+## Layout
+
+```
+┌──────────────────────── top bar: name •  New Open Save Save As │ Import Export │ Undo Redo ─┐
+│ tool   │ tool options (scrolls)      │                         │ Document (size, depth,   │
+│ strip  │  Colour (collapsible)       │         canvas          │   export options)        │
+│ Brush  │  <active tool name>         │                         │ Layers: commands,        │
+│ Eraser │  that tool's options only    │                         │   blend, opacity, clip,  │
+│ …      │                             │                         │   mask, rows (scrolls)   │
+└────────┴─────────────────────────────┴─────────────────────────┴──────────────────────────┘
+```
+
+- The **tool strip** (`toolbar::tool_strip`) returns a `ToolChoice`; the app
+  maps it to `CanvasTool` and eraser mode (or opens a transform). The
+  active tool is the one button filled with the accent colour.
+- The **tool options** show the Colour section, then only the active
+  tool's panel (brush, selection, fill, gradient, transform); the panel
+  scrolls, so every control is reachable at 800×600.
+- The **top bar** (`toolbar::top_bar`) holds file commands and undo/redo;
+  the document name has a fixed width and the unsaved dot a fixed place.
+- The **right panel** holds the Document section (`document_panel`) and
+  the layer panel.
+- Panel widths are fixed (`style::{TOOL_STRIP_WIDTH, OPTIONS_WIDTH,
+  LAYERS_WIDTH}`); the canvas fits the area they leave (`canvas_area` in
+  the app) and keeps its place when the window resizes.
+
+## Design system
+
+`tela_ui::style` is the only place panels take sizes and colours from:
+
+| Token | Values |
+|---|---|
+| Spacing (`space`) | XS 2, S 4, M 8, L 12, XL 16 pt |
+| Controls | height 22 pt; label column 76 pt; tool buttons 30 pt high; corners 4 pt |
+| Type (`text`) | body 13, small 11, heading 15, section 11 pt |
+| Colours (`color`) | panel `#232428`, chrome `#1C1D21`, surface `#303238` / hover `#3A3D45` / active `#454952`, field `#18191C`, border `#3B3E46`, text `#E4E5E8`, muted `#9CA0A8`, disabled `#666A72`, accent `#4F7FE0` (selection, active tool, focus), warning `#E0A43C` (mask target, Erase modes), danger `#E5534B` |
+
+Pieces: `section` (a muted small-capitals heading), `row` (a labelled
+row with the fixed label column; labels truncate), `segmented` (one
+choice among a few, selected = accent), `tool_button`, `draw_or_erase`
+(the Draw / Erase mode with its warning line), `hint` (muted small text),
+`panel_frame`. States: disabled controls are greyed by egui with the
+theme's disabled colour; hover lightens the surface; active (pressed)
+adds an accent outline; selected uses the accent fill. The theme is
+installed once (`style::apply`) when the `UiLayer` is created.
 
 ## Rules
 
@@ -106,7 +153,16 @@ What matters is where it sits in the architecture.
    (`UiLayer::occupied`); the app hands them to the Windows Ink backend as
    passthrough regions, so a pen contact that **starts** over the panel is
    delivered to Windows as mouse input (and reaches egui), while a stroke
-   that wanders over the panel keeps painting.
+   that wanders over the panel keeps painting. Whether a press is the
+   UI's is decided by egui's answer **and** the panels' rectangles under
+   the current pointer: egui's answer comes from the last frame's pointer,
+   and a click faster than a frame (or the first after the window moved)
+   used to reach the canvas (UI_AUDIT Q-04). Redraw events are not passed
+   back as redraw requests (the app was redrawing while idle, Q-06).
+7. **Inspection for tests.** `UiLayer::set_inspect(true)` (only in the
+   end-to-end test mode, ADR 0028) keeps egui's AccessKit description of
+   every widget each frame (`WidgetInfo`: role, label, value, state,
+   rectangle and the visible, clipped part). It changes nothing drawn.
 
 ## Frame sequence
 
@@ -115,8 +171,9 @@ window event -> UiLayer::on_window_event (egui-winit) -> consumed?
 redraw:
   App::build_ui: selection outline traced (once per selection change) and
                  mapped through the view
-                 UiLayer::build(|ui| selection_outline(..); panels: ColorPanel,
-                                selection_panel, BrushPanel, layer panel)
+                 UiLayer::build(|ui| selection_outline(..); top_bar,
+                                tool_strip, tool options (ColorPanel + the
+                                active tool's panel), document_panel + layer_panel)
      -> occupied rects -> InkBackend::set_passthrough
   App::apply(PanelAction)
   Renderer::render_with(frame, Some(&mut UiLayer))   // canvas, then UI
@@ -127,7 +184,11 @@ redraw:
 - Preset edits live only in memory; nothing is saved (TECHNICAL_DEBT.md).
 - Preset names are cloned into a `Vec<String>` each frame (UI-rate, not a
   hot path).
-- No visual design, no layout persistence, no theming.
+- One dark theme; no layout persistence; tools and rows are labelled with
+  text, not icons (egui's bundled fonts have no coherent icon set).
+- The interface is tested at 100 % display scaling only (UI_AUDIT).
+- A gradient or fill committed over a whole 4000×3000 canvas blocks the
+  window ~0.3 s without a busy indicator (UI_AUDIT Q-14, debt #43).
 - Keyboard shortcuts are handled in the app (`App::on_key`), not in the UI
   crate; they call the same domain APIs.
 - The layer panel (5B) renames by double-click (`LayerAction::Rename`),

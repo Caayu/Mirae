@@ -11,10 +11,16 @@ already `opt-level = 1`, so plain `cargo test` also works, slower.) The full
 gate, including fmt, clippy, docs and the release build, is
 `scripts/check.ps1` (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
-Counts at the end of phase 5A: **434 tests**, all passing (phase 4
-ended with 401, phase 3.5
-ended with 207, phase 3 with 188). GPU tests skip themselves when no
+Counts at the quality gate after 5F: **625 tests** run by `cargo test`
+(618 at the start of the gate; 5A ended with 434), plus the desktop E2E
+suite below, which `cargo test` lists as ignored (phase 4 ended with 401,
+phase 3.5 with 207, phase 3 with 188). GPU tests skip themselves when no
 adapter is available.
+
+The layers of testing and what each may claim are defined in
+[quality/QUALITY_GATE.md](quality/QUALITY_GATE.md): unit (L1),
+integration (L2), desktop end-to-end (L3), interface acceptance (L4).
+Passing engine tests never make a tool "done".
 
 ## Kinds of tests
 
@@ -178,6 +184,59 @@ depth, lock, selection and mask. To re-measure: `gradient_probe psd`,
 the steps in docs/parity/5F-gradients.md, then `gradient_probe
 decode`/`cols`/`ring`/`noise`/`bayer`.
 
+### Desktop end-to-end tests
+
+The real executable, operated like a person would (ADR 0028):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1            # all (~10 min)
+powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Filter gradient
+```
+
+The script builds `tela.exe` and runs `cargo test -p tela-e2e --release --
+--ignored --test-threads=1`. Each test starts its own `tela.exe` with
+`TELA_E2E_DIR=target/e2e/<test>/app`, which turns on the app's test mode:
+after every frame the app writes `state.json` (tool, drag, view mapping,
+document structure and history, colours, gradient and fill settings,
+prompts, panel areas, when it last handled input, and egui's AccessKit
+description of every widget with its rectangle and visible part) and
+answers read-only `pixel x y` and `digest` queries. The driver
+(`crates/e2e/src/`):
+
+- sends OS input: `SendInput` mouse and keyboard (Unicode text too), the
+  synthetic Windows Ink pen, a window of its own to take the focus;
+- finds widgets by role and label (`sel("Radial")`, `role("Slider")
+  .after("Size")`), scrolling their panel with the wheel until they are
+  shown whole and still, and refuses to click one that cannot be
+  reached or is disabled;
+- waits for the app to handle the input it sent and to become idle
+  (`settle`);
+- checks three ways: the app's state, the document's pixels (queries,
+  digests, exported PNGs, an **engine oracle** that applies the same
+  gradient to a fresh document) and the screen (captures);
+- answers native file dialogs by typing a path;
+- writes `target/e2e/<test>/report.md` with every step and screenshot,
+  the app's log, and a capture on failure; stops only the process it
+  started; every wait has a timeout.
+
+Files: `smoke.rs` (the harness), `gradient.rs`, `ui_layout.rs` (the
+interface gate and review screenshots), `files_history.rs`,
+`paint_color_layers.rs`, `select_transform_fill.rs`, `scenarios.rs`
+(workflows A–E), `performance.rs` (response times). Coverage and gaps:
+[quality/E2E_MATRIX.md](quality/E2E_MATRIX.md).
+
+Rules and limits:
+
+- Leave the machine alone while it runs: input goes to the foreground
+  window; if another program takes the focus the test fails instead of
+  typing into it.
+- One display at 100 % scaling was available: other scalings and 4K are
+  not tested. Dropping files on the window is not automated.
+- `cargo test --workspace` lists these tests as ignored; that is not a
+  pass. The gate requires `scripts\e2e.ps1` green.
+- A screenshot is evidence for a person; tests assert on state and
+  pixels, never on whole-screen equality.
+
 ### End-to-end tests (phase 4G)
 
 `crates/corpus/tests/` drives the whole stack through public APIs as the
@@ -315,9 +374,14 @@ rectangle and an ellipse, then Home; To 16-bit and a stroke; Save As,
 reopen (no selection); a pen rectangle and pen stroke; Ctrl+D during a
 stroke (ignored); Ctrl+A (`docs/parity/5C-selection.md`, part 3).
 **Ctrl+Shift+I** (Invert) is also a global hotkey of another program on
-the development machine (error 1409); use the Invert button there. After
-typing in a panel field, click a label before using shortcuts (egui
-keeps keyboard focus, D-5C-7).
+the development machine (error 1409); use the Invert button there.
+The 5C note that a panel field kept the keyboard (D-5C-7) is not
+reproduced since the quality gate: a canvas click or Escape returns it
+(`ui_layout.rs` `fields_give_the_keyboard_back`).
+
+Quality-gate session (after 5F): the audit in
+[quality/UI_AUDIT.md](quality/UI_AUDIT.md) — the `main` build by hand for
+the "before" evidence, then the desktop E2E suite.
 
 ### Hardware tests
 

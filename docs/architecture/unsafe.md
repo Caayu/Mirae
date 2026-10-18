@@ -33,8 +33,10 @@ Policy:
 | `crates/corpus/examples/fill_bench.rs` | benchmark | Counting `GlobalAlloc` (live and peak bytes) forwarding to `System` (phase 5E) | Documented |
 | `crates/io/examples/io_bench.rs` | benchmark | Counting `GlobalAlloc` (live and peak bytes) forwarding to `System` | Documented |
 | `crates/brush/tests/allocation.rs` | test | Counting `GlobalAlloc` (thread-local counters, const-initialized) forwarding to `System` | Documented |
+| `crates/ui/src/lib.rs` (`widget_id`) | library, function-level `#[allow]` | `egui::Id::from_high_entropy_bits` on an AccessKit node id egui made from a widget id, to read the widget's clipped rectangle for the end-to-end test mode (ADR 0028). The function is `unsafe` only because low-entropy ids would slow egui's maps; no memory-safety contract | Audited (quality gate after 5F); 1 block |
+| `crates/e2e/src/win.rs` | test-support library, module-level `#[allow]` | The desktop E2E driver (ADR 0028): `SendInput` (mouse, keyboard, Unicode text), `SetCursorPos`, `EnumWindows` with a callback over a stack `Search`, `GetClientRect`/`ClientToScreen`, GDI screen capture (`BitBlt`, `GetDIBits` into a buffer sized for the request), a synthetic pen device (`CreateSyntheticPointerDevice`, `InjectSyntheticPointerInput`, destroyed on drop), a focus-taking window of its own (`CreateWindowExW`, destroyed on drop), `GetProcessTimes` on a query-only handle closed after use | Audited (quality gate after 5F); every block documented |
 
-No `unsafe` exists in color, canvas, brush, document, io, renderer, ui, corpus
+No `unsafe` exists in color, canvas, brush, document, io, renderer, corpus
 (library) or app. The app reaches Windows Ink only through `InkBackend`.
 
 ## The Windows Ink backend in detail

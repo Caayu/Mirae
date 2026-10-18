@@ -125,7 +125,9 @@ loop per end rule and tile tripled it with results within half a 16-bit
 level (tested). A preview frame allocates nothing (one tile scratch
 allocated when the preview starts). In the app a whole-canvas preview of
 a 4000 × 3000 document is composed over several frames: the tiles on
-screen first, at most ~12 ms per frame (D-5F-7, debt #43); in the
+screen first, at most ~12 ms per frame (D-5F-7, debt #43; since the
+quality gate in parallel and least recently composed first, see
+"Interface responsiveness"); in the
 running app commits took 150–530 ms on that canvas (192 tiles), 40–100 ms
 inside selections or on a layer's existing tiles. Memory:
 [memory.md](memory.md).
@@ -642,6 +644,40 @@ Synthetic Windows Ink pen at ~220–230 Hz: input age ~3 ms, pipeline 15–70
 µs per sample, composition 0.2–0.7 ms per frame, sample → GPU submit
 ~9–10 ms. Details in [phase2/README.md](phase2/README.md). Measure in the
 app with F3 (title bar) or `RUST_LOG=tela::latency=debug`.
+
+## Interface responsiveness (quality gate after 5F)
+
+Measured on the real executable by `crates/e2e/tests/performance.rs`
+(`scripts\e2e.ps1 -Filter performance`): from the last OS input event to
+the app's published state showing its effect (each figure includes the
+frame that shows it and up to ~2 ms of polling). Maximized window
+2560×1369, the default 4000×3000 8-bit document, Ryzen 7 5800X, RX 7700
+XT, 2026-10-17.
+
+| Measure | Before (`main`) | After |
+|---|---:|---:|
+| Idle: frames drawn in 3 s | 410–510 (140–170 per second, continuous redraw, Q-06) | 0–3 |
+| Idle: CPU, % of one core | ~16 % (0.47 s in 3 s) | ≤ 1 % |
+| Tool strip click → tool active | — (no strip) | 9.6 ms |
+| Shortcut → tool active | — | 9.5 ms |
+| Panel button (Swap) → shown | — | 9.4 ms |
+| Gradient preview, last move → whole canvas shown | 246–797 ms (and the far tiles starved while moving, Q-02) | 105–170 ms (median ~140–150) |
+| Gradient commit over the whole canvas, release → shown | 150–530 ms | ~320 ms (unchanged: synchronous in `tela-document`, Q-14) |
+| Move tool preview (1000² selection), last move → shown | — | ~45 ms |
+| Layer list with 40 layers, wheel → moved | — | ~54 ms (egui's smooth scroll) |
+| Layer row click → active | — | ~10 ms |
+| Resize → new layout drawn | — | ~30 ms |
+
+"Before" figures come from the `main` build by hand (idle CPU, frames)
+and from the gradient E2E suite run before the fixes (preview). The
+gradient preview is now composed on scoped threads (up to 16, one
+compose scratch and one preview per worker, deterministic per tile and
+tested bit-identical to one tile at a time), on-screen tiles first and
+then the least recently composed ones, so a moving pointer cannot starve
+any tile; the per-frame budget is unchanged (12 ms of batches).
+Limits in the test (far above the figures, to catch regressions): idle
+CPU < 3 %, idle frames < 10, clicks and shortcuts < 100 ms, gradient
+preview < 600 ms.
 
 ## Known limits
 

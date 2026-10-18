@@ -3,9 +3,32 @@
 Organized by project phase (no releases yet). Commit hashes point to the
 main change; see `git log` for everything.
 
+## Quality gate after 5F (5F approval revoked)
+
+The owner revoked 5F's approval; an E2E and UI audit on the branch
+`fix/ux-e2e-quality-gate` (not merged; owner approval of 5F pending; 5G
+blocked). See [docs/quality/UI_AUDIT.md](docs/quality/UI_AUDIT.md).
+
+### Fixed
+- The brush's eraser mode silently made gradients and fills erase; each
+  now has its own Draw / Erase mode (3187acb).
+- Gradient preview lag and starved tiles (parallel, fair composition);
+  ghost preview after a focus loss; panel clicks that painted; idle
+  redraw loop; B keeping the eraser (afc51d4).
+- Unreachable controls at the default window, layout shifts, ambiguous
+  labels: the interface redesigned around a tool strip and contextual
+  options with a design system (6117fab).
+
+### Added
+- A desktop E2E test mode and the `tela-e2e` driver (89f37f1, ADR 0028);
+  36 desktop tests: gradients, interface gate, files and history,
+  painting/colour/layers, selection/transform/fill, five workflows,
+  response times (28590b9, bf8a069, 395e296, dcefe0b, 22e2f08).
+- docs/quality: QUALITY_GATE.md, UI_AUDIT.md, E2E_MATRIX.md; ADR 0029.
+
 ## Phase 5F — gradients
 
-Approved alone (5G not started). The reference was observed first and a
+Approved alone, then the approval was revoked (see above). The reference was observed first and a
 parity gate recorded ([docs/parity/5F-gradients.md](docs/parity/5F-gradients.md)).
 574 → 618 tests.
 

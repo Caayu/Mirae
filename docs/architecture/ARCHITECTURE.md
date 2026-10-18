@@ -38,6 +38,7 @@ paint/
     corpus/             trajectories, golden sheets, benchmark (test support)
       golden/           golden reference PNGs
     app/                the `tela` binary: composition layer
+    e2e/                desktop end-to-end tests of the built binary
   docs/                 architecture, ADRs, formats, phase reports, status
   scripts/check.ps1     local verification gate
 ```
@@ -53,9 +54,10 @@ paint/
 | `tela-io` | the `.mirae` format (manifest DTOs, tile codec, limits, versioning), atomic save, hostile-input loading through `Document::from_parts`, PNG export of the composite and PNG import as layer pixels (ADR 0019, 0020) | know paths chosen by the user, dialogs, UI; change a document |
 | `tela-renderer` | GPU device/surface, display texture + mips, canvas shader, `FrameOverlay` | see the document |
 | `tela-tablet` | `TabletSample`/`TabletEvent`, unit normalization, input clock, Windows Ink | know brushes or canvas space |
-| `tela-ui` | brush panel, colour panel, selection panel and outline (marching ants), fill panel, gradient panel and drag guide, transform panel and box, layer panel, document bar, curve editor, prompts, egui plumbing | own authoritative state |
+| `tela-ui` | the design system (`style`), the tool strip and top bar (`toolbar`), brush panel, colour panel, selection panel and outline (marching ants), fill panel, gradient panel and drag guide, transform panel and box, layer panel, document panel, curve editor, prompts, egui plumbing, widget inspection for the E2E test mode | own authoritative state |
 | `tela-corpus` | standard trajectories, `render_sheet`, image diff, goldens, `stamp_bench` | ship in the app |
-| `tela-app` | window/event loop, wiring, application state, the file workflow (native dialogs, unsaved-changes prompt, drag-and-drop) | implement engine logic or file formats |
+| `tela-app` | window/event loop, wiring, application state, the file workflow (native dialogs, unsaved-changes prompt, drag-and-drop), the parallel gradient preview, the end-to-end test mode (`TELA_E2E_DIR`, ADR 0028) | implement engine logic or file formats |
+| `tela-e2e` | the desktop E2E driver (OS input, widgets by role and label, screen capture, file dialogs, reports) and its suites | ship in the app; depend on any workspace crate (the engine only as a dev-dependency oracle) |
 
 The boundaries are enforced by a test (see crate-dependencies.md).
 
@@ -451,7 +453,9 @@ the tool's settings are app session state (`App.fill_tool`).
 gradient tool (G): press ─view.to_canvas─► GradientSession::begin (tool settings, main/sub colours resolved now)
   move: end = view.to_canvas(pointer) (Shift: 45° on screen) ─► Gradient { geometry, ColorRamp + RampTable, ends, dither }
   preview: Document::gradient_preview(target, gradient, paint) ──► overlay (pixels or mask) ─► compose_tile_into
-           tiles on screen first, ≤ 12 ms per frame; the rest next frames          (borrows the document read-only)
+           on-screen tiles first, then the least recently composed, ≤ 12 ms of batches     (borrows the document read-only)
+           per frame, each batch composed on scoped threads (one scratch and one
+           preview per worker; bit-identical to one tile at a time, GR5)
   release: Document::apply_gradient(target, gradient, paint) ─► one HistoryAction::Gradient step
   Escape / cancel: drop the session (nothing changed)
 per pixel (one function, preview and commit):
@@ -489,6 +493,24 @@ never sees the `Document`. The UI reports the
 rectangles it covers; the app forwards them to the Ink backend as
 passthrough regions so pen contacts starting over the panel reach egui as
 mouse input. See [ui.md](ui.md).
+
+## 9b. Desktop end-to-end tests
+
+```
+tela-e2e test ──spawn── tela.exe  (TELA_E2E_DIR=target/e2e/<test>/app)
+   │  SendInput mouse/keyboard, synthetic pen, a focus-taking window, file dialogs
+   ▼                                   after every frame (and input-only events):
+ the real window ─ winit ─ egui ─ App ──► state.json: tool, drag, view, document, history,
+   ▲                                     colours, gradient/fill, prompts, panels, input_ms,
+   │                                     widgets (AccessKit role/label/state/rect/visible)
+   └── request.txt (pixel x y | digest) ──► response.json (read-only)
+```
+
+Off unless `TELA_E2E_DIR` is set (ADR 0028): production runs never enter
+it, and it changes nothing. The driver finds widgets by role and label,
+waits for the app to handle its input, and checks state, pixels and the
+screen ([../testing.md](../testing.md#desktop-end-to-end-tests),
+[../quality/QUALITY_GATE.md](../quality/QUALITY_GATE.md)).
 
 ## 10. Golden corpus and benchmarks
 
@@ -531,6 +553,7 @@ history and files together. See [golden-tests.md](../golden-tests.md),
 - Composition is CPU, single-threaded and linear in layers, with no cache below the stroke target: ~12 ms per 256² tile for 100 overlapping Normal layers, ~44 ms for 100 Soft Light (4G, TECHNICAL_DEBT #33).
 - Saving and loading are synchronous on the UI thread (a full 16-bit 4096² × 10 document saves in ~6 s); no autosave, recent files or background saving yet.
 - A history step larger than the budget is kept alone, so converting the depth of a huge document peaks at ~3× its 8-bit size ([memory.md](../memory.md), TECHNICAL_DEBT #34).
-- The UI is functional, not designed; preset edits are not persisted.
+- The UI follows a small design system (ADR 0029) and is tested at 100 % display scaling only; preset edits are not persisted.
+- A whole-canvas gradient or fill **commit** runs synchronously on the UI thread (~0.3 s at 4000×3000; the preview is parallel), debt #43.
 
 See [TECHNICAL_DEBT.md](../TECHNICAL_DEBT.md) and [ROADMAP.md](../ROADMAP.md).

@@ -12,6 +12,11 @@ conversation. Read it fully, then these, all **mandatory**:
    ([phase5/PLAN.md](phase5/PLAN.md)) and its proposal
    ([phase5/PROPOSAL.md](phase5/PROPOSAL.md)), and the last subphase's parity
    record ([parity/5F-gradients.md](parity/5F-gradients.md))
+5. [quality/QUALITY_GATE.md](quality/QUALITY_GATE.md) — the four layers
+   of validation every change and subphase must pass (unit, integration,
+   desktop E2E, UX/UI acceptance), and the latest audit
+   ([quality/UI_AUDIT.md](quality/UI_AUDIT.md),
+   [quality/E2E_MATRIX.md](quality/E2E_MATRIX.md))
 
 ## 1. Mission
 
@@ -67,7 +72,8 @@ layer or the composite without paper as reference (separate from the
 target), the selection limiting connectivity, alpha lock, masks — as one
 history step, through a sparse span flood (ADR 0026); with a parity gate
 ([parity/5E-fill.md](parity/5E-fill.md)).
-**Phase 5F (gradients) is complete** (2026-10-17): linear, radial,
+**Phase 5F (gradients) is implemented** (2026-10-17) — **its approval was
+revoked by the owner**; a quality gate followed (below): linear, radial,
 elliptical, angular and reflected gradients with clamp, repeat, reflect
 and empty ends; the reference's measured per-segment easing
 `E(u) = 0.38u + 0.62q(u)`; mixing in sRGB-encoded values, linear light
@@ -77,7 +83,16 @@ without colour; Mirae's own ordered dither at the storage's precision;
 a live preview bit-identical to the one-step commit; selections, masks,
 alpha lock; G cycles fill and gradient (ADR 0027, parity record
 [parity/5F-gradients.md](parity/5F-gradients.md)).
-**5G is proposed, not approved, not started**
+**Quality gate after 5F** (2026-10-17, branch `fix/ux-e2e-quality-gate`,
+not merged): the owner found gradients broken and the interface
+unusable; an E2E and UI audit reproduced and fixed it — the brush's eraser
+mode silently made gradients and fills erase, previews lagged and
+starved tiles, a ghost preview after a focus loss, controls out of
+reach, panel clicks that painted, an idle redraw loop — redesigned the
+interface (ADR 0029) and added a desktop E2E suite (ADR 0028)
+([quality/UI_AUDIT.md](quality/UI_AUDIT.md)). **5F: owner approval
+pending. 5G: blocked. Phase 5 is not complete.**
+**5G is proposed, not approved, not started, blocked**
 ([phase5/PLAN.md](phase5/PLAN.md)). A new session asks the owner before
 starting 5G or anything else; it never begins a subphase on its own.
 
@@ -110,7 +125,8 @@ Controls are in the [README](../README.md#controls). Logging:
 ## 6. Test
 
 ```sh
-cargo test --workspace --release        # 618 tests, ~70 s after build
+cargo test --workspace --release        # 618 tests at the start of the quality gate + new unit tests (+ the ignored desktop E2E), ~70 s after build
+powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1   # desktop E2E: the real app, OS input (~10 min; leave the machine alone)
 ```
 
 ## 7. Clippy and the full gate
@@ -187,7 +203,8 @@ never sees the document; the UI owns nothing. Read
 (engine), `document` (layer stack with stable ids, composition, history, selections, transforms, fill, gradients),
 `io` (`.mirae` files, PNG), `renderer` (wgpu), `tablet` (input, Windows
 Ink), `ui` (egui), `corpus` (goldens, benchmarks), `app` (binary `tela`;
-the file workflow).
+the file workflow; the end-to-end test mode), `e2e` (the desktop E2E driver
+and suites: the built app with OS input; test support).
 
 ## 12. Allowed dependencies
 
@@ -286,11 +303,13 @@ with an 8-bit default (0018), the `.mirae` v1 format (0019), the I/O crate
 and file workflow (0020), the paint colour and colour tool state (0021),
 blending over translucent backdrops (0022), merge down and the layer
 workflow (0023), selections (0024), transforms (0025), fill (0026),
-gradients (0027).
+gradients (0027), the desktop E2E test mode (0028), the interface layout,
+design system and explicit Draw / Erase tool modes (0029).
 
 ## 15. Completed features
 
-Phases 1–4 + 3.5 and subphases 5A, 5B, 5C, 5D, 5E, 5F; see [STATUS.md](STATUS.md#features) and
+Phases 1–4 + 3.5 and subphases 5A–5E; 5F implemented, its approval
+pending after the quality gate; see [STATUS.md](STATUS.md#features) and
 [CHANGELOG.md](../CHANGELOG.md). Phase reports: [phase2](phase2/README.md),
 [phase3](phase3/README.md), [phase4](phase4/README.md) (phase 1 has no
 separate report; it is summarized in the changelog).
@@ -352,14 +371,23 @@ layers), 12.4 ms (100), 44 ms (100 Soft Light).
 
 ## 21. Next steps
 
-1. Ask the owner whether 5G (or something else) is approved; record the
+1. The owner reviews the branch `fix/ux-e2e-quality-gate` (the quality
+   gate after 5F: [quality/UI_AUDIT.md](quality/UI_AUDIT.md)) by testing
+   Mirae, and decides whether to merge it and whether 5F is accepted.
+   Do not merge or approve on the owner's behalf.
+2. Only then ask whether 5G (or something else) is approved; record the
    decision in [phase5/PLAN.md](phase5/PLAN.md) and follow it one
    subphase at a time; never start a phase or subphase without explicit
    approval.
-2. Close every subphase with its parity gate ([PARITY.md](PARITY.md)).
-   Where the reference defines a behaviour (clipping, masks, alpha lock,
-   blend results), observe it **before** implementing.
-3. Opportunistically: validate on a real tablet if one becomes available.
+3. Every subphase passes the quality gate
+   ([quality/QUALITY_GATE.md](quality/QUALITY_GATE.md)): `check.ps1
+   -Bench` **and** `scripts\e2e.ps1` green, E2E coverage of what it
+   adds, the interface reviewed with screenshots, then its parity gate
+   ([PARITY.md](PARITY.md)). Where the reference defines a behaviour
+   (clipping, masks, alpha lock, blend results), observe it **before**
+   implementing.
+4. Opportunistically: validate on a real tablet if one becomes available;
+   run the E2E suite at other display scalings (debt #45).
 
 ## 21a. Comparing with the reference
 
@@ -407,6 +435,9 @@ history. Public math/papers and observed behaviour are fine.
   rustdoc clean (`scripts/check.ps1` passes).
 - New math has unit tests; new external input has garbage-input tests.
 - Hot-path changes re-run `stamp_bench` (allocs/dab stays 0.000).
+- The quality gate ([quality/QUALITY_GATE.md](quality/QUALITY_GATE.md)):
+  desktop E2E green (`scripts\e2e.ps1`) and covering what changed; a
+  tool is never "done" because its engine tests pass.
 - Visual changes verified in the running app (and goldens regenerated
   deliberately if presets change).
 - Docs updated when architecture, invariants or formats change (ADR if a

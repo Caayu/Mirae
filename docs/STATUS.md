@@ -1,6 +1,9 @@
 # Status
 
-Factual state of the project at the end of **phase 5F** (gradients), after
+Factual state of the project after the **quality gate that followed
+phase 5F** (2026-10-17: the owner revoked 5F's approval; an E2E and UI
+audit fixed what it found, on the branch `fix/ux-e2e-quality-gate`; the
+owner's approval of 5F is pending), at the end of **phase 5F** (gradients), after
 **5E** (fill), after **5D** (transform), after **5C** (selections),
 after **5B** (layer workflow,
 translucent-backdrop compositing, merge down), after **5A** (colour) and
@@ -11,9 +14,10 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 
 | | |
 |---|---|
-| Current phase | **Phase 5F (gradients) complete** (parity gate recorded; [phase5/PLAN.md](phase5/PLAN.md), [parity/5F-gradients.md](parity/5F-gradients.md)); 5A–5E complete; phase 4 complete ([phase4/README.md](phase4/README.md)); **5G not approved, not started** |
+| Current phase | **5F (gradients): implementation present, approval revoked by the owner; quality gate done ([quality/UI_AUDIT.md](quality/UI_AUDIT.md)); owner approval pending after the E2E/UI review.** 5A–5E complete; phase 4 complete ([phase4/README.md](phase4/README.md)); **5G blocked; phase 5 not complete** |
 | Parity | Tracked in [PARITY.md](PARITY.md) (phase-4 summary; phase-5 matrix from 5A); nothing compared with the reference before phase 4 |
-| Tests | **618** passing, 0 failing (5F started at 574; 5E started at 537; 5D started at 503; 5C started at 455 + 1 regression test for a 5B defect the baseline found; 5B started at 434; 5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Tests | 618 at the start of the gate plus the new unit tests (app test mode, parallel preview, driver selectors); the final count was **not re-measured** when the session ended (618 at the start of the quality gate; 5F started at 574; 5E started at 537; 5D started at 503; 5C started at 455 + 1 regression test for a 5B defect the baseline found; 5B started at 434; 5A started at 401; 4F ended at 386; 4E ended at 324; 4D ended at 288; 4C ended at 255 — this file said 240, the 4D baseline measured 255; 4A ended at 225, phase 3.5 at 207, phase 3 at 188) |
+| Desktop E2E | 36 tests run by `scripts\e2e.ps1` ([testing.md](testing.md#desktop-end-to-end-tests)); last run below ([Desktop E2E](#desktop-e2e)) |
 | Lints | `cargo fmt` clean; `clippy --all-targets -D warnings` clean; `RUSTDOCFLAGS=-D warnings cargo doc` clean |
 | Toolchain | verified with Rust 1.99.0 (MSVC); declared minimum 1.95 (egui) |
 | Platform | Windows 11 x86-64 (Windows Ink); engine crates are portable |
@@ -33,7 +37,7 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 | Scatter | Perpendicular/radial, count, rotation and scale jitter, effector-driven amount |
 | Airbrush | Time instants independent of frame rate; rest detection with delivery-lag compensation; dwell-time flow while moving |
 | Eraser | Destination-out through the same engine; stylus eraser end switches automatically; `E` for the mouse |
-| UI | egui side panels: colour (main/sub, HSV picker, RGB/HSV/hex, eyedropper, recent colours, swatches), selection (tools, mode, commands, feather), fill (bucket, fill selection, layer or canvas reference, tolerance, AA), gradient (shape, ends, mixing, dither, presets, stop editor), transform (start, Move tool, flips, W/H/angle, keep aspect, Bicubic/Nearest, OK/Cancel), presets, parameters, stroke settings, tip/scatter/texture, pressure curve editor, effector editor; layers, document, history on the right |
+| UI | Organised around the canvas (ADR 0029): a top bar (name and unsaved dot, New, Open, Save, Save As, Import, Export, Undo, Redo), a tool strip (Brush, Eraser, Eyedropper, Select, Move, Fill, Gradient, Transform; the active tool filled with the accent colour), the tool options beside it (the colour section, then only the active tool's options: brush presets and parameters, stroke settings, tip/scatter/texture, pressure curve, effectors; selection; fill; gradient; transform), the Document section and layers at the right; every panel scrolls; a small design system (`tela_ui::style`); a dark theme. Tested at 1280×800, 1920×1080, 1024×700, 800×600 and maximized at 100 % scaling ([quality/UI_AUDIT.md](quality/UI_AUDIT.md)) |
 | Colour (5A) | Opaque `f32` paint colour without alpha captured by each stroke (ADR 0021); main/sub with an active slot (`X`), Swap, reset to black on white (`D`); HSV square + hue bar, RGB 0–255, HSV, `#RRGGBB`; eyedropper on the composite over the paper or the active layer (tool, right-click, Alt, also with the pen), document pixel at any zoom; recent colours (newest first, unique, 24) and swatches (session only); alpha lock, clipping, masks, blend modes and eraser behave with colour as measured; HSV readout, 51 % stroke, canvas picks and alpha-lock pixels match the reference |
 | Golden corpus | 8 sheets × 12 trajectories, tolerant comparison, explicit updates |
 | Performance | 0 allocations per sample/dab (sequential path, tested; parallel path: amortized rayon queue blocks); ~120 Mpx/s large hard dabs single-thread; ~3× parallel at 500 px; 0.107 ms per composed tile (2 layers); per tile with every layer drawing: 1.6 ms (10 Normal layers), 12.4 ms (100), 44 ms (100 Soft Light); 0 allocations in composition ([performance.md](performance.md), [memory.md](memory.md)) |
@@ -41,8 +45,8 @@ and hardening). The product is named **Mirae** (crates keep their `tela-` names)
 | Layer workflow (5B) | Rename by double-click (Enter/focus commits, Escape cancels, 64 characters; consecutive renames one step), drag-and-drop reorder (insertion line, Escape cancels, by id), merge down (button, Ctrl+E; lower-mask question; ADR 0023), fixed-width panel; blending over translucent backdrops as measured (ADR 0022); transparent export of blend layers |
 | Selections (5C) | Document-level 8-bit selection (ADR 0024): rectangle (snaps to pixels; screen-aligned in rotated views), ellipse, freehand lasso (even-odd), anti-aliasing per shape (rectangle off, ellipse and lasso on), New/Add/Subtract/Intersect (panel, Shift/Alt/Shift+Alt at the press; the reference's measured 8-bit rules), Select All (Ctrl+A), Deselect (Ctrl+D), Invert (Ctrl+Shift+I, button), Feather (the reference's Gaussian, within 2/255); every stroke (paint, alpha lock, erase, masks) scaled by the coverage in preview and commit; marching ants; history steps; not saved (as the reference); M selection tool, B brush |
 | Transform (5D) | Move, scale (free or proportional), rotate, flip of the active layer or the selected part of it, with the layer's mask (ADR 0025): a session (Ctrl+T, the panel, Flip H/V, the Move tool K) with a box, corner/side/rotation handles and a movable pivot at constant screen size in zoomed and rotated views, W/H/angle fields, keep aspect (Shift), Bicubic (the reference's measured default) or Nearest; Enter commits one history step, Escape cancels, undo/redo inside the session walk its edits; another layer or tool asks "Apply the transform?"; file commands wait; the selection follows the content; preview equals commit bit for bit after one quantization at 8 or 16 bits; scales within 3/255, nearest neighbour, flips and moves exactly as the reference |
-| Fill (5E) | The bucket (G) and Edit › Fill (Alt+Delete, panel) as the reference measures them (ADR 0026): a 4-connected area compared with the clicked colour by the largest straight channel difference (colour ignored at alpha 0), tolerance 0–100 % in tenths (threshold `round(2.55 t)`, at most 254), anti-aliased edge, decided on the edited layer (or a mask's own values) or on the visible canvas without the paper, limited by the selection (connectivity and coverage), alpha lock recolours keeping alpha, masks revealed or hidden, the eraser end / E erases; one history step; 8 and 16 bits; every measured island and edge of the reference reproduced (16-bit exactly, 8-bit except two translucent islands on a threshold); sparse span flood (a whole empty 4096² layer ~32 ms); no gap closing or area scaling |
-| Gradients (5F) | The gradient tool (G cycles fill and gradient; ADR 0027): linear, radial, elliptical, angular and reflected; ends extend, repeat, mirror or none (anti-aliased wraps and edges); stops from the main, sub or a fixed colour with opacity and position (presets main to sub, main to transparent; add, remove, reverse); the measured per-segment easing; sRGB, linear or OKLab (default) mixing, straight alpha; dithering on by default (Mirae's ordered pattern at the storage's precision); live preview equal to the commit bit for bit, a guide line, Shift snaps to 45°, Escape cancels; selection, feather, alpha lock, masks (by alpha), the eraser end / E erases; one history step; 8 and 16 bits; the reference's three public mixes within 1.5 levels, geometry within ~1 px |
+| Fill (5E) | The bucket (G) and Edit › Fill (Alt+Delete, panel) as the reference measures them (ADR 0026): a 4-connected area compared with the clicked colour by the largest straight channel difference (colour ignored at alpha 0), tolerance 0–100 % in tenths (threshold `round(2.55 t)`, at most 254), anti-aliased edge, decided on the edited layer (or a mask's own values) or on the visible canvas without the paper, limited by the selection (connectivity and coverage), alpha lock recolours keeping alpha, masks revealed or hidden, Erase mode (its own, since the quality gate) or the eraser end erases; one history step; 8 and 16 bits; every measured island and edge of the reference reproduced (16-bit exactly, 8-bit except two translucent islands on a threshold); sparse span flood (a whole empty 4096² layer ~32 ms); no gap closing or area scaling |
+| Gradients (5F) | The gradient tool (G cycles fill and gradient; ADR 0027): linear, radial, elliptical, angular and reflected; ends extend, repeat, mirror or none (anti-aliased wraps and edges); stops from the main, sub or a fixed colour with opacity and position (presets main to sub, main to transparent; add, remove, reverse); the measured per-segment easing; sRGB, linear or OKLab (default) mixing, straight alpha; dithering on by default (Mirae's ordered pattern at the storage's precision); live preview equal to the commit bit for bit (composed on all cores, least recently composed tiles first), a guide line, Shift snaps to 45°, Escape cancels; selection, feather, alpha lock, masks (by alpha), a Draw / Erase mode of its own (since the quality gate) or the eraser end erases; one history step; 8 and 16 bits; the reference's three public mixes within 1.5 levels, geometry within ~1 px |
 | Blend modes (4C) | Normal + 16 modes (multiply, screen, overlay, darken, lighten, color dodge/burn, hard/soft light, difference, exclusion, hue, saturation, color, luminosity, add); W3C formulas on sRGB-encoded values, paper as backdrop for blend tiles (ADR 0016); matches the reference's measured results within 1–2/255; selector in the layer panel; undoable |
 | Masks, clipping, alpha lock (4D) | One mask per layer (sparse 8-bit, new mask reveals all; paint reveals by stroke alpha, erase hides; enable/disable; delete), clipping groups (isolated, source-atop with the blend result, base opacity/mode/mask apply to the group; new layers inside a group are clipped), lock transparent pixels (source-atop paint, eraser unaffected); all measured against the reference and matching within 2/255 (ADR 0017); panel controls; undoable |
 | Undo/redo (4B) | Linear, swap-based history inside `Document` (ADR 0015): strokes, clear, create/delete/reorder layers, lock, rename, blend mode, opacity (consecutive edits merge); selection and visibility not recorded; add/remove undos restore the active layer; ignored during a stroke; 200 steps / 1 GiB by default; Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Undo/Redo buttons |
@@ -72,6 +76,37 @@ whole large layers preview slowly on one core (debt #40); no gap closing
 or area scaling in fills (debt #42); the reference's default gradient
 mixing not reproduced and large gradient previews spread over frames
 (debt #43); preset edits not persisted; UI unpolished.
+
+## Quality gate after 5F (2026-10-17)
+
+The owner revoked the approval of 5F (functional problems with
+gradients, serious interface problems) and asked for an E2E and UI audit
+before any new development. Done on the branch
+`fix/ux-e2e-quality-gate` (not merged): [quality/UI_AUDIT.md](quality/UI_AUDIT.md).
+
+- **Found and fixed** (each with a failing-then-passing desktop E2E test):
+  the brush's eraser mode silently making the gradient and the bucket
+  erase (Q-05, P1); whole-canvas gradient previews 0.25–0.8 s behind with
+  starved tiles (Q-02, P1); a ghost preview after a focus loss (Q-03, P1);
+  essential controls unreachable at the default window (Q-01, P1); panel
+  clicks that painted (Q-04, P1); an idle redraw loop at the display's
+  rate (Q-06, P2); B keeping the eraser (Q-07, P2); layout shifts,
+  canvas placement on resize, ambiguous controls, a cut stop marker, a
+  stale tooltip (Q-08–Q-13).
+- **Open**: a whole-canvas gradient or fill commit blocks ~0.3 s (Q-14);
+  small items Q-15–Q-17; display scaling and 4K untested.
+- **New**: a desktop end-to-end test mode and the `tela-e2e` driver
+  (ADR 0028); the interface redesigned around a tool strip and contextual
+  options with a small design system (ADR 0029); the permanent quality
+  gate ([quality/QUALITY_GATE.md](quality/QUALITY_GATE.md)) and the E2E
+  coverage matrix ([quality/E2E_MATRIX.md](quality/E2E_MATRIX.md)).
+- No parity rule, golden or tolerance changed; the engine benchmarks are
+  unchanged ([performance.md](performance.md)).
+
+## Desktop E2E
+
+Last full run of `scripts\e2e.ps1` on this machine (2560×1440 at 100 %,
+mouse, keyboard and the synthetic pen): every suite passed when run on its own during the gate; a final full run was still in progress when the session ended — its result is **not recorded** (run `scriptse2e.ps1` again).
 
 ## Phase 5F outcome
 
@@ -310,6 +345,9 @@ within noise; 0 allocations per dab and per composed tile.
 
 ## Next step
 
-Phase 5E is complete. The next subphase in the proposal is **5F**
-(gradients; [phase5/PROPOSAL.md](phase5/PROPOSAL.md)). It is **not
-approved and not started**: nothing begins until the owner approves it.
+**5F**: the implementation is present and its parity gate recorded, but
+the owner revoked its approval; the quality gate above is done on the
+branch `fix/ux-e2e-quality-gate`, which is **not merged**. The owner tests
+Mirae and decides whether 5F is accepted. **5G is blocked** until then;
+nothing new begins without the owner's explicit approval, and every
+later subphase passes [quality/QUALITY_GATE.md](quality/QUALITY_GATE.md).

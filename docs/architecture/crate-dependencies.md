@@ -53,6 +53,7 @@ layer 3   app       -> ui, io, document, renderer, tablet, brush, canvas, color
 layer 2   ui        -> brush, renderer, color
           io        -> document, canvas, color         (files: .mirae, PNG)
           corpus    -> brush, canvas, color            (test support only)
+          e2e       -> (none)                          (test support: drives the built app)
 layer 1   brush     -> canvas, color
           document  -> canvas, color
           renderer  -> canvas
@@ -78,11 +79,13 @@ depends only on `glam`.
 | `tela-tablet` | `glam`, `log`; Windows: `windows-sys`, `raw-window-handle` | Device input; FFI isolated here. |
 | `tela-ui` | color, brush, renderer, `egui`, `egui-wgpu`, `egui-winit`, `wgpu`, `winit` | The only egui user; edits plain data from brush (presets) and color (the paint colour, ADR 0021). |
 | `tela-corpus` | color, canvas, brush, `glam`, `png` (dev: document, io) | Golden sheets, benchmarks and the end-to-end tests. |
-| `tela-app` | all workspace crates except corpus, `winit`, `glam`, `pollster`, `log`, `env_logger`, `rfd` | Composition layer; the file workflow (native dialogs). |
+| `tela-app` | all workspace crates except corpus and e2e, `winit`, `glam`, `pollster`, `log`, `env_logger`, `rfd` | Composition layer; the file workflow (native dialogs). |
+| `tela-e2e` | `serde_json`, `png`; Windows: `windows-sys` (dev: color, document) | Desktop end-to-end tests: drives the built executable from outside with OS input (ADR 0028); no workspace crate, the engine only as a test oracle. |
 
 Dev-dependencies are unrestricted but should stay minimal: `proptest`
 (color, brush, canvas, document, io), `pollster` (renderer GPU tests), `tela-brush`+`glam`
-(document tests), `tela-document` + `tela-io` (corpus benchmarks and end-to-end tests).
+(document tests), `tela-document` + `tela-io` (corpus benchmarks and end-to-end tests),
+`tela-color` + `tela-document` (the desktop E2E tests' oracle).
 
 ## Forbidden dependencies (and why)
 
@@ -96,27 +99,27 @@ Dev-dependencies are unrestricted but should stay minimal: `proptest`
 | Only `io` depends on `zip` | One crate owns the container format and its untrusted-input handling. |
 | Only `ui` depends on `egui*` | Swapping or removing the UI toolkit touches one crate. |
 | Only `app` and `ui` depend on `winit` | Core crates know no windowing; `ui` needs winit only to feed egui. |
-| Only `tablet` depends on `windows-sys` | `unsafe` FFI stays in one crate (docs/architecture/unsafe.md). |
+| Only `tablet` and `e2e` depend on `windows-sys` | `unsafe` FFI stays in the input crate and the test driver (docs/architecture/unsafe.md). |
 | Only `app` depends on `rfd` | Dialogs and paths are the app's business; the model and the file format never see them. |
-| Nothing depends on `app` or `corpus` | `app` is the top; `corpus` is test support. |
+| Nothing depends on `app`, `corpus` or `e2e` | `app` is the top; `corpus` and `e2e` are test support. |
 
 ## External dependencies
 
 | Dependency | Used by | Why it exists |
 |---|---|---|
 | `glam` | canvas, brush, renderer, tablet, ui (via egui), app | Small SIMD vector math (`Vec2`, `Affine2`). |
-| `serde`, `serde_json` | brush, io | Versioned JSON presets with lenient loading; the `.mirae` manifest. |
+| `serde`, `serde_json` | brush, io, e2e | Versioned JSON presets with lenient loading; the `.mirae` manifest; the E2E driver reads the app's state. |
 | `rayon` | brush | Work-stealing pool for per-tile parallel stamping. |
 | `wgpu` | renderer, ui | Portable GPU API (Vulkan/DX12/Metal). |
 | `bytemuck` | renderer | Safe casts of uniform structs to bytes. |
 | `winit` | app, ui | Window and event loop. |
 | `egui`, `egui-wgpu`, `egui-winit` | ui | Immediate-mode UI; isolated in one crate. |
-| `windows-sys` | tablet | Windows Ink (WM_POINTER) and QPC FFI bindings. |
+| `windows-sys` | tablet, e2e | Windows Ink (WM_POINTER) and QPC FFI bindings; the E2E driver's input, window and capture calls. |
 | `raw-window-handle` | tablet | Takes the window by safe handle, not raw HWND. |
 | `rfd` | app | Native file dialogs (open, save, import, export); only the app knows dialogs and paths (ADR 0020). |
 | `pollster` | app (+ renderer tests) | Blocks on wgpu's async setup once at startup. |
 | `log`, `env_logger` | renderer, tablet, app | Diagnostics (`RUST_LOG`). |
-| `png` | corpus, io | Golden image I/O; PNG import/export. |
+| `png` | corpus, io, e2e | Golden image I/O; PNG import/export; E2E screenshots and exported files. |
 | `zip` | io | The `.mirae` container: stored and deflate entries only (`deflate-flate2-zlib-rs`, pure Rust), no encryption, other codecs or timestamps (ADR 0020). |
 | `proptest` | color, brush, canvas, document, io (dev) | Property tests. |
 

@@ -1,9 +1,17 @@
 # Proposal: the next macrophase
 
 > Status 2026-10-17: the owner approved **5A (colour)**, **5B (layer
-> workflow, D-4C-1, merge down)**, **5C (selections)**, **5D (transform)**,
-> **5E (fill)** and **5F (gradients)**, one at a time; all six are complete ([PLAN.md](PLAN.md)). Everything else below remains a
-> proposal, not approved and not started.
+> workflow, D-4C-1, merge down)**, **5C (selections)**, **5D (transform)**
+> and **5E (fill)**, one at a time; they are complete ([PLAN.md](PLAN.md)).
+> **5F (gradients)**: implementation present; the owner **revoked its
+> approval** and an E2E/UI quality gate was run
+> ([../quality/UI_AUDIT.md](../quality/UI_AUDIT.md)); **owner approval
+> pending** after that review. **5G is blocked** until then. Phase 5 is
+> not complete. Every subphase from now on also passes the quality gate
+> ([../quality/QUALITY_GATE.md](../quality/QUALITY_GATE.md): unit,
+> integration, desktop E2E, UX/UI acceptance) before it is offered for
+> approval. Everything else below remains a proposal, not approved and
+> not started.
 
 Written at the end of phase 4 (4G) for the owner's decision. Nothing here
 is started. The goal is unchanged: professional parity with Clip Studio

@@ -186,3 +186,11 @@ real pen.
 
 Not observed: a real pen; the reference's performance and memory; fills
 in 16-bit documents (the reference has none).
+
+## After 5F: the quality gate (2026-10-17)
+
+The bucket and Edit › Fill have their own **Draw / Erase** mode since the
+quality gate after 5F (ADR 0029): the brush's eraser mode (E) used to
+make them erase invisibly ([../quality/UI_AUDIT.md](../quality/UI_AUDIT.md)
+Q-05). The stylus eraser end still erases (BK24 above is unchanged).
+Nothing measured above changed.
