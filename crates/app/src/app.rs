@@ -22,6 +22,7 @@ use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
 mod e2e;
+mod gradient_preview;
 mod files;
 mod transform;
 
@@ -124,6 +125,8 @@ pub struct App {
     /// The gradient being dragged, and the tiles its preview last covered.
     gradient: Option<GradientSession>,
     gradient_tiles: DirtyTiles,
+    /// Composes the gradient preview in parallel, oldest tiles first.
+    preview_workers: gradient_preview::PreviewWorkers,
     /// Which of fill and gradient G selects from another tool: the one
     /// used last (G cycles them, 5E BK4).
     fill_or_gradient: CanvasTool,
@@ -220,6 +223,7 @@ impl App {
             gradient_tool: GradientTool::default(),
             gradient: None,
             gradient_tiles: DirtyTiles::new(),
+            preview_workers: gradient_preview::PreviewWorkers::new(),
             fill_or_gradient: CanvasTool::Gradient,
             selection_drag: None,
             outline: None,
@@ -544,6 +548,7 @@ impl App {
             self.view.to_canvas(pos),
         ));
         self.gradient_tiles = DirtyTiles::new();
+        self.preview_workers.reset();
         self.drag = Drag::Gradient;
     }
 
@@ -1052,7 +1057,12 @@ impl App {
                     };
                     self.fill_or_gradient = self.tool;
                 }
-                "b" | "B" => self.tool = CanvasTool::Brush,
+                // B is the brush itself, so it also leaves eraser mode (E
+                // toggles it); before, B after E kept erasing.
+                "b" | "B" => {
+                    self.tool = CanvasTool::Brush;
+                    self.tools.eraser_mode = false;
+                }
                 // The reference's X: paint with the other colour (O2).
                 "x" | "X" => self.colors.toggle_active(),
                 // Main black, sub white: unbound in the reference (O3);
@@ -1287,27 +1297,6 @@ impl App {
         // budget per frame; what is left waits for the next frames.
         if let Some(session) = &self.gradient {
             let g = session.gradient();
-            let document = &self.document;
-            let preview = document.gradient_preview(session.target, &g, session.paint);
-            let pixels = |c: TileCoord, px: &mut [PremulRgba]| {
-                if let Ok(p) = &preview {
-                    p.pixels(c, px);
-                }
-            };
-            let mask = |c: TileCoord, r: &mut [f32]| {
-                if let Ok(p) = &preview {
-                    p.mask(c, r);
-                }
-            };
-            let covers = |c: TileCoord| preview.as_ref().is_ok_and(|p| p.covers(c));
-            let overlay = Overlay {
-                target: session.target.layer,
-                paint: match session.target.part {
-                    LayerPart::Pixels => OverlayPaint::Pixels(&pixels),
-                    LayerPart::Mask => OverlayPaint::Mask(&mask),
-                },
-                covers: &covers,
-            };
             let size = gpu.renderer.size();
             let corners = [
                 Vec2::ZERO,
@@ -1323,18 +1312,17 @@ impl App {
             let mut visible = DirtyTiles::new();
             visible.mark_rect(tela_canvas::IRect::enclosing(lo.x, lo.y, hi.x, hi.y));
             let mut tiles = self.stale.take();
-            tiles.sort_by_key(|c| !visible.contains(*c));
-            let started = Instant::now();
-            let mut done = 0;
-            for &coord in &tiles {
-                if done > 0 && started.elapsed() > GRADIENT_FRAME_BUDGET {
-                    break;
-                }
-                let has = document.compose_tile_into(coord, Some(&overlay), &mut self.compose);
-                gpu.renderer
-                    .upload_tile(coord, has.then_some(self.compose.out.as_slice()));
-                done += 1;
-            }
+            self.preview_workers.order(&mut tiles, &visible);
+            let renderer = &mut gpu.renderer;
+            let done = self.preview_workers.compose(
+                &self.document,
+                &g,
+                session.target,
+                session.paint,
+                &tiles,
+                GRADIENT_FRAME_BUDGET,
+                |c, px| renderer.upload_tile(c, px),
+            );
             if done < tiles.len() {
                 for &c in &tiles[done..] {
                     self.stale.mark(c);
@@ -1999,16 +1987,34 @@ impl ApplicationHandler<AppEvent> for App {
         }
         if let Some(gpu) = &mut self.gpu {
             let response = gpu.ui.on_window_event(&gpu.window, &event);
-            if response.repaint {
+            // egui asks for a repaint after every redraw event it sees; a
+            // frame must not request the next one, or the app redraws at
+            // the display's rate while idle. egui's own requests (an
+            // animation, a tooltip) come back from `build` instead.
+            if response.repaint && !matches!(event, WindowEvent::RedrawRequested) {
                 gpu.window.request_redraw();
             }
             // Input the UI took (or that lands on it outside a stroke) never
             // reaches the canvas.
+            // Where the pointer is now: egui's own "over the UI" answer is
+            // from the last frame's pointer, so a press that follows a move
+            // before any frame (the first click after the window moved,
+            // a quick click) would reach the canvas. The panels' areas
+            // under the current position decide too.
+            let pointer = match &event {
+                WindowEvent::CursorMoved { position, .. } => {
+                    Vec2::new(position.x as f32, position.y as f32)
+                }
+                _ => self.cursor,
+            };
             let ui_input = match &event {
                 WindowEvent::CursorMoved { .. }
                 | WindowEvent::MouseInput { .. }
                 | WindowEvent::MouseWheel { .. } => {
-                    self.drag == Drag::None && (response.consumed || gpu.ui.wants_pointer())
+                    self.drag == Drag::None
+                        && (response.consumed
+                            || gpu.ui.wants_pointer()
+                            || gpu.ui.covers(pointer.x, pointer.y))
                 }
                 WindowEvent::KeyboardInput { .. } => response.consumed || gpu.ui.wants_keyboard(),
                 _ => false,
@@ -2069,6 +2075,15 @@ impl ApplicationHandler<AppEvent> for App {
                 }
                 if self.drag == Drag::Transform {
                     self.transform_release(self.cursor);
+                }
+                // A gradient whose release will never come is cancelled
+                // (nothing was drawn yet), not left previewing; a pick
+                // keeps the colour it reached.
+                if self.drag == Drag::Gradient {
+                    self.cancel_gradient();
+                }
+                if matches!(self.drag, Drag::Pick(_)) {
+                    self.end_pick();
                 }
                 self.drag = Drag::None;
                 self.mouse_left_down = false;
