@@ -464,3 +464,122 @@ fn the_eraser_does_not_turn_gradients_and_fills_into_erasers() {
         "the bucket filled, it did not erase"
     );
 }
+
+/// Section 5 of the quality gate: the gradient with a selection (hard and
+/// feathered), alpha lock, a mask, a translucent Multiply layer and a
+/// clipped layer, through the interface.
+#[test]
+#[ignore = "desktop E2E: run scripts/e2e.ps1"]
+fn gradients_with_selection_lock_mask_opacity_blend_and_clipping() {
+    let mut s = Session::start("gradient-document-rules");
+    s.maximize();
+    s.key(&[], vk::HOME);
+    gradient_tool(&mut s);
+    // A hard rectangle selection: only inside changes, with the values of
+    // the unselected gradient (the geometry comes from the drag).
+    s.click(&sel("Select").role("Button"));
+    s.drag_doc([1500.0, 1000.0], [2500.0, 2000.0], 8);
+    s.click(&sel("Gradient").role("Button"));
+    let state = s.settle();
+    let pa = press_point(&s, [800.0, 1500.0]);
+    let pb = press_point(&s, [3200.0, 1500.0]);
+    let mut oracle = Oracle::new(&state);
+    oracle.draw(
+        &settings(&state),
+        client_to_doc(&state, pa),
+        client_to_doc(&state, pb),
+    );
+    s.drag(pa, pb, 16);
+    s.settle();
+    for x in [1600, 2000, 2400] {
+        let (_, l) = s.pixel(x, 1500);
+        assert!(
+            diff(l.unwrap(), oracle.layer(x, 1500)) <= 2,
+            "inside at {x}"
+        );
+    }
+    for (x, y) in [(1000, 1500), (3000, 1500), (2000, 500)] {
+        assert_eq!(s.pixel(x, y).1.unwrap()[3], 0, "outside at ({x}, {y})");
+    }
+    s.key(&[vk::CONTROL], vk::letter('z'));
+    // Feathered: the alpha falls off across the border.
+    s.click(&sel("Select").role("Button"));
+    s.type_into(&tela_e2e::role("SpinButton").after("Feather"), "40");
+    s.click(&sel("Apply").after("Feather"));
+    s.click(&sel("Gradient").role("Button"));
+    s.drag(pa, pb, 16);
+    let edge = s.pixel(1500, 1500).1.unwrap()[3];
+    assert!(edge > 40 && edge < 220, "feathered edge alpha {edge}");
+    s.key(&[vk::CONTROL], vk::letter('z'));
+    s.key(&[vk::CONTROL], vk::letter('d'));
+    // Alpha lock over a disc: only the disc is recoloured.
+    s.click(&sel("Select").role("Button"));
+    s.click(&sel("Ellipse"));
+    s.drag_doc([1700.0, 1200.0], [2300.0, 1800.0], 8);
+    s.key(&[vk::ALT], vk::DELETE);
+    s.key(&[vk::CONTROL], vk::letter('d'));
+    s.click(&sel("Lock alpha"));
+    s.click(&sel("Gradient").role("Button"));
+    s.type_into(&tela_e2e::role("TextInput").after("Hex"), "FF0000");
+    s.drag(pa, pb, 16);
+    let (_, inside) = s.pixel(1800, 1500);
+    assert_eq!(inside.unwrap()[3], 255);
+    assert!(inside.unwrap()[0] > 100, "recoloured: {inside:?}");
+    assert_eq!(
+        s.pixel(1000, 1500).1.unwrap()[3],
+        0,
+        "transparent stays transparent"
+    );
+    s.click(&sel("Lock alpha"));
+    // A mask in Erase mode: the mask hides by the gradient's alpha, the
+    // pixels stay as they were.
+    let before = s.digest();
+    s.click(&sel("Add mask"));
+    s.click(&sel("Erase").after("Mode"));
+    s.drag(pa, pb, 16);
+    let after = s.digest();
+    assert_eq!(
+        before["layers"][0]["pixels"], after["layers"][0]["pixels"],
+        "the pixels did not change"
+    );
+    assert_ne!(
+        after["layers"][0]["mask"], before["layers"][0]["mask"],
+        "the mask did"
+    );
+    let (shown, _) = s.pixel(2200, 1500);
+    assert!(shown[1] > 200, "the disc is hidden there: {shown:?}");
+    s.click(&sel("Draw").after("Mode"));
+    s.click(&sel("Pixels").after("Edit"));
+    // A Multiply layer at 50 %: the stored pixels are the plain gradient.
+    s.click(&sel("New").after("Layers"));
+    s.choose(&tela_e2e::role("ComboBox").after("Blend"), "Multiply");
+    s.type_into(
+        &tela_e2e::role("SpinButton")
+            .after("Layers")
+            .after("Opacity"),
+        "50",
+    );
+    s.click(&sel("Gradient").role("Button"));
+    let state = s.settle();
+    let mut oracle = Oracle::new(&state);
+    oracle.draw(
+        &settings(&state),
+        client_to_doc(&state, pa),
+        client_to_doc(&state, pb),
+    );
+    s.drag(pa, pb, 16);
+    for x in [900, 2000, 3100] {
+        let (_, l) = s.pixel(x, 2500);
+        assert!(
+            diff(l.unwrap(), oracle.layer(x, 2500)) <= 2,
+            "not baked at {x}"
+        );
+    }
+    // Clipped: the layer holds the gradient everywhere, the picture shows
+    // it only over the layer below.
+    s.click(&sel("Clip"));
+    let (shown, layer) = s.pixel(500, 500);
+    assert_eq!(layer.unwrap()[3], 255, "stored everywhere");
+    assert_eq!(shown, [255, 255, 255, 255], "shown only where the base is");
+    s.shot("rules");
+}

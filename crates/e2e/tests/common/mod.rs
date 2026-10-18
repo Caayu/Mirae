@@ -171,3 +171,18 @@ pub fn grid(state: &Value, n: i32) -> Vec<[i32; 2]> {
     }
     out
 }
+
+impl Oracle {
+    /// The oracle layer's stored pixel at `(x, y)`, straight RGBA8.
+    pub fn layer(&self, x: i32, y: i32) -> [u8; 4] {
+        let p = self
+            .doc
+            .layer(self.doc.active_layer())
+            .expect("layer")
+            .pixels()
+            .pixel(x, y);
+        let c = p.unpremultiply();
+        let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        [q(c.r), q(c.g), q(c.b), q(c.a)]
+    }
+}
