@@ -2761,6 +2761,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tela-e2e"
+version = "0.1.0"
+dependencies = [
+ "png",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "tela-io"
 version = "0.1.0"
 dependencies = [

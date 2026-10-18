@@ -21,6 +21,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
+mod e2e;
 mod files;
 mod transform;
 
@@ -154,6 +155,8 @@ pub struct App {
     transform_tool: TransformTool,
     /// What waits for the answer to "Apply the transform?".
     transform_exit: Option<AfterTransform>,
+    /// The end-to-end test mode, when `TELA_E2E_DIR` asks for it.
+    e2e: Option<e2e::E2e>,
 }
 
 /// What a stroke edits, captured when it begins so that nothing changed
@@ -230,6 +233,7 @@ impl App {
             transform: None,
             transform_tool: TransformTool::default(),
             transform_exit: None,
+            e2e: e2e::E2e::from_env(),
         }
     }
 
@@ -1717,6 +1721,7 @@ impl App {
         if self.show_stats && self.stats.summary.len() != before {
             self.update_title();
         }
+        self.e2e_frame();
     }
 }
 
@@ -1820,7 +1825,8 @@ impl ApplicationHandler<AppEvent> for App {
                     return;
                 }
                 self.stale.extend(&self.document.content_tiles());
-                let ui = UiLayer::new(&window, renderer.device(), renderer.format());
+                let mut ui = UiLayer::new(&window, renderer.device(), renderer.format());
+                ui.set_inspect(self.e2e.is_some());
                 self.gpu = Some(Gpu {
                     ui,
                     #[cfg(windows)]
@@ -1844,21 +1850,32 @@ impl ApplicationHandler<AppEvent> for App {
     /// The marching ants move a few times a second while a selection (or a
     /// selection drag) is shown; otherwise the loop sleeps until an event.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let mut wake = None;
         if self.document.has_selection() || self.selection_drag.is_some() {
             let now = Instant::now();
             if now >= self.ants_due {
                 self.request_redraw();
                 self.ants_due = now + ANTS_FRAME;
             }
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.ants_due));
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
+            wake = Some(self.ants_due);
         }
+        // The test mode looks for requests while the app is idle.
+        if let Some(e2e) = &mut self.e2e {
+            let now = Instant::now();
+            if now >= e2e.due {
+                e2e.due = now + e2e::POLL;
+            }
+            wake = Some(wake.map_or(e2e.due, |w: Instant| w.min(e2e.due)));
+        }
+        event_loop.set_control_flow(wake.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
         if let StartCause::ResumeTimeReached { .. } = cause {
-            self.request_redraw();
+            self.e2e_poll();
+            if self.document.has_selection() || self.selection_drag.is_some() {
+                self.request_redraw();
+            }
         }
     }
 

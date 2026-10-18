@@ -59,6 +59,8 @@ const ALLOWED: &[(&str, &[&str])] = &[
         "corpus",
         &["tela-color", "tela-canvas", "tela-brush", "glam", "png"],
     ),
+    // Drives the built executable from outside: no workspace crate.
+    ("e2e", &["serde_json", "png", "windows-sys"]),
     (
         "app",
         &[

@@ -64,6 +64,30 @@ struct Pending {
     pixels_per_point: f32,
 }
 
+/// One widget as the desktop end-to-end tests see it: egui's own
+/// accessibility description of it (role, label, value, state) and where it
+/// is, in physical pixels of the window's client area. Built only when
+/// inspection is on ([`UiLayer::set_inspect`]); see docs/testing.md.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WidgetInfo {
+    /// The AccessKit role, e.g. `Button`, `CheckBox`, `Slider`, `Label`.
+    pub role: String,
+    /// The visible text of a button, checkbox or label.
+    pub label: String,
+    /// A text field's text or a value the widget shows.
+    pub value: Option<String>,
+    /// A slider's or drag value's number.
+    pub number: Option<f64>,
+    /// `[x0, y0, x1, y1]`, physical pixels.
+    pub rect: [f32; 4],
+    pub enabled: bool,
+    /// Selected (a selectable label) or checked (a checkbox), if it has
+    /// such a state.
+    pub toggled: Option<bool>,
+    /// Has the keyboard focus.
+    pub focused: bool,
+}
+
 /// egui context + winit input state + wgpu renderer.
 pub struct UiLayer {
     ctx: egui::Context,
@@ -72,6 +96,9 @@ pub struct UiLayer {
     pending: Option<Pending>,
     /// Regions covered by UI, physical pixels `[x0, y0, x1, y1]`.
     occupied: Vec<[f32; 4]>,
+    /// Whether the widgets are described each frame (`widgets`).
+    inspect: bool,
+    widgets: Vec<WidgetInfo>,
 }
 
 impl UiLayer {
@@ -92,7 +119,33 @@ impl UiLayer {
             renderer,
             pending: None,
             occupied: Vec::new(),
+            inspect: false,
+            widgets: Vec::new(),
         }
+    }
+
+    /// Describes every widget each frame (egui's AccessKit tree, read
+    /// back as [`WidgetInfo`]). Off by default: only the end-to-end test
+    /// mode turns it on; nothing else changes.
+    pub fn set_inspect(&mut self, on: bool) {
+        self.inspect = on;
+        if on {
+            self.ctx.enable_accesskit();
+        } else {
+            self.ctx.disable_accesskit();
+            self.widgets.clear();
+        }
+    }
+
+    /// The widgets of the last frame, in the order egui laid them out
+    /// (empty unless inspection is on).
+    pub fn widgets(&self) -> &[WidgetInfo] {
+        &self.widgets
+    }
+
+    /// Whether a text field (or another widget) holds the keyboard.
+    pub fn has_focus(&self) -> bool {
+        self.ctx.memory(|m| m.focused().is_some())
     }
 
     /// Feeds a window event to egui. `consumed` means the canvas must not
@@ -133,10 +186,15 @@ impl UiLayer {
     ) -> bool {
         let input = self.state.take_egui_input(window);
         let mut rects = Vec::new();
-        let output = self.ctx.run_ui(input, |ui| rects = build(ui));
+        let mut output = self.ctx.run_ui(input, |ui| rects = build(ui));
+        let ppp = output.pixels_per_point;
+        if self.inspect
+            && let Some(update) = output.platform_output.accesskit_update.take()
+        {
+            self.widgets = describe(&update, ppp);
+        }
         self.state
             .handle_platform_output(window, output.platform_output);
-        let ppp = output.pixels_per_point;
         self.occupied = rects
             .iter()
             .map(|r| [r.min.x * ppp, r.min.y * ppp, r.max.x * ppp, r.max.y * ppp])
@@ -159,6 +217,62 @@ impl UiLayer {
             .get(&ViewportId::ROOT)
             .is_some_and(|v| v.repaint_delay.is_zero())
     }
+}
+
+/// The widgets of an AccessKit tree in layout order (depth first from the
+/// root), with their bounds scaled from points to physical pixels.
+/// Containers and unlabelled custom areas are left out.
+fn describe(update: &egui::accesskit::TreeUpdate, ppp: f32) -> Vec<WidgetInfo> {
+    use egui::accesskit::{NodeId, Role, Toggled};
+    let nodes: std::collections::HashMap<NodeId, &egui::accesskit::Node> =
+        update.nodes.iter().map(|(id, n)| (*id, n)).collect();
+    let mut out = Vec::new();
+    let mut stack = vec![egui::accesskit_root_id().accesskit_id()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(node) = nodes.get(&id) else {
+            continue;
+        };
+        // Children in reverse, so the first is visited first.
+        stack.extend(node.children().iter().rev().copied());
+        let role = node.role();
+        let label = node.label().unwrap_or_default().to_owned();
+        let value = node.value().map(str::to_owned);
+        let (Some(b), keep) = (
+            node.bounds(),
+            !matches!(role, Role::GenericContainer | Role::Unknown)
+                || !label.is_empty()
+                || value.is_some(),
+        ) else {
+            continue;
+        };
+        if !keep {
+            continue;
+        }
+        out.push(WidgetInfo {
+            role: format!("{role:?}"),
+            label,
+            value,
+            number: node.numeric_value(),
+            rect: [
+                b.x0 as f32 * ppp,
+                b.y0 as f32 * ppp,
+                b.x1 as f32 * ppp,
+                b.y1 as f32 * ppp,
+            ],
+            enabled: !node.is_disabled(),
+            toggled: match node.toggled() {
+                Some(Toggled::True) => Some(true),
+                Some(Toggled::False) => Some(false),
+                _ => None,
+            },
+            focused: update.focus == id,
+        });
+    }
+    out
 }
 
 impl FrameOverlay for UiLayer {
