@@ -668,6 +668,17 @@ impl Session {
         ));
     }
 
+    /// A synthetic-pen tap at client pixel `(x, y)` (on a panel, the pen
+    /// reaches the interface as a click).
+    pub fn pen_tap(&mut self, x: f32, y: f32) {
+        self.front();
+        let pen = win::Pen::new().expect("create a synthetic pen");
+        let p = self.to_screen(x, y);
+        self.fence = now_ms();
+        pen.stroke(&[p, p], 0.6, false);
+        self.step(&format!("pen tap at ({x:.0}, {y:.0})"));
+    }
+
     /// Presses and releases a key, with modifiers held around it.
     pub fn key(&mut self, mods: &[u16], key: u16) {
         self.front();

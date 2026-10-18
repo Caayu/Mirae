@@ -346,3 +346,36 @@ fn fields_give_the_keyboard_back() {
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
+
+/// The views a UI review looks at (docs/quality/UI_AUDIT.md), at the
+/// default window size: each tool's options, a gradient preview held, the
+/// mask as edit target, the smallest supported window. Captures only; a
+/// person judges them.
+#[test]
+#[ignore = "desktop E2E: run scripts/e2e.ps1"]
+fn audit_screenshots() {
+    let mut s = Session::start("ui-audit-screenshots");
+    s.shot("brush");
+    for t in ["Eraser", "Eyedropper", "Select", "Move", "Fill", "Gradient"] {
+        s.click(&sel(t).role("Button"));
+        s.shot(&t.to_lowercase());
+    }
+    s.click(&sel("Add stop"));
+    let a = s.doc_to_client(600.0, 1500.0);
+    let b = s.doc_to_client(3400.0, 1700.0);
+    s.move_to(a[0], a[1]);
+    s.press(tela_e2e::win::Button::Left);
+    s.drag_moves(a, b, 30);
+    s.settle();
+    s.shot("gradient-preview-held");
+    s.release(tela_e2e::win::Button::Left);
+    s.settle();
+    s.click(&sel("Transform").role("Button"));
+    s.shot("transform-session");
+    s.key(&[], vk::ESCAPE);
+    s.key(&[vk::CONTROL, vk::SHIFT], vk::letter('n'));
+    s.click(&sel("Add mask"));
+    s.shot("mask-target");
+    s.place(100, 100, 800, 600);
+    s.shot("smallest");
+}

@@ -340,3 +340,52 @@ fn lock_of_active_row(s: &Session) -> tela_e2e::Sel {
         .expect("a Lock on the active row");
     sel("Lock").nth(n)
 }
+
+#[test]
+#[ignore = "desktop E2E: run scripts/e2e.ps1"]
+fn visibility_toggle_and_the_pen_on_the_panels() {
+    let mut s = Session::start("visibility-pen-ui");
+    s.maximize();
+    s.type_into(&role("SpinButton").after("Size"), "200");
+    s.drag_doc([1000.0, 1500.0], [3000.0, 1500.0], 20);
+    assert_eq!(s.pixel(2000, 1500).0, [0, 0, 0, 255]);
+    // The row's visibility box hides the layer: the paper shows; it is not
+    // a history step, but the document is modified (as the reference).
+    let widgets = s.widgets();
+    let row = widgets
+        .iter()
+        .rfind(|w| w.role == "Button" && w.toggled == Some(true) && w.rect[0] > 1000.0)
+        .unwrap()
+        .rect;
+    let eye = widgets
+        .iter()
+        .find(|w| w.role == "CheckBox" && (w.center()[1] - (row[1] + row[3]) / 2.0).abs() < 4.0)
+        .expect("the row's visibility box")
+        .center();
+    s.click_at(eye[0], eye[1]);
+    let st = s.settle();
+    assert_eq!(s.active_layer()["visible"], false);
+    assert_eq!(s.pixel(2000, 1500).0, [255, 255, 255, 255], "hidden");
+    assert_eq!(st["document"]["undo"], "paint", "visibility is not a step");
+    // Painting on a hidden layer does nothing.
+    s.drag_doc([1000.0, 2000.0], [3000.0, 2000.0], 10);
+    assert_eq!(s.settle()["document"]["undo"], "paint");
+    s.click_at(eye[0], eye[1]);
+    assert_eq!(s.pixel(2000, 1500).0, [0, 0, 0, 255], "shown again");
+    // The synthetic pen taps tool buttons and panel buttons like a mouse.
+    let g = s.expect(&sel("Gradient").role("Button")).center();
+    s.pen_tap(g[0], g[1]);
+    assert_eq!(s.settle()["tool"], "gradient", "a pen tap on the strip");
+    let r = s.expect(&sel("Radial")).center();
+    s.pen_tap(r[0], r[1]);
+    assert_eq!(
+        s.settle()["gradient"]["kind"],
+        "Radial",
+        "a pen tap on the options"
+    );
+    assert_eq!(
+        s.settle()["document"]["undo"],
+        "paint",
+        "pen taps on panels never draw"
+    );
+}
